@@ -155,7 +155,13 @@ export function ExecutionLogsPanel({
       )}
       <header className="flex shrink-0 items-center justify-between border-border border-b px-4 py-3">
         <h2 className="font-medium text-sm">{t("shell.executionLogs")}</h2>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label={t("shell.closePanel")} onClick={onClose}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t("shell.closePanel")}
+          onClick={onClose}
+        >
           <XIcon className="size-4" />
         </Button>
       </header>
@@ -256,7 +262,11 @@ function SessionItemsList({ sessionId }: { sessionId: string }) {
     return <div className="text-muted-foreground text-xs">{t("shell.loading")}</div>;
   }
   if (error) {
-    return <div className="text-destructive text-xs">{t("shell.executionLogsFailed", { error: error.message })}</div>;
+    return (
+      <div className="text-destructive text-xs">
+        {t("shell.executionLogsFailed", { error: error.message })}
+      </div>
+    );
   }
   if (items.length === 0) {
     return <div className="text-muted-foreground text-xs">{t("shell.executionLogsNoItems")}</div>;

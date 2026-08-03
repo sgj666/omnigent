@@ -77,7 +77,11 @@ export function FileMentionMenu({
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => (isDir ? onOpenDir(entry.path) : onAttach(entry.path, false))}
                     className="flex min-w-0 flex-1 items-center gap-2 hover:text-foreground"
-                    title={isDir ? t("fileMention.open", { name: entry.name }) : t("fileMention.attach", { name: entry.name })}
+                    title={
+                      isDir
+                        ? t("fileMention.open", { name: entry.name })
+                        : t("fileMention.attach", { name: entry.name })
+                    }
                   >
                     {isDir ? (
                       <FolderIcon className="size-3.5 shrink-0 text-slate-500 dark:text-slate-400" />

@@ -368,7 +368,9 @@ export function ChatHeader({
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label={rightPanelOpen ? t("shell.collapseRightPanel") : t("shell.expandRightPanel")}
+                aria-label={
+                  rightPanelOpen ? t("shell.collapseRightPanel") : t("shell.expandRightPanel")
+                }
                 onClick={onToggleRightPanel}
                 className="hidden md:inline-flex text-muted-foreground hover:text-foreground"
               >

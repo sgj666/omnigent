@@ -11,6 +11,7 @@ vi.mock("@/lib/host", () => ({
 }));
 
 import { ImageLightboxProvider, ZoomableImage } from "./ImageLightbox";
+import { withTestLanguage } from "@/i18n/testHelpers";
 
 afterEach(cleanup);
 
@@ -82,5 +83,17 @@ describe("ZoomableImage + ImageLightboxProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset zoom" }));
     expect(screen.getByRole("button", { name: "Reset zoom" })).toHaveTextContent("100%");
     expect(previewImg).toHaveStyle({ transform: "translate(0px, 0px) scale(1)" });
+  });
+
+  it("localizes image controls in Simplified Chinese", async () => {
+    await withTestLanguage("zh-CN", () => {
+      renderWithProvider();
+      expect(screen.getByRole("button", { name: "放大图片：diagram" })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "放大图片：diagram" }));
+      expect(screen.getByRole("button", { name: "缩小" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "重置缩放" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "放大" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "关闭" })).toBeInTheDocument();
+    });
   });
 });
