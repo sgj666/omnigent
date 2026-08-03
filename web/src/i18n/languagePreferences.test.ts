@@ -22,6 +22,11 @@ describe("resolveSystemLanguage", () => {
       expect(resolveSystemLanguage(locales)).toBe("en");
     },
   );
+
+  it("uses the first supported locale in the provided order", () => {
+    expect(resolveSystemLanguage(["en-US", "zh-CN"])).toBe("en");
+    expect(resolveSystemLanguage(["fr-FR", "zh-CN", "en-US"])).toBe("zh-CN");
+  });
 });
 
 describe("resolveLanguage", () => {
@@ -43,6 +48,13 @@ describe("language preference storage", () => {
   it.each([null, "", "fr", "zh-TW"])("falls back to system for stored value %j", (value) => {
     expect(readLanguagePreference({ getItem: () => value })).toBe("system");
   });
+
+  it.each<LanguagePreference>(["system", "en", "zh-CN"])(
+    "reads the valid stored %s preference",
+    (preference) => {
+      expect(readLanguagePreference({ getItem: () => preference })).toBe(preference);
+    },
+  );
 
   it("falls back to system when storage throws while reading", () => {
     const storage = {

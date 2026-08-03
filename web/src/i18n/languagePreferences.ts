@@ -4,7 +4,12 @@ export type LanguagePreference = "system" | "en" | "zh-CN";
 export type SupportedLanguage = "en" | "zh-CN";
 
 export function resolveSystemLanguage(languages: readonly string[]): SupportedLanguage {
-  return languages.some((locale) => locale.toLowerCase().startsWith("zh")) ? "zh-CN" : "en";
+  for (const locale of languages) {
+    const normalized = locale.toLowerCase();
+    if (normalized.startsWith("zh")) return "zh-CN";
+    if (normalized.startsWith("en")) return "en";
+  }
+  return "en";
 }
 
 export function resolveLanguage(
