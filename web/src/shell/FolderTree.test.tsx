@@ -78,6 +78,15 @@ describe("FolderTree runner-offline state", () => {
   });
 });
 
+describe("FolderTree search empty state", () => {
+  it("describes an all-files search without implying only changed files were searched", () => {
+    renderTree({ searchQuery: "needle", searchResults: [] });
+
+    expect(screen.getByText('No files match "needle"')).toBeInTheDocument();
+    expect(screen.queryByText(/no changed files match/i)).not.toBeInTheDocument();
+  });
+});
+
 describe("FolderTree sorting", () => {
   it("groups directories ahead of files, then sorts files by name", () => {
     renderTree({

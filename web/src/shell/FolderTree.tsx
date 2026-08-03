@@ -320,7 +320,7 @@ export function FolderTree({
     if (!searchResults || searchResults.length === 0) {
       return (
         <p className="px-2 py-1 text-muted-foreground text-xs">
-          {t("noChangedMatch", { query: searchQuery.trim() })}
+          {t("noFilesMatch", { query: searchQuery.trim() })}
         </p>
       );
     }

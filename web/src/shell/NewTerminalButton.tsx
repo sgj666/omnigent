@@ -137,7 +137,7 @@ export function NewTerminalButton({
     <DropdownMenuContent align={variant === "row" ? "start" : "end"}>
       {declared.map((name, i) => (
         <DropdownMenuItem key={name} onSelect={() => launch(name)}>
-          {isShellPicker && i === 0 ? `${name} (default)` : name}
+          {isShellPicker && i === 0 ? t("defaultTerminal", { name }) : name}
         </DropdownMenuItem>
       ))}
     </DropdownMenuContent>

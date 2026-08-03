@@ -220,6 +220,7 @@ function FileTabsStrip({
   /** Close a tab by path. */
   onCloseFile: (path: string) => void;
 }) {
+  const { t } = useTranslation("workspace");
   // Scroll the active tab into view when it changes (e.g. a newly opened file
   // appended past the visible edge). `inline: "nearest"` scrolls whichever
   // ancestor is the scroller — the outer strip (<500px) or the file-tabs
@@ -285,7 +286,7 @@ function FileTabsStrip({
             <span className="absolute inset-y-0 right-[2px] flex items-center pl-[12px] pr-[4px] opacity-0 transition-opacity group-hover/tab:opacity-100 [background:linear-gradient(to_right,transparent,color-mix(in_srgb,var(--muted-foreground)_15%,var(--card))_40%)]">
               <button
                 type="button"
-                aria-label={`Close ${name}`}
+                aria-label={t("closeFile", { filename: name })}
                 className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -329,6 +330,7 @@ function TerminalTabsStrip({
   /** Close a terminal tab by key. */
   onClose: (key: string) => void;
 }) {
+  const { t } = useTranslation("workspace");
   const activeTabRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -377,7 +379,7 @@ function TerminalTabsStrip({
             <span className="absolute inset-y-0 right-[2px] flex items-center pl-[12px] pr-[4px] opacity-0 transition-opacity group-hover/tab:opacity-100 [background:linear-gradient(to_right,transparent,color-mix(in_srgb,var(--muted-foreground)_15%,var(--card))_40%)]">
               <button
                 type="button"
-                aria-label={`Close ${name}`}
+                aria-label={t("closeTerminal", { name })}
                 className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -600,9 +602,9 @@ export function WorkspacePanel({
   const { terminals } = useTerminals(conversationId);
   const terminalLabelFor = useCallback(
     (key: string) => {
-      const t = terminals.find((term) => terminalTabKey(term) === key);
-      if (!t) return key.replace(/^terminal:/, "");
-      return t.session ? `${t.name} · ${t.session}` : t.name;
+      const terminal = terminals.find((term) => terminalTabKey(term) === key);
+      if (!terminal) return key.replace(/^terminal:/, "");
+      return terminal.session ? `${terminal.name} · ${terminal.session}` : terminal.name;
     },
     [terminals],
   );
@@ -682,13 +684,19 @@ export function WorkspacePanel({
                 </TabsTrigger>
               </WorkspaceTabTooltip>
             )}
-            <WorkspaceTabTooltip label={t("agents")}>
+            <WorkspaceTabTooltip
+              label={
+                subagentsWorking > 0
+                  ? t("agentsWorking", { working: subagentsWorking, count: agentCount })
+                  : t("agentsCount", { count: agentCount })
+              }
+            >
               <TabsTrigger
                 value="subagents"
                 aria-label={
                   subagentsWorking > 0
-                    ? `Agents ${subagentsWorking}/${agentCount}`
-                    : `Agents ${agentCount}`
+                    ? t("agentsWorking", { working: subagentsWorking, count: agentCount })
+                    : t("agentsCount", { count: agentCount })
                 }
                 className="size-8 shrink-0 rounded-md p-0 hover:bg-muted"
               >
@@ -723,10 +731,15 @@ export function WorkspacePanel({
               </WorkspaceTabTooltip>
             )}
             {todosSupported && todosTotal > 0 && (
-              <WorkspaceTabTooltip label={t("tasks")}>
+              <WorkspaceTabTooltip
+                label={t("tasksProgress", { completed: todosCompleted, total: todosTotal })}
+              >
                 <TabsTrigger
                   value="todos"
-                  aria-label={`Tasks ${todosCompleted} of ${todosTotal} completed`}
+                  aria-label={t("tasksProgress", {
+                    completed: todosCompleted,
+                    total: todosTotal,
+                  })}
                   className="size-8 shrink-0 rounded-md p-0 hover:bg-muted"
                 >
                   <ListTodoIcon className="size-4" />
