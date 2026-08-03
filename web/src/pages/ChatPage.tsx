@@ -12,7 +12,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { useTranslation } from "react-i18next";
 import {
   ArrowUpIcon,
   BotIcon,
@@ -191,6 +190,7 @@ import { GoalControl, GoalStatusPill, useGoalState, type Goal } from "@/componen
 import { copyText } from "@/lib/clipboard";
 import { showToast } from "@/components/ui/toast";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
+import { useTranslation } from "react-i18next";
 
 // Matches both wordings the native executors emit: "[Attached: <path>]"
 // (claude/pi/cursor) and "[Attached file: <path>]" (codex). Capturing group
@@ -1456,6 +1456,7 @@ function MainAgentSurface({
   costRoutingEligible,
   subAgentLabel,
 }: MainAgentSurfaceProps) {
+  const { t } = useTranslation("chat");
   const terminalFirst = useTerminalFirst();
   // The turn rail is a hover minimap with no mobile affordance (CSS-hidden
   // under `md`). Gate its MOUNT — not just its visibility — on the viewport so
@@ -1738,12 +1739,12 @@ function MainAgentSurface({
                 <ConversationEmptyState>
                   <div className="space-y-1.5">
                     <h3 className="text-2xl font-medium tracking-[-0.02em]">
-                      What should we work on?
+                      {t("emptyTitle", { ns: "chat" })}
                     </h3>
                     <p className="text-muted-foreground text-base">
                       {agentsError
                         ? `Failed to load agents: ${agentsError instanceof Error ? agentsError.message : String(agentsError)}`
-                        : "Send a message to get started."}
+                        : t("emptyDescription", { ns: "chat" })}
                     </p>
                   </div>
                 </ConversationEmptyState>
@@ -1923,11 +1924,12 @@ function ConversationLoadError({
   conversationId: string;
   error: Error;
 }) {
+  const { t } = useTranslation("chat");
   const navigate = useNavigate();
   return (
     <div className="flex flex-1 items-center justify-center px-6">
       <div className="flex max-w-md flex-col items-center gap-3 text-center">
-        <h1 className="font-medium text-foreground text-lg">Conversation not found</h1>
+        <h1 className="font-medium text-foreground text-lg">{t("conversationNotFound")}</h1>
         <p className="text-muted-foreground text-sm">
           Couldn't load{" "}
           <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{conversationId}</code>
@@ -1974,6 +1976,7 @@ function UserMessageNavConnected(props: React.ComponentProps<typeof UserMessageN
  *   the "Working…" tab would otherwise stack on top of it.
  */
 function WorkingStatusPin({ show, suppress = false }: { show: boolean; suppress?: boolean }) {
+  const { t } = useTranslation("chat");
   const { isAtBottom } = useStickToBottomContext();
   const bgCount = useChatStore((s) => s.backgroundTaskCount);
   const tick = useWorkingLabelTick();
@@ -1995,7 +1998,7 @@ function WorkingStatusPin({ show, suppress = false }: { show: boolean; suppress?
           the agent is working, so it announces whether the tab is painted
           (scrolled up) or collapsed (at the bottom, where the inline shimmer
           owns the visuals). */}
-      {show && <span className="sr-only">Working…</span>}
+      {show && <span className="sr-only">{t("working")}</span>}
       {/* Mirror the conversation content column (mx-auto + px-6 + width) so the
           tab's left edge lines up with the inline shimmer's. */}
       <div className={cn("mx-auto w-full px-6", CHAT_COLUMN_WIDTH)}>
@@ -2014,7 +2017,7 @@ function WorkingStatusPin({ show, suppress = false }: { show: boolean; suppress?
           >
             <OttoIcon className="otto-working h-4 w-auto shrink-0" />
             <Shimmer className="text-xs font-mono" duration={1.5}>
-              {workingIndicatorLabel(bgCount, tick)}
+              {localizedWorkingIndicatorLabel(t, bgCount, tick)}
             </Shimmer>
           </div>
         )}
@@ -2416,6 +2419,7 @@ export function JumpToTopButton({
   scroller: ConversationScroller | null;
   hasMoreHistory: boolean;
 }) {
+  const { t } = useTranslation("chat");
   const [atTop, setAtTop] = useState(true);
   const [hovering, setHovering] = useState(false);
   const [jumping, setJumping] = useState(false);
@@ -2578,7 +2582,7 @@ export function JumpToTopButton({
         ) : (
           <ArrowUpIcon className="size-3.5" aria-hidden />
         )}
-        {jumping ? "Loading history…" : "Jump to top"}
+        {jumping ? t("loadingHistory") : t("jumpToTop")}
       </Button>
     </div>
   );
@@ -2612,6 +2616,16 @@ export const WORKING_MESSAGES = [
   "Brewing…",
 ] as const;
 
+function localizedWorkingIndicatorLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  bgCount: number,
+  tick = 0,
+): string {
+  if (bgCount > 0) return t("backgroundTask", { count: bgCount });
+  const labels = t("workingLabels", { returnObjects: true }) as string[];
+  return labels[tick % labels.length] ?? t("working");
+}
+
 /**
  * The label shown next to the working spinner. When background shells outlive
  * the turn (`bgCount > 0`) it names how many are still running (the tick is
@@ -2628,9 +2642,10 @@ export function workingIndicatorLabel(bgCount: number, tick = 0): string {
 }
 
 function WorkingIndicator() {
+  const { t } = useTranslation("chat");
   const bgCount = useChatStore((s) => s.backgroundTaskCount);
   const tick = useWorkingLabelTick();
-  const label = workingIndicatorLabel(bgCount, tick);
+  const label = localizedWorkingIndicatorLabel(t, bgCount, tick);
   return (
     <Message from="assistant" data-testid="working-indicator" aria-hidden="true">
       <MessageContent>
@@ -2693,6 +2708,7 @@ const SANDBOX_STAGE_LABELS: Record<string, string | undefined> = {
  * one consistent line.
  */
 export function SandboxFailedIndicator({ status }: { status: SandboxStatus }) {
+  const { t } = useTranslation("chat");
   return (
     <div
       data-testid="sandbox-failed-indicator"
@@ -2703,7 +2719,10 @@ export function SandboxFailedIndicator({ status }: { status: SandboxStatus }) {
       )}
     >
       <AlertTriangleIcon className="size-3.5 shrink-0" aria-hidden />
-      <span>Sandbox launch failed{status.error ? `: ${status.error}` : ""}</span>
+      <span>
+        {t("sandboxLaunchFailed")}
+        {status.error ? `: ${status.error}` : ""}
+      </span>
     </div>
   );
 }
@@ -2719,6 +2738,7 @@ export function ConnectionIndicator({
   // the native iOS bar so it doesn't float over an opened sidebar/panel.
   surfaceFrontmost?: boolean;
 }) {
+  const { t } = useTranslation("chat");
   const terminalFirst = useTerminalFirst();
   const keyboardVisible = useIOSNativeKeyboardVisible(
     terminalFirst?.isTerminalFirst === true,
@@ -2783,8 +2803,8 @@ export function ConnectionIndicator({
         <WifiOffIcon className="size-3.5 shrink-0" />
         <span>
           {liveness.kind === "host_offline"
-            ? "Host is offline — click to reconnect"
-            : "Agent disconnected — click to reconnect"}
+            ? t("hostOfflineReconnect")
+            : t("agentDisconnectedReconnect")}
         </span>
       </button>
     );
@@ -2838,7 +2858,7 @@ export function ConnectionIndicator({
         )}
       >
         <Loader2Icon className="size-3.5 shrink-0 animate-spin" aria-hidden />
-        <span>Connecting…</span>
+        <span>{t("connecting")}</span>
       </div>
     );
   }
@@ -2868,6 +2888,7 @@ export function ConnectionIndicator({
  * there).
  */
 export function RunnerStartingIndicator({ variant }: { variant: "hero" | "row" }) {
+  const { t } = useTranslation("chat");
   const terminalFirst = useTerminalFirst();
   const sandboxStatus = useChatStore((s) => s.sandboxStatus);
   // `ready` never reaches the store (cleared) and `failed` renders the
@@ -2887,7 +2908,9 @@ export function RunnerStartingIndicator({ variant }: { variant: "hero" | "row" }
   if (sandboxLabel === undefined && !terminalSpinUp) {
     return null;
   }
-  const line = sandboxLabel !== undefined ? `${sandboxLabel}…` : "Starting up…";
+  const localizedSandboxLabel =
+    sandboxLabel !== undefined ? t(`sandboxStages.${sandboxStatus?.stage}`) : undefined;
+  const line = localizedSandboxLabel !== undefined ? `${localizedSandboxLabel}…` : t("startingUp");
   // role=status + aria-live so assistive tech announces the transient wait;
   // the spinner glyph itself is decorative (aria-hidden).
   if (variant === "hero") {
@@ -2897,11 +2920,9 @@ export function RunnerStartingIndicator({ variant }: { variant: "hero" | "row" }
         role="status"
         aria-live="polite"
         icon={<Loader2Icon className="size-7 animate-spin" aria-hidden />}
-        title={sandboxLabel !== undefined ? `${sandboxLabel}…` : "Starting up…"}
+        title={localizedSandboxLabel !== undefined ? `${localizedSandboxLabel}…` : t("startingUp")}
         description={
-          sandboxLabel !== undefined
-            ? "Setting up your sandbox — this can take a minute."
-            : "This can take a few seconds."
+          sandboxLabel !== undefined ? t("sandboxStartingDescription") : t("startingDescription")
         }
       />
     );
@@ -2970,6 +2991,7 @@ export function mcpSettledNames(names: string[]): string {
  * startup state (an all-ready map is cleared by the store handler).
  */
 export function McpStartupIndicator() {
+  const { t } = useTranslation("chat");
   const mcpStartup = useChatStore((s) => s.mcpStartup);
   if (mcpStartup === null) return null;
   const names = Object.keys(mcpStartup).sort();
@@ -2985,7 +3007,13 @@ export function McpStartupIndicator() {
         <MessageContent>
           <span className="flex items-center gap-2 text-muted-foreground text-sm">
             <Loader2Icon className="size-4 shrink-0 animate-spin" aria-hidden />
-            {mcpStartingLine(starting, names.length)}
+            {names.length === 1 && starting.length === 1
+              ? t("mcpStartingServer", { name: starting[0] })
+              : t("mcpStartingServers", {
+                  ready: names.length - starting.length,
+                  total: names.length,
+                  names: mcpSettledNames(starting),
+                })}
           </span>
         </MessageContent>
       </Message>
@@ -2995,14 +3023,14 @@ export function McpStartupIndicator() {
   const cancelled = names.filter((name) => mcpStartup[name].status === "cancelled");
   if (failed.length === 0 && cancelled.length === 0) return null;
   const parts: string[] = [];
-  if (failed.length > 0) parts.push(`failed: ${mcpSettledNames(failed)}`);
-  if (cancelled.length > 0) parts.push(`cancelled: ${mcpSettledNames(cancelled)}`);
+  if (failed.length > 0) parts.push(t("mcpFailed", { names: mcpSettledNames(failed) }));
+  if (cancelled.length > 0) parts.push(t("mcpCancelled", { names: mcpSettledNames(cancelled) }));
   return (
     <Message from="assistant" data-testid="mcp-startup-indicator" role="status">
       <MessageContent>
         <span className="flex items-center gap-2 text-muted-foreground text-sm">
           <AlertTriangleIcon className="size-4 shrink-0" aria-hidden />
-          {`MCP startup incomplete (${parts.join("; ")})`}
+          {t("mcpStartupIncomplete", { details: parts.join("; ") })}
         </span>
       </MessageContent>
     </Message>
@@ -3073,6 +3101,7 @@ function ConnectedTerminalFirstPill({
 }: {
   ctx: NonNullable<ReturnType<typeof useTerminalFirst>>;
 }) {
+  const { t } = useTranslation("chat");
   // `terminalStartingUp` is the single loading signal — AppShell folds the
   // launch (liveness `starting`) and PTY-creation (`terminalPending`)
   // sources into it. The button is disabled whenever no terminal is
@@ -3089,14 +3118,14 @@ function ConnectedTerminalFirstPill({
     >
       <div
         role="group"
-        aria-label="View mode"
+        aria-label={t("viewMode")}
         className="terminal-first-switcher flex items-center gap-1 rounded-full border border-border bg-card/90 p-1 text-xs shadow-sm"
       >
         <div className="flex items-center gap-0.5">
           <button
             type="button"
             aria-pressed={view === "chat"}
-            aria-label="Chat"
+            aria-label={t("chatTab")}
             onClick={() => setView("chat")}
             className={cn(
               "terminal-first-switcher-option flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 transition-colors",
@@ -3106,14 +3135,14 @@ function ConnectedTerminalFirstPill({
             )}
           >
             <MessageSquareIcon className="size-3.5 shrink-0" />
-            <span>Chat</span>
+            <span>{t("chatTab")}</span>
           </button>
           <button
             type="button"
             aria-pressed={view === "terminal"}
-            aria-label="Terminal"
+            aria-label={t("terminalTab")}
             disabled={!terminalsAvailable}
-            title={terminalStartingUp ? "Terminal is starting up…" : undefined}
+            title={terminalStartingUp ? t("terminalStarting") : undefined}
             onClick={() => setView("terminal")}
             className={cn(
               "terminal-first-switcher-option flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
@@ -3127,7 +3156,7 @@ function ConnectedTerminalFirstPill({
             ) : (
               <TerminalIcon className="size-3.5 shrink-0" />
             )}
-            <span>Terminal</span>
+            <span>{t("terminalTab")}</span>
           </button>
         </div>
       </div>
@@ -3147,6 +3176,7 @@ function isSystemBubble(bubble: Bubble): boolean {
 }
 
 function CompactionLoadingIndicator() {
+  const { t } = useTranslation("chat");
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(performance.now());
 
@@ -3162,7 +3192,7 @@ function CompactionLoadingIndicator() {
       <MessageContent>
         <div className="flex items-center gap-2 text-xs font-mono">
           <Shimmer as="span" duration={1.5}>
-            Compacting conversation…
+            {t("compacting")}
           </Shimmer>
           {elapsed > 0 && <span className="text-muted-foreground">({elapsed}s)</span>}
         </div>
@@ -3221,6 +3251,7 @@ function useCopyMessage(getText: () => string): {
   isCopied: boolean;
   handleCopy: () => void;
 } {
+  const { t } = useTranslation("chat");
   const [isCopied, setIsCopied] = useState(false);
   const timeoutRef = useRef<number>(0);
   const isMobile = useIsMobileViewport();
@@ -3237,19 +3268,20 @@ function useCopyMessage(getText: () => string): {
         window.clearTimeout(timeoutRef.current);
         timeoutRef.current = window.setTimeout(() => setIsCopied(false), 2000);
         if (isMobile) {
-          showToast(<span className="text-sm">Copied to clipboard</span>, { duration: 1500 });
+          showToast(<span className="text-sm">{t("copied")}</span>, { duration: 1500 });
         }
       },
       (error) => {
         console.warn("Failed to copy message", error);
       },
     );
-  }, [getText, isCopied, isMobile]);
+  }, [getText, isCopied, isMobile, t]);
 
   return { isCopied, handleCopy };
 }
 
 function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
+  const { t } = useTranslation("chat");
   const sessionId = useChatStore((s) => s.conversationId);
   // Author labels only matter once the session is shared with someone else.
   const isSessionShared = useContext(SessionSharedContext);
@@ -3407,7 +3439,7 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
       </div>
       {text && (
         <MessageActions className="mt-1 ml-auto opacity-40 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
-          <MessageAction tooltip="Copy" onClick={handleCopy}>
+          <MessageAction tooltip={t("copy")} onClick={handleCopy}>
             {isCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
           </MessageAction>
         </MessageActions>
@@ -3423,6 +3455,7 @@ function AssistantBubble({
   bubble: Extract<Bubble, { kind: "assistant" }>;
   canApprove: boolean;
 }) {
+  const { t } = useTranslation("chat");
   // The walker only emits an assistant bubble when at least one
   // assistant-side block exists, so `items` is non-empty here in the
   // common case. The "Working…" shimmer for the empty-items / streaming
@@ -3465,12 +3498,12 @@ function AssistantBubble({
             data-testid="assistant-interrupted-indicator"
           >
             <XIcon className="size-3" aria-hidden="true" />
-            <span>Interrupted</span>
+            <span>{t("interrupted")}</span>
           </p>
         )}
         {markdownText && (
           <MessageActions className="mt-1 opacity-40 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-            <MessageAction tooltip="Copy" onClick={handleCopy}>
+            <MessageAction tooltip={t("copy")} onClick={handleCopy}>
               {isCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
             </MessageAction>
             {/* Fork from this response: clone the session with history
@@ -3479,7 +3512,7 @@ function AssistantBubble({
                 the session can't be forked (sub-agent / isolated mount). */}
             {forkDialog?.canFork && bubble.lifecycle !== "streaming" && (
               <MessageAction
-                tooltip="Fork from here"
+                tooltip={t("forkFromHere")}
                 data-testid="fork-from-response"
                 onClick={() => forkDialog.openForkDialog({ upToResponseId: bubble.responseId })}
               >
@@ -3491,7 +3524,7 @@ function AssistantBubble({
       </Message>
 
       {bubble.lifecycle === "failed" && (
-        <p className="text-destructive text-xs">Error: {bubble.error}</p>
+        <p className="text-destructive text-xs">{t("errorPrefix", { error: bubble.error })}</p>
       )}
     </>
   );
@@ -4024,6 +4057,7 @@ export function Composer({
   costRoutingEligible = false,
   subAgentLabel = null,
 }: ComposerProps) {
+  const { t } = useTranslation("chat");
   const [value, setValue] = useState("");
   const dictation = useDictationInsert(setValue);
   const [files, setFiles] = useState<File[]>([]);
@@ -4865,7 +4899,7 @@ export function Composer({
       >
         {isDragActive && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-card/80">
-            <span className="text-sm font-medium text-ring">Drop files here</span>
+            <span className="text-sm font-medium text-ring">{t("dropFiles")}</span>
           </div>
         )}
         {/* Slash-command suggestions — floats above the composer box */}
@@ -4904,7 +4938,7 @@ export function Composer({
                   type="button"
                   onClick={() => onRemoveQuote(i)}
                   className="mt-0.5 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-                  aria-label="Remove quote"
+                  aria-label={t("removeQuote")}
                 >
                   <XIcon className="size-3.5" />
                 </button>
@@ -4981,25 +5015,25 @@ export function Composer({
               // Keep the overlay's scroll position locked to the textarea's.
               if (backdropRef.current) backdropRef.current.scrollTop = e.currentTarget.scrollTop;
             }}
-            aria-label="Message the agent"
+            aria-label={t("messageAgent")}
             placeholder={
               readOnlyReason !== null
                 ? readOnlyReason
                 : isReadOnly
-                  ? "You have read-only access to this session"
+                  ? t("readOnlyAccess")
                   : unreachable
-                    ? "Session offline — reconnect below to continue"
+                    ? t("sessionOffline")
                     : hasPendingElicitation
-                      ? "Respond to the pending request above to continue"
+                      ? t("respondPending")
                       : disabled
-                        ? "Waiting for agents…"
+                        ? t("waitingForAgents")
                         : isStreaming
-                          ? "Send a follow-up (queued) — Esc to stop"
+                          ? t("followUpQueued")
                           : sandboxAsleepHint
-                            ? "Current session's host is offline. Next message will resume the sandbox host which can take minutes"
+                            ? t("sandboxAsleep")
                             : reconnectHint
-                              ? "Send a message to reconnect this session"
-                              : "Ask the agent anything…"
+                              ? t("reconnectSession")
+                              : t("askAgent")
             }
             rows={1}
             disabled={disabled || isReadOnly || unreachable || hasPendingElicitation}
@@ -5030,7 +5064,7 @@ export function Composer({
                   type="button"
                   onClick={() => removeFile(i)}
                   className="ml-0.5 rounded-full hover:text-foreground"
-                  aria-label={`Remove ${file.name || "image.png"}`}
+                  aria-label={t("removeAttachment", { name: file.name || "image.png" })}
                 >
                   <XIcon className="size-3" />
                 </button>
@@ -5071,7 +5105,7 @@ export function Composer({
                   type="button"
                   onClick={() => removeMentionedItem(i)}
                   className="ml-0.5 rounded-full hover:text-foreground"
-                  aria-label={`Remove ${item.path}`}
+                  aria-label={t("removeAttachment", { name: item.path })}
                 >
                   <XIcon className="size-3" />
                 </button>
@@ -5095,10 +5129,10 @@ export function Composer({
               className="size-9 md:size-8"
               disabled={disabled || isReadOnly || hasPendingElicitation}
               onClick={() => fileInputRef.current?.click()}
-              title="Attach files"
+              title={t("attachFiles")}
             >
               <PaperclipIcon className="size-4" />
-              <span className="sr-only">Attach files</span>
+              <span className="sr-only">{t("attachFiles")}</span>
             </Button>
             <ComposerMicButton
               enableHotkey
@@ -5142,7 +5176,7 @@ export function Composer({
                     )}
                     disabled={isReadOnly || planModeBusy}
                     aria-pressed={codexPlanMode}
-                    aria-label={codexPlanMode ? "Exit Plan mode" : "Enter Plan mode"}
+                    aria-label={codexPlanMode ? t("exitPlanMode") : t("enterPlanMode")}
                     data-testid="codex-plan-mode-toggle"
                     data-active={codexPlanMode ? "true" : undefined}
                     onClick={() => void toggleCodexPlanMode()}
@@ -5152,11 +5186,11 @@ export function Composer({
                     ) : (
                       <FileTextIcon className="size-3.5" />
                     )}
-                    <span>Plan</span>
+                    <span>{t("plan")}</span>
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {codexPlanMode ? "Exit Plan mode" : "Enter Plan mode"}
+                  {codexPlanMode ? t("exitPlanMode") : t("enterPlanMode")}
                 </TooltipContent>
               </Tooltip>
             )}
@@ -5229,15 +5263,15 @@ export function Composer({
                   ? isReadOnly
                   : !hasDraft || disabled || isReadOnly || hasPendingElicitation
               }
-              title={showInterruptButton ? "Interrupt" : "Send"}
-              aria-label={showInterruptButton ? "Interrupt" : "Send"}
+              title={showInterruptButton ? t("interrupt") : t("send")}
+              aria-label={showInterruptButton ? t("interrupt") : t("send")}
             >
               {showInterruptButton ? (
                 <SquareIcon className="size-4 fill-current" />
               ) : (
                 <ArrowUpIcon className="size-4" />
               )}
-              <span className="sr-only">{showInterruptButton ? "Interrupt" : "Send"}</span>
+              <span className="sr-only">{showInterruptButton ? t("interrupt") : t("send")}</span>
             </Button>
           </div>
         </div>
