@@ -59,6 +59,13 @@
   "respondPending": "Respond to the pending request above to continue",
   "waitingForAgents": "Waiting for agents…",
   "followUpQueued": "Send a follow-up (queued) — Esc to stop",
+  "queue": {
+    "reorder": "Reorder queued message",
+    "sendNow": "Send queued message now",
+    "steer": "Steer",
+    "edit": "Edit queued message",
+    "remove": "Remove queued message"
+  },
   "sandboxAsleep": "Current session's host is offline. Next message will resume the sandbox host which can take minutes",
   "reconnectSession": "Send a message to reconnect this session",
   "askAgent": "Ask the agent anything…",

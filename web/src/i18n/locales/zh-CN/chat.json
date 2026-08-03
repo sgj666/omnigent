@@ -59,6 +59,13 @@
   "respondPending": "请先回应上方的待处理请求",
   "waitingForAgents": "正在等待智能体…",
   "followUpQueued": "发送后续消息（已排队）— 按 Esc 停止",
+  "queue": {
+    "reorder": "重新排序排队消息",
+    "sendNow": "立即发送排队消息",
+    "steer": "立即发送",
+    "edit": "编辑排队消息",
+    "remove": "移除排队消息"
+  },
   "sandboxAsleep": "当前会话的主机已离线。下一条消息将恢复沙箱主机，可能需要几分钟",
   "reconnectSession": "发送消息以重新连接此会话",
   "askAgent": "询问智能体任何问题…",

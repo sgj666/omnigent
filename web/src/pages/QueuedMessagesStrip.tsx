@@ -19,6 +19,7 @@ import {
 
 import type { QueuedMessage } from "@/store/chatStore";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 interface QueuedMessagesStripProps {
   /** Messages waiting to be flushed, in FIFO order (head first). */
@@ -56,6 +57,7 @@ function QueuedRow({
   onSteer?: (queueId: string) => void;
   reorderable: boolean;
 }) {
+  const { t } = useTranslation("chat");
   const {
     attributes,
     listeners,
@@ -84,7 +86,7 @@ function QueuedRow({
         <button
           type="button"
           ref={setDragRef}
-          aria-label="Reorder queued message"
+          aria-label={t("queue.reorder")}
           className="shrink-0 cursor-grab touch-none rounded p-0.5 text-muted-foreground/50 transition hover:text-foreground focus-visible:text-foreground active:cursor-grabbing"
           {...attributes}
           {...listeners}
@@ -100,17 +102,17 @@ function QueuedRow({
       {onSteer ? (
         <button
           type="button"
-          aria-label="Send queued message now"
+          aria-label={t("queue.sendNow")}
           className="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground"
           onClick={() => onSteer(message.queueId)}
         >
           <CornerDownRightIcon className="size-3.5" aria-hidden="true" />
-          Steer
+          {t("queue.steer")}
         </button>
       ) : null}
       <button
         type="button"
-        aria-label="Edit queued message"
+        aria-label={t("queue.edit")}
         className="shrink-0 rounded p-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground"
         onClick={() => onEdit(message.queueId)}
       >
@@ -118,7 +120,7 @@ function QueuedRow({
       </button>
       <button
         type="button"
-        aria-label="Remove queued message"
+        aria-label={t("queue.remove")}
         className="shrink-0 rounded p-0.5 text-muted-foreground/60 transition hover:text-foreground focus-visible:text-foreground"
         onClick={() => onDelete(message.queueId)}
       >
