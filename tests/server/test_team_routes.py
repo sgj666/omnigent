@@ -7,7 +7,11 @@ import pytest
 from fastapi.responses import JSONResponse
 
 from omnigent.errors import OmnigentError
-from omnigent.server.routes.teams import TeamMemoryStore, create_teams_router
+from omnigent.server.routes.teams import (
+    SqlAlchemyTeamWorkspaceStore,
+    TeamMemoryStore,
+    create_teams_router,
+)
 from omnigent.server.routes.workspaces import create_workspaces_router
 
 
@@ -89,3 +93,23 @@ async def test_workspace_selection_copies_thread_default_and_never_rewrites_runn
     )
     assert changed.status_code == 409
     assert run["workspace_id"] == first["id"]
+
+
+def test_sql_store_restores_workspace_selection_after_restart(tmp_path: object) -> None:
+    """A new store instance reads the durable default selected by its predecessor."""
+    from pathlib import Path
+
+    from omnigent.db.db_models import OmnigentBase
+    from omnigent.db.utils import get_or_create_engine
+
+    database = f"sqlite:///{Path(str(tmp_path)) / 'teams.db'}"
+    OmnigentBase.metadata.create_all(get_or_create_engine(database))
+    first = SqlAlchemyTeamWorkspaceStore(database)
+    workspace = {"id": "1" * 32, "root_path": "/repo", "repositories": []}
+    first.workspaces[workspace["id"]] = {"object": "workspace", **workspace}
+    first.persist_workspace(workspace)
+    first.select_thread_workspace("thread-1", workspace["id"])
+
+    restored = SqlAlchemyTeamWorkspaceStore(database)
+    assert restored.thread_workspaces == {"thread-1": workspace["id"]}
+    assert restored.workspaces[workspace["id"]]["root_path"] == "/repo"

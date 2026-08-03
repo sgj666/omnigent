@@ -8,14 +8,16 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Request
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from omnigent.db.db_models import (
     SqlAgentProfile,
+    SqlRun,
     SqlTeam,
     SqlTeamMember,
     SqlThreadWorkspaceSelection,
     SqlWorkspaceBundle,
+    SqlWorkspaceRepository,
     current_workspace_id,
 )
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
@@ -153,6 +155,29 @@ class SqlAlchemyTeamWorkspaceStore(TeamMemoryStore):
                     )
                 ).scalars()
             }
+            for repository in session.execute(
+                select(SqlWorkspaceRepository).where(
+                    SqlWorkspaceRepository.workspace_id == workspace_id
+                )
+            ).scalars():
+                workspace = self.workspaces.get(repository.workspace_bundle_id)
+                if workspace is not None:
+                    workspace["repositories"].append(
+                        {"name": repository.name, "path": repository.path}
+                    )
+            self.runs = {
+                row.id: {
+                    "id": row.id,
+                    "object": "run",
+                    "team_id": row.team_id,
+                    "workspace_id": row.workspace_bundle_id,
+                    "source": row.source,
+                    "status": row.status,
+                }
+                for row in session.execute(
+                    select(SqlRun).where(SqlRun.workspace_id == workspace_id)
+                ).scalars()
+            }
             self.thread_workspaces = {
                 row.thread_id: row.selected_workspace_id
                 for row in session.execute(
@@ -202,6 +227,85 @@ class SqlAlchemyTeamWorkspaceStore(TeamMemoryStore):
             )
         return team
 
+    def update_team(self, team_id: str, body: UpdateTeamRequest) -> dict[str, Any] | None:
+        team = super().update_team(team_id, body)
+        if team is None:
+            return None
+        with self._session() as session:
+            row = session.get(SqlTeam, (current_workspace_id(), team_id))
+            if row is None:
+                return None
+            row.name, row.status, row.updated_at = team["name"], team["status"], now_epoch()
+            if body.members is not None:
+                old_ids = (
+                    session.execute(
+                        select(SqlTeamMember.agent_profile_id).where(
+                            SqlTeamMember.workspace_id == current_workspace_id(),
+                            SqlTeamMember.team_id == team_id,
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                session.execute(
+                    delete(SqlTeamMember).where(
+                        SqlTeamMember.workspace_id == current_workspace_id(),
+                        SqlTeamMember.team_id == team_id,
+                    )
+                )
+                session.execute(
+                    delete(SqlAgentProfile).where(
+                        SqlAgentProfile.workspace_id == current_workspace_id(),
+                        SqlAgentProfile.id.in_(old_ids),
+                    )
+                )
+                now = now_epoch()
+                for member in [team["coordinator"], *team["workers"]]:
+                    session.add(
+                        SqlAgentProfile(
+                            id=member["id"],
+                            name=member["name"],
+                            role=member["role"],
+                            capabilities=json.dumps(
+                                {
+                                    k: v
+                                    for k, v in member.items()
+                                    if k not in {"id", "name", "role"}
+                                }
+                            ),
+                            created_at=now,
+                            updated_at=None,
+                        )
+                    )
+                    session.add(
+                        SqlTeamMember(
+                            id=uuid4().hex,
+                            team_id=team_id,
+                            agent_profile_id=member["id"],
+                            role=member["role"],
+                            created_at=now,
+                        )
+                    )
+                row.coordinator_id = team["coordinator"]["id"]
+        return team
+
+    def create_run(self, *, team_id: str, thread_id: str, source: str) -> dict[str, Any]:
+        run = super().create_run(team_id=team_id, thread_id=thread_id, source=source)
+        with self._session() as session:
+            session.add(
+                SqlRun(
+                    id=run["id"],
+                    team_id=team_id,
+                    workspace_bundle_id=run["workspace_id"],
+                    source=source,
+                    status="queued",
+                    account_id=None,
+                    created_at=now_epoch(),
+                    updated_at=None,
+                )
+            )
+        return run
+
     def select_thread_workspace(self, thread_id: str, workspace_id: str) -> None:
         self.thread_workspaces[thread_id] = workspace_id
         with self._session() as session:
@@ -230,6 +334,16 @@ class SqlAlchemyTeamWorkspaceStore(TeamMemoryStore):
                     created_at=now_epoch(),
                 )
             )
+            for repository in workspace["repositories"]:
+                session.add(
+                    SqlWorkspaceRepository(
+                        id=uuid4().hex,
+                        workspace_bundle_id=str(workspace["id"]),
+                        name=repository["name"],
+                        path=repository["path"],
+                        created_at=now_epoch(),
+                    )
+                )
 
 
 def create_teams_router(

@@ -26,6 +26,7 @@ _TABLES = {
     "feishu_installations",
     "feishu_notifications",
     "idempotency_keys",
+    "thread_workspace_selections",
 }
 
 
@@ -97,3 +98,10 @@ def test_team_harness_relationships_do_not_add_database_foreign_keys(db_engine: 
     """Relationships remain application-owned, consistent with Rule R032."""
     inspector = sa.inspect(db_engine)
     assert all(inspector.get_foreign_keys(table) == [] for table in _TABLES)
+
+
+def test_thread_workspace_selection_is_scoped_by_thread_and_scope(db_engine: Engine) -> None:
+    """The selection migration uses workspace/thread/scope as its durable key."""
+    assert sa.inspect(db_engine).get_pk_constraint("thread_workspace_selections")[
+        "constrained_columns"
+    ] == ["workspace_id", "thread_id", "scope"]
