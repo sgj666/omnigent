@@ -42,6 +42,7 @@ import {
   AlertTriangleIcon,
   CheckIcon,
   KeyRoundIcon,
+  LanguagesIcon,
   LaptopMinimalIcon,
   LogOutIcon,
   MinusIcon,
@@ -170,6 +171,9 @@ import {
   updateBridge,
 } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
+import { i18n, setUiLanguagePreference } from "@/i18n";
+import { readLanguagePreference, type LanguagePreference } from "@/i18n/languagePreferences";
+import { useTranslation } from "react-i18next";
 
 // Admin-only management surfaces, rendered as the Members / Policies settings
 // sub-categories. Visible to admins in all modes (accounts, OIDC, single-user).
@@ -222,6 +226,7 @@ export function SettingsPage() {
   return (
     <PageScroll contentClassName="px-8" extraBottom="2.5rem">
       {section === "appearance" && <AppearanceSection />}
+      {section === "language" && <LanguageSection />}
       {section === "git" && <GitSection />}
       {section === "shortcuts" && <ShortcutsSection />}
       {section === "account" && hasAuthSession && <AccountSection />}
@@ -807,6 +812,51 @@ function HideUnconfiguredHarnessesControl() {
         className="mt-0.5 shrink-0"
       />
     </div>
+  );
+}
+
+const languagePreferences: readonly LanguagePreference[] = ["system", "en", "zh-CN"];
+
+function LanguageSection() {
+  const { t } = useTranslation("settings");
+  const [preference, setPreference] = useState<LanguagePreference>(() => {
+    if (typeof window === "undefined") return "system";
+    return readLanguagePreference(window.localStorage);
+  });
+  const labelId = useId();
+  const choose = useCallback(async (next: LanguagePreference) => {
+    setPreference(next);
+    await setUiLanguagePreference(next);
+  }, []);
+  const effectiveLanguage = i18n.resolvedLanguage === "zh-CN" ? "zh-CN" : "en";
+
+  return (
+    <Section title={t("language.title")} description={t("language.description")}>
+      <div className="flex flex-col gap-3">
+        <span id={labelId} className="text-sm font-medium">
+          {t("language.optionsLabel")}
+        </span>
+        <CardRadioGroup<LanguagePreference>
+          labelledBy={labelId}
+          value={preference}
+          onSelect={(next) => void choose(next)}
+          className="grid grid-cols-3 gap-3"
+          cardClassName="items-center gap-2 p-4"
+          items={languagePreferences.map((value) => ({
+            value,
+            testId: `language-${value}`,
+            body: iconCardBody(LanguagesIcon, t(`language.options.${value}`)),
+          }))}
+        />
+        {preference === "system" && (
+          <p className="text-sm text-muted-foreground">
+            {t("language.currentlyUsing", {
+              language: t(`language.effective.${effectiveLanguage}`),
+            })}
+          </p>
+        )}
+      </div>
+    </Section>
   );
 }
 

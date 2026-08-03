@@ -1,4 +1,19 @@
 {
   "meta": { "languageName": "简体中文" },
-  "title": "设置"
+  "title": "设置",
+  "language": {
+    "title": "语言",
+    "description": "选择 Omnigent 使用的界面语言。",
+    "optionsLabel": "语言",
+    "options": {
+      "system": "跟随系统",
+      "en": "English",
+      "zh-CN": "简体中文"
+    },
+    "currentlyUsing": "当前使用：{{language}}",
+    "effective": {
+      "en": "English",
+      "zh-CN": "简体中文"
+    }
+  }
 }

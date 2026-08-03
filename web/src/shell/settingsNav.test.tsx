@@ -66,6 +66,13 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("settingsNavGroups", () => {
+  it("places Language immediately after Appearance", () => {
+    const items = settingsNavGroups(false, false)
+      .find((group) => group.title === "General")
+      ?.items.map((item) => item.id);
+    expect(items?.slice(0, 3)).toEqual(["appearance", "language", "git"]);
+  });
+
   it("flags Keyboard shortcuts as hidden on mobile, but not the other items", () => {
     const items = settingsNavGroups(false, false).flatMap((g) => g.items);
     const shortcuts = items.find((i) => i.id === "shortcuts");

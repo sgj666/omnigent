@@ -1,4 +1,19 @@
 {
   "meta": { "languageName": "English" },
-  "title": "Settings"
+  "title": "Settings",
+  "language": {
+    "title": "Language",
+    "description": "Choose the language used throughout Omnigent.",
+    "optionsLabel": "Language",
+    "options": {
+      "system": "Follow system",
+      "en": "English",
+      "zh-CN": "Simplified Chinese"
+    },
+    "currentlyUsing": "Currently using: {{language}}",
+    "effective": {
+      "en": "English",
+      "zh-CN": "Simplified Chinese"
+    }
+  }
 }

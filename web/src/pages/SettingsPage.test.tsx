@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { Conversation } from "@/hooks/useConversations";
 import type { ElectronUpdateBridge, UpdateConfig, UpdateStatus } from "@/lib/nativeBridge";
+import { setUiLanguagePreference } from "@/i18n";
 
 const mocks = vi.hoisted(() => ({
   setTheme: vi.fn(),
@@ -189,8 +190,9 @@ beforeEach(() => {
   mocks.hasNextPage = false;
   delete (window as unknown as Record<string, unknown>).omnigentDesktop;
 });
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  await setUiLanguagePreference("en");
   // Reset the font-size preference + applied scale so the Appearance tests
   // don't leak persisted state or the --ui-font-scale variable into each other.
   localStorage.clear();
@@ -246,6 +248,35 @@ function installUpdateBridge(config: UpdateConfig = DEFAULT_UPDATE_CONFIG) {
 }
 
 describe("SettingsPage", () => {
+  it("renders the language choices in English and shows the effective system language", async () => {
+    await setUiLanguagePreference("system");
+    renderPage("/settings/language");
+    expect(screen.getByRole("heading", { name: "Language" })).toBeInTheDocument();
+    expect(screen.getByTestId("language-system")).toHaveTextContent("Follow system");
+    expect(screen.getByTestId("language-en")).toHaveTextContent("English");
+    expect(screen.getByTestId("language-zh-CN")).toHaveTextContent("Simplified Chinese");
+    expect(screen.getByText("Currently using: English")).toBeInTheDocument();
+  });
+
+  it("switches to Simplified Chinese immediately and persists the preference", async () => {
+    await setUiLanguagePreference("en");
+    renderPage("/settings/language");
+    fireEvent.click(screen.getByTestId("language-zh-CN"));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "语言" })).toBeInTheDocument());
+    expect(screen.getByText("简体中文")).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("zh-CN");
+    expect(localStorage.getItem("omnigent:language")).toBe("zh-CN");
+  });
+
+  it("shows the effective language when switching back to system", async () => {
+    await setUiLanguagePreference("zh-CN");
+    renderPage("/settings/language");
+    fireEvent.click(screen.getByTestId("language-system"));
+    await waitFor(() => expect(screen.getByText("Currently using: English")).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Language" })).toBeInTheDocument();
+    expect(localStorage.getItem("omnigent:language")).toBe("system");
+  });
+
   it("renders the Appearance section and applies a theme on card click", () => {
     renderPage("/settings/appearance");
     expect(screen.getByRole("heading", { name: "Appearance" })).toBeInTheDocument();
