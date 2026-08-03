@@ -330,7 +330,7 @@ export function ChatHeader({
               >
                 <Button
                   type="button"
-                  aria-label={t("shell.share")}
+                  aria-label={t("shell.shareSession")}
                   disabled
                   title={shareDisabledReason}
                   // share-button-glassy (index.css) paints the pink gradient,
@@ -340,7 +340,7 @@ export function ChatHeader({
                   <span className="flex size-4 shrink-0 items-center justify-center">
                     <UserPlusIcon />
                   </span>
-                  {t("shell.share")}
+                  {t("shell.shareSession")}
                 </Button>
               </span>
             </TooltipTrigger>
@@ -349,7 +349,7 @@ export function ChatHeader({
         ) : canShare ? (
           <Button
             type="button"
-            aria-label={t("shell.share")}
+            aria-label={t("shell.shareSession")}
             onClick={onShare}
             // share-button-glassy (index.css) paints the pink gradient,
             // shadow, and white text in both light and dark mode.
@@ -358,7 +358,7 @@ export function ChatHeader({
             <span className="flex size-4 shrink-0 items-center justify-center">
               <UserPlusIcon />
             </span>
-            {t("shell.share")}
+            {t("shell.shareSession")}
           </Button>
         ) : null}
         {conversationId && hasRailContent && (
