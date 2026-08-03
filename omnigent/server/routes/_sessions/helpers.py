@@ -7270,6 +7270,7 @@ async def _remove_session_worktree_best_effort(
     """
     from omnigent.server.routes._host_worktree import (
         WorktreeProxyError,
+        get_attempt_worktree_lease_manager,
         release_attempt_worktree_leases,
         remove_worktree_on_host,
     )
@@ -7287,6 +7288,11 @@ async def _remove_session_worktree_best_effort(
             host_id,
         )
         return
+    if lease is None:
+        lease = get_attempt_worktree_lease_manager().find(
+            worktree_path=worktree_path,
+            branch=branch,
+        )
     try:
         if lease is not None:
             await release_attempt_worktree_leases(

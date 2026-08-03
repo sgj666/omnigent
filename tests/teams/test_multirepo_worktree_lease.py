@@ -412,3 +412,81 @@ async def test_lease_maintenance_recovers_without_blind_heartbeat(
 
     assert recovered == ["host-1"]
     assert heartbeated == []
+
+
+@pytest.mark.asyncio
+async def test_live_attempt_heartbeat_survives_beyond_lease_ttl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An acquired attempt is renewed by its owner task until release."""
+
+    async def create(**kwargs: object) -> _Created:
+        return _Created(worktree_path="/leases/live", branch="attempt-live")
+
+    async def remove(**kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.create_worktree_on_host", create)
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.remove_worktree_on_host", remove)
+    manager = WorktreeLeaseManager(ttl_s=0.03)
+    leases = await manager.acquire(
+        host_id="host-1",
+        host_registry=object(),
+        host_conn=_Host(),
+        workspace_root=tmp_path,
+        repositories=(WorkspaceRepository(id="api", path="api"),),
+        attempt_id="attempt-live",
+        owner_id="runner-live",
+    )
+    initial_heartbeat = leases[0].heartbeat_at
+
+    await asyncio.sleep(0.08)
+
+    assert leases[0].status is LeaseStatus.ACTIVE
+    assert leases[0].heartbeat_at > initial_heartbeat
+    await manager.release(
+        host_registry=object(), host_conn=_Host(), leases=leases, owner_id="runner-live"
+    )
+    assert not manager._heartbeat_tasks
+
+
+@pytest.mark.asyncio
+async def test_session_cleanup_finds_and_releases_retained_attempt_lease(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Session teardown releases a lease even when metadata is not passed."""
+
+    async def remove(**kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.remove_worktree_on_host", remove)
+    manager = WorktreeLeaseManager(ttl_s=60)
+    lease = WorktreeLease(
+        host_id="host-1",
+        repository_id="session-repository",
+        repo_path="/repos/api",
+        attempt_id="attempt-finished",
+        worktree_path="/leases/finished",
+        branch="feature/finished",
+        owner="runner-finished",
+        status=LeaseStatus.ACTIVE,
+        heartbeat_at=1_000.0,
+    )
+    manager._records.append(lease)
+    monkeypatch.setattr(_host_worktree, "_attempt_worktree_lease_manager", manager)
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(host_registry=SimpleNamespace(get=lambda _: _Host()))
+        )
+    )
+
+    await _remove_session_worktree_best_effort(
+        host_id="host-1",
+        worktree_path=lease.worktree_path,
+        branch=lease.branch,
+        delete_branch=True,
+        request=request,
+        reason="attempt-finished",
+    )
+
+    assert lease.status is LeaseStatus.RELEASED

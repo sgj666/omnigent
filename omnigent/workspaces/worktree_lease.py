@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import time
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -77,6 +78,7 @@ class WorktreeLeaseManager:
         self._clock = clock
         self._records: list[WorktreeLease] = []
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._heartbeat_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
 
     @property
     def records(self) -> tuple[WorktreeLease, ...]:
@@ -121,6 +123,7 @@ class WorktreeLeaseManager:
                         "attempt worktree lease has expired and requires recovery"
                     )
                 if all(lease.status is LeaseStatus.ACTIVE for lease in current):
+                    self.start_heartbeat(current)
                     return tuple(current)
                 raise WorktreeLeaseError("attempt worktree lease was already released")
 
@@ -156,6 +159,7 @@ class WorktreeLeaseManager:
                 self._records.extend(failed_cleanup)
                 raise
             self._records.extend(created)
+            self.start_heartbeat(created)
             return tuple(created)
         finally:
             for lock in reversed(locks):
@@ -183,6 +187,55 @@ class WorktreeLeaseManager:
             lease.heartbeat_at = now
         return active
 
+    def start_heartbeat(self, leases: Iterable[WorktreeLease]) -> None:
+        """Start one owner heartbeat task for an active attempt lease set."""
+        records = tuple(leases)
+        if not records or any(lease.status is not LeaseStatus.ACTIVE for lease in records):
+            return
+        keys = {(lease.host_id, lease.attempt_id, lease.owner) for lease in records}
+        if len(keys) != 1:
+            raise WorktreeLeaseError("heartbeat leases must belong to one attempt owner")
+        key = next(iter(keys))
+        if key in self._heartbeat_tasks:
+            return
+        self._heartbeat_tasks[key] = asyncio.create_task(
+            self._heartbeat_loop(key),
+            name=f"worktree-lease-heartbeat-{key[1]}",
+        )
+
+    async def stop_heartbeat(self, leases: Iterable[WorktreeLease]) -> None:
+        """Stop the owner heartbeat task associated with *leases*."""
+        records = tuple(leases)
+        keys = {(lease.host_id, lease.attempt_id, lease.owner) for lease in records}
+        for key in keys:
+            task = self._heartbeat_tasks.pop(key, None)
+            if task is None:
+                continue
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    async def _heartbeat_loop(self, key: tuple[str, str, str]) -> None:
+        host_id, attempt_id, owner = key
+        try:
+            while True:
+                await asyncio.sleep(max(self._ttl_s / 3, 0.01))
+                active = tuple(
+                    lease
+                    for lease in self._records
+                    if lease.host_id == host_id
+                    and lease.attempt_id == attempt_id
+                    and lease.owner == owner
+                    and lease.status is LeaseStatus.ACTIVE
+                )
+                if not active:
+                    return
+                self.heartbeat(active, owner_id=owner)
+        finally:
+            current = asyncio.current_task()
+            if self._heartbeat_tasks.get(key) is current:
+                self._heartbeat_tasks.pop(key, None)
+
     async def release(
         self,
         *,
@@ -194,7 +247,19 @@ class WorktreeLeaseManager:
         """Owner-checked, idempotently release attempt worktree leases."""
         records = tuple(leases)
         self._require_owner(records, owner_id)
+        await self.stop_heartbeat(records)
         await self._release(host_registry, host_conn, records)
+
+    def find(self, *, worktree_path: str, branch: str | None = None) -> WorktreeLease | None:
+        """Find a retained lease by its worktree path for session teardown."""
+        for lease in reversed(self._records):
+            if (
+                lease.status is not LeaseStatus.RELEASED
+                and lease.worktree_path == worktree_path
+                and (branch is None or lease.branch == branch)
+            ):
+                return lease
+        return None
 
     async def recover_expired(
         self, *, host_registry: HostRegistry, host_conn: HostConnection
@@ -220,6 +285,7 @@ class WorktreeLeaseManager:
             for lease in expired:
                 if lease.status is LeaseStatus.ACTIVE:
                     lease.status = LeaseStatus.EXPIRED
+            await self.stop_heartbeat(expired)
             try:
                 await self._release_locked(host_registry, host_conn, expired)
             except Exception:

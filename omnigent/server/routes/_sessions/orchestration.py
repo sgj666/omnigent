@@ -170,6 +170,7 @@ from omnigent.telemetry import emit as _tel_emit
 from omnigent.telemetry.events import SessionCreatedEvent as _TelSessionCreatedEvent
 from omnigent.telemetry.installation_id import get_installation_id as _get_installation_id
 from omnigent.telemetry.surface import classify_surface as _classify_surface
+from omnigent.workspaces.worktree_lease import WorktreeLease
 
 
 async def _publish_and_wait_for_harness_elicitation(
