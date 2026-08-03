@@ -79,6 +79,7 @@ function isUpdateSecurityError(message) {
  *   Whether an IPC call came from a connected server's own pinned page.
  * @param {(win: Electron.BrowserWindow | null | undefined) => string | null} deps.pinnedOrigin
  *   The origin a window is pinned to (used for the consent dialog copy).
+ * @param {() => string} [deps.getLocale] Effective native locale for approval copy.
  * @param {string} deps.iconPath Absolute path to the app icon PNG.
  * @param {boolean} [deps.forceDevUpdateConfig] Force the dev feed on in an
  *   unpackaged build (main.js sets this from !app.isPackaged).
@@ -105,6 +106,7 @@ function createDesktopUpdater({
   saveSettings,
   isPinnedOriginSender,
   pinnedOrigin,
+  getLocale = () => "en",
   iconPath,
   forceDevUpdateConfig = false,
 }) {
@@ -287,7 +289,7 @@ function createDesktopUpdater({
       // Keep the full origin string if it somehow doesn't parse.
     }
 
-    const copy = {
+    const englishCopy = {
       download: {
         message: "Download an Omnigent update?",
         detail:
@@ -307,6 +309,21 @@ function createDesktopUpdater({
           `Only allow servers you trust.`,
       },
     }[action];
+    const chineseCopy = {
+      download: {
+        message: "下载 Omnigent 更新？",
+        detail: `${host} 请求下载 Omnigent 桌面更新。\n\n请仅允许你信任的服务器。`,
+      },
+      install: {
+        message: "重启 Omnigent 以安装更新？",
+        detail: `${host} 请求重启 Omnigent 并安装已下载的桌面更新。\n\n请仅允许你信任的服务器。`,
+      },
+      config: {
+        message: "更改 Omnigent 更新设置？",
+        detail: `${host} 请求更改 Omnigent 检查和安装更新的方式。\n\n请仅允许你信任的服务器。`,
+      },
+    }[action];
+    const copy = getLocale() === "zh-CN" ? chineseCopy : englishCopy;
     if (!copy) return false;
 
     const icon = nativeImage.createFromPath(iconPath);
@@ -316,7 +333,7 @@ function createDesktopUpdater({
       title: "Omnigent",
       message: copy.message,
       detail: copy.detail,
-      buttons: ["Don't Allow", "Allow Once"],
+      buttons: getLocale() === "zh-CN" ? ["不允许", "仅允许一次"] : ["Don't Allow", "Allow Once"],
       defaultId: 0,
       cancelId: 0,
       noLink: true,

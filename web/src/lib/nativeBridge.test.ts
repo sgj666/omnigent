@@ -9,6 +9,7 @@ import {
   onNativeNotificationActivated,
   onNativeSidebarDrag,
   setBadgeCount as bridgeSetBadge,
+  setDesktopLanguage,
   setNativeServerSwitcherHidden,
   setThemeSource,
   supportsBrowser,
@@ -20,6 +21,7 @@ const electronNotify = vi.fn().mockResolvedValue(true);
 const electronUnsubscribe = vi.fn();
 const electronOnNotificationActivated = vi.fn().mockReturnValue(electronUnsubscribe);
 const electronSetColorScheme = vi.fn();
+const electronSetLanguage = vi.fn();
 
 // The iOS WKWebView bridge mock, installed on window.omnigentNative.
 const iosSetBadge = vi.fn();
@@ -54,6 +56,7 @@ function setElectron(on: boolean, withClickRouting = true, withBrowser = false):
       kind: "electron",
       setBadgeCount: (...args: unknown[]) => electronSetBadge(...args),
       setColorScheme: (...args: unknown[]) => electronSetColorScheme(...args),
+      setLanguage: (...args: unknown[]) => electronSetLanguage(...args),
       notify: (...args: unknown[]) => electronNotify(...args),
       ...(withClickRouting
         ? {
@@ -228,6 +231,32 @@ describe("setThemeSource", () => {
     ).omnigentNative = undefined;
     setThemeSource("system");
     expect(electronSetColorScheme).toHaveBeenCalledWith("system");
+  });
+});
+
+describe("setDesktopLanguage", () => {
+  it("returns false outside Electron and does not touch a bridge", () => {
+    setElectron(false);
+    expect(setDesktopLanguage("system", "en")).toBe(false);
+    expect(electronSetLanguage).not.toHaveBeenCalled();
+  });
+
+  it("routes the preference and effective language through Electron", () => {
+    setElectron(true);
+    expect(setDesktopLanguage("zh-CN", "zh-CN")).toBe(true);
+    expect(electronSetLanguage).toHaveBeenCalledWith("zh-CN", "zh-CN");
+  });
+
+  it("returns false when the optional bridge is absent or throws", () => {
+    setElectron(true);
+    delete (window as unknown as { omnigentDesktop: Record<string, unknown> }).omnigentDesktop
+      .setLanguage;
+    expect(setDesktopLanguage("en", "en")).toBe(false);
+    setElectron(true);
+    electronSetLanguage.mockImplementationOnce(() => {
+      throw new Error("ipc down");
+    });
+    expect(setDesktopLanguage("en", "en")).toBe(false);
   });
 });
 

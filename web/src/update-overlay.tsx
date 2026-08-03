@@ -13,6 +13,7 @@
 
 import { createRoot } from "react-dom/client";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { i18n } from "./i18n";
 import "./index.css";
 
 // Theme: the shell passes `?theme=dark|light` (from nativeTheme). Fall back to
@@ -24,8 +25,16 @@ const dark =
   (theme !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 document.documentElement.classList.toggle("dark", dark);
 
-const container = document.getElementById("update-overlay-root");
-if (container) {
+const locale = params.get("locale");
+
+async function renderOverlay(): Promise<void> {
+  if (locale === "en" || locale === "zh-CN") {
+    await i18n.changeLanguage(locale);
+    document.documentElement.lang = locale;
+  }
+
+  const container = document.getElementById("update-overlay-root");
+  if (!container) return;
   createRoot(container).render(<UpdateBanner variant="bare" />);
 
   // Report the rendered height so the shell can size the transparent window to
@@ -44,3 +53,5 @@ if (container) {
 
   overlay?.onTheme?.((next) => document.documentElement.classList.toggle("dark", next === "dark"));
 }
+
+void renderOverlay();

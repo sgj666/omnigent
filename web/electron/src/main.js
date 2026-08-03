@@ -32,6 +32,12 @@ const {
 const { autoUpdater } = require("electron-updater");
 const { createDesktopUpdater } = require("./desktop_updater");
 const { createUpdateOverlay } = require("./update_overlay");
+const {
+  normalizeDesktopLocale,
+  resolveDesktopLocale,
+  isLanguagePreference,
+  isSupportedLanguage,
+} = require("./desktop_locale");
 const fs = require("node:fs");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -636,6 +642,7 @@ const updater = createDesktopUpdater({
   saveSettings,
   isPinnedOriginSender,
   pinnedOrigin,
+  getLocale: () => currentDesktopLocale().effectiveLanguage,
   iconPath: ICON_PNG,
   // Dev builds always use the local dev feed (dev-app-update.yml ->
   // 127.0.0.1:8765); packaged builds always use the baked app-update.yml.
@@ -655,6 +662,7 @@ const updateOverlay = createUpdateOverlay({
   updater,
   overlayPage: UPDATE_OVERLAY_PAGE,
   preloadPath: path.join(__dirname, "update_overlay_preload.js"),
+  getLocale: () => currentDesktopLocale().effectiveLanguage,
 });
 
 // ---------------------------------------------------------------------------
@@ -679,6 +687,11 @@ function loadSettings() {
 function saveSettings(settings) {
   fs.mkdirSync(app.getPath("userData"), { recursive: true });
   fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2), "utf8");
+}
+
+function currentDesktopLocale() {
+  const osLocale = typeof app.getLocale === "function" ? app.getLocale() : undefined;
+  return normalizeDesktopLocale(loadSettings(), osLocale);
 }
 
 /**
@@ -2405,6 +2418,22 @@ function registerIpc() {
     if (scheme === "light" || scheme === "dark" || scheme === "system") {
       nativeTheme.themeSource = scheme;
     }
+  });
+
+  // Mirror the web app's language preference onto native settings and the
+  // shell-owned update overlay. Invalid values and foreign senders are inert.
+  ipcMain.on("omnigent:set-language", (event, payload) => {
+    if (!isPinnedOriginSender(event)) return;
+    const preference = payload?.preference;
+    const effectiveLanguage = payload?.effectiveLanguage;
+    if (!isLanguagePreference(preference) || !isSupportedLanguage(effectiveLanguage)) return;
+    const expected = resolveDesktopLocale(preference, app.getLocale?.()).effectiveLanguage;
+    if (expected !== effectiveLanguage) return;
+    const settings = loadSettings();
+    settings.ui_language = preference;
+    settings.ui_locale = effectiveLanguage;
+    saveSettings(settings);
+    updateOverlay.setLocale(effectiveLanguage);
   });
 
   // SPA → start / stop / restart this machine's host daemon for the window's
