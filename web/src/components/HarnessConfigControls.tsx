@@ -1,4 +1,5 @@
 import { type ReactNode, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   Select,
@@ -87,6 +88,20 @@ export function DescribedSelect({
   testId: string;
   ariaLabel: string;
 }) {
+  const { t } = useTranslation("models");
+  const translatedLabel = (label: string) => {
+    const key = {
+      Low: "reasoning.low",
+      Medium: "reasoning.medium",
+      High: "reasoning.high",
+      xHigh: "reasoning.xhigh",
+      Max: "reasoning.max",
+      Default: "reasoning.default",
+      "No override": "reasoning.none",
+      "Smart Routing": "smartRouting",
+    }[label];
+    return key ? t(key, { defaultValue: label }) : label;
+  };
   const [previewed, setPreviewed] = useState<string | null>(null);
   const detail = options.find((o) => o.value === (previewed ?? value))?.description;
   return (
@@ -116,7 +131,7 @@ export function DescribedSelect({
             onPointerEnter={() => setPreviewed(o.value)}
             onFocus={() => setPreviewed(o.value)}
           >
-            {o.label}
+            {translatedLabel(o.label)}
           </SelectItem>
         ))}
         {/* Footer blurb pinned inside the dropdown, tracking the hovered row.

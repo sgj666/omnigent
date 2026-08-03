@@ -1,4 +1,23 @@
 {
   "meta": { "languageName": "English" },
-  "title": "Models"
+  "title": "Models",
+  "reasoning": {
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "xhigh": "xHigh",
+    "max": "Max",
+    "none": "No override",
+    "default": "Default"
+  },
+  "selectOrType": "Select or type a value…",
+  "smartRouting": "Smart Routing",
+  "model": "Model",
+  "effort": "Reasoning effort",
+  "permissions": "Permissions",
+  "approval": "Approval",
+  "harness": "Agent Harness",
+  "underlyingLlm": "Underlying LLM",
+  "reasoningDepth": "Reasoning depth vs. speed",
+  "autoPick": "Auto-pick the model per turn by task"
 }

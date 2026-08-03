@@ -20,6 +20,7 @@
 
 import { CheckIcon, XIcon, ZapIcon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -44,6 +45,7 @@ export function ExitPlanModeReview({
   onReject,
   canApprove = true,
 }: ExitPlanModeReviewProps) {
+  const { t } = useTranslation("tools");
   const [rejecting, setRejecting] = useState(false);
   const [feedback, setFeedback] = useState("");
 
@@ -61,7 +63,9 @@ export function ExitPlanModeReview({
         <div className="flex flex-col gap-2 pt-1" data-testid="exit-plan-mode-feedback">
           <Textarea
             autoFocus
-            placeholder="What should change about the plan? (optional)"
+            placeholder={t("approval.planFeedbackPlaceholder", {
+              defaultValue: "What should change about the plan? (optional)",
+            })}
             value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
             className="min-h-20 text-sm"
@@ -69,10 +73,10 @@ export function ExitPlanModeReview({
           <div className="flex flex-wrap gap-2">
             <Button size="sm" onClick={() => onReject(feedback)}>
               <XIcon className="mr-1 size-3.5" />
-              Reject plan
+              {t("approval.rejectPlan", { defaultValue: "Reject plan" })}
             </Button>
             <Button size="sm" variant="ghost" onClick={() => setRejecting(false)}>
-              Cancel
+              {t("approval.cancel", { defaultValue: "Cancel" })}
             </Button>
           </div>
         </div>
@@ -80,15 +84,15 @@ export function ExitPlanModeReview({
         <div className="flex flex-wrap gap-2 pt-1">
           <Button size="sm" onClick={onAcceptAuto} disabled={!canApprove}>
             <ZapIcon className="mr-1 size-3.5" />
-            Yes, and use auto mode
+            {t("approval.yesAuto", { defaultValue: "Yes, and use auto mode" })}
           </Button>
           <Button size="sm" variant="outline" onClick={onAccept} disabled={!canApprove}>
             <CheckIcon className="mr-1 size-3.5" />
-            Yes, manually approve edits
+            {t("approval.yesManual", { defaultValue: "Yes, manually approve edits" })}
           </Button>
           <Button size="sm" variant="outline" onClick={() => setRejecting(true)}>
             <XIcon className="mr-1 size-3.5" />
-            Reject with feedback
+            {t("approval.rejectFeedback", { defaultValue: "Reject with feedback" })}
           </Button>
         </div>
       )}

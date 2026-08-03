@@ -1,4 +1,47 @@
 {
   "meta": { "languageName": "简体中文" },
-  "title": "智能体"
+  "title": "智能体",
+  "remove": "移除",
+  "mcpServersUpdated": "MCP 服务器已更新。重启会话后生效。",
+  "usage": {
+    "tokenUsage": "Token 用量",
+    "input": "输入",
+    "output": "输出",
+    "cacheRead": "缓存读取",
+    "cacheWrite": "缓存写入",
+    "total": "总计",
+    "cost": "费用",
+    "sessionCost": "会话费用"
+  },
+  "policy": {
+    "addTitle": "添加策略",
+    "choose": "选择要应用于此会话的策略。",
+    "filter": "筛选策略…",
+    "adding": "添加中…",
+    "add": "添加",
+    "noPolicies": "尚未添加策略"
+  },
+  "mcp": {
+    "manageTitle": "管理 MCP 服务器",
+    "description": "为此会话添加、编辑或移除 MCP 服务器。",
+    "servers": "服务器",
+    "tools": "工具",
+    "noServers": "暂无 MCP 服务器",
+    "edit": "编辑服务器",
+    "new": "新建服务器",
+    "save": "保存",
+    "saving": "保存中…",
+    "manage": "管理 MCP 服务器",
+    "addHeader": "添加请求头",
+    "removeHeader": "移除请求头",
+    "optional": "可选"
+  },
+  "labels": {
+    "owner": "所有者",
+    "sessionId": "会话 ID",
+    "copySessionId": "复制会话 ID",
+    "copiedSessionId": "已复制会话 ID",
+    "agentToolsPolicies": "智能体工具与策略",
+    "agentToolsPoliciesTooltip": "智能体工具与策略"
+  }
 }

@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { CheckIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -19,13 +20,14 @@ export function ModelValueCombobox({
   options,
   selected,
   onToggle,
-  placeholder = "Select or type a value…",
+  placeholder,
 }: {
   options: string[];
   selected: string[];
   onToggle: (value: string) => void;
   placeholder?: string;
 }) {
+  const { t } = useTranslation("models");
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -63,7 +65,7 @@ export function ModelValueCombobox({
         ref={inputRef}
         type="text"
         value={query}
-        placeholder={placeholder}
+        placeholder={placeholder ?? t("selectOrType", { defaultValue: "Select or type a value…" })}
         onChange={(e) => {
           setQuery(e.target.value);
           setOpen(true);

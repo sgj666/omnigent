@@ -1,4 +1,23 @@
 {
   "meta": { "languageName": "简体中文" },
-  "title": "模型"
+  "title": "模型",
+  "reasoning": {
+    "low": "低",
+    "medium": "中",
+    "high": "高",
+    "xhigh": "超高",
+    "max": "最大",
+    "none": "不覆盖",
+    "default": "默认"
+  },
+  "selectOrType": "选择或输入值…",
+  "smartRouting": "智能路由",
+  "model": "模型",
+  "effort": "推理强度",
+  "permissions": "权限",
+  "approval": "审批",
+  "harness": "智能体运行框架",
+  "underlyingLlm": "底层大语言模型",
+  "reasoningDepth": "推理深度与速度的权衡",
+  "autoPick": "按任务自动选择每轮模型"
 }

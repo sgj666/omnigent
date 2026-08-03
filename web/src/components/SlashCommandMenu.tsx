@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { CommandIcon, WandSparklesIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -170,6 +171,7 @@ export function SlashCommandMenu({
   onSelect,
   commands,
 }: SlashCommandMenuProps) {
+  const { t } = useTranslation("tools");
   const matchedNames = rankedSlashCommandNames(commands, query);
   const listRef = useRef<HTMLDivElement>(null);
   // Keep the keyboard-highlighted row visible as the user arrows past the
@@ -203,7 +205,7 @@ export function SlashCommandMenu({
     <div className="absolute bottom-full left-0 z-10 mb-2 flex items-end gap-2">
       <div className="w-64 shrink-0 overflow-hidden rounded-xl border border-border bg-popover shadow-lg">
         <div ref={listRef} className="max-h-80 overflow-y-auto p-1">
-          {builtinRows.length > 0 && sectionHeader("Commands")}
+          {builtinRows.length > 0 && sectionHeader(t("commands", { defaultValue: "Commands" }))}
           {builtinRows.map((row) => (
             <MenuRowButton
               key={row.name}
@@ -212,7 +214,7 @@ export function SlashCommandMenu({
               onSelect={onSelect}
             />
           ))}
-          {skillRows.length > 0 && sectionHeader("Skills")}
+          {skillRows.length > 0 && sectionHeader(t("skills", { defaultValue: "Skills" }))}
           {skillRows.map((row) => (
             <MenuRowButton
               key={row.name}

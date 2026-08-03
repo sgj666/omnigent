@@ -31,6 +31,7 @@
 
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { type ChangeEvent, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import type { ClaudeQuestion } from "@/lib/askUserQuestion";
 
@@ -89,6 +90,7 @@ export function AskUserQuestionForm({
   onReject,
   canSubmit = true,
 }: AskUserQuestionFormProps) {
+  const { t } = useTranslation("tools");
   // Currently-visible question (carousel index).
   const [currentIndex, setCurrentIndex] = useState(0);
 
@@ -325,7 +327,7 @@ export function AskUserQuestionForm({
                 scrolling within a fixed single row. */}
             <textarea
               rows={1}
-              placeholder="Type something"
+              placeholder={t("typeSomething", { defaultValue: "Type something" })}
               value={customRowValue}
               onChange={(e) => handleCustomInput(currentKey, e)}
               data-testid="ask-user-question-custom-input"
@@ -356,7 +358,7 @@ export function AskUserQuestionForm({
           data-testid="ask-user-question-prev"
         >
           <ChevronLeftIcon className="mr-1 size-3.5" />
-          Prev
+          {t("previous", { defaultValue: "Previous" })}
         </Button>
         {!isLast && (
           <Button
@@ -365,7 +367,7 @@ export function AskUserQuestionForm({
             onClick={() => setCurrentIndex((i) => i + 1)}
             data-testid="ask-user-question-next"
           >
-            Next
+            {t("next", { defaultValue: "Next" })}
             <ChevronRightIcon className="ml-1 size-3.5" />
           </Button>
         )}
@@ -377,12 +379,12 @@ export function AskUserQuestionForm({
             data-testid="ask-user-question-submit"
           >
             <CheckIcon className="mr-1 size-3.5" />
-            Submit
+            {t("submit", { defaultValue: "Submit" })}
           </Button>
         )}
         <Button size="sm" variant="outline" onClick={onReject} className="ml-auto">
           <XIcon className="mr-1 size-3.5" />
-          Cancel
+          {t("approval.cancel", { defaultValue: "Cancel" })}
         </Button>
       </div>
     </div>

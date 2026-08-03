@@ -1,4 +1,47 @@
 {
   "meta": { "languageName": "English" },
-  "title": "Agents"
+  "title": "Agents",
+  "remove": "Remove",
+  "mcpServersUpdated": "MCP servers updated. Restart the session to apply changes.",
+  "usage": {
+    "tokenUsage": "Token usage",
+    "input": "Input",
+    "output": "Output",
+    "cacheRead": "Cache read",
+    "cacheWrite": "Cache write",
+    "total": "Total",
+    "cost": "Cost",
+    "sessionCost": "Session cost"
+  },
+  "policy": {
+    "addTitle": "Add Policy",
+    "choose": "Choose a policy to apply to this session.",
+    "filter": "Filter policies…",
+    "adding": "Adding…",
+    "add": "Add",
+    "noPolicies": "No policies added"
+  },
+  "mcp": {
+    "manageTitle": "Manage MCP Servers",
+    "description": "Add, edit, or remove MCP servers for this session.",
+    "servers": "Servers",
+    "tools": "Tools",
+    "noServers": "No MCP servers",
+    "edit": "Edit Server",
+    "new": "New Server",
+    "save": "Save",
+    "saving": "Saving…",
+    "manage": "Manage MCP servers",
+    "addHeader": "Add header",
+    "removeHeader": "Remove header",
+    "optional": "Optional"
+  },
+  "labels": {
+    "owner": "Owner",
+    "sessionId": "Session ID",
+    "copySessionId": "Copy session ID",
+    "copiedSessionId": "Copied session ID",
+    "agentToolsPolicies": "Agent tools and policies",
+    "agentToolsPoliciesTooltip": "Agent tools & policies"
+  }
 }
