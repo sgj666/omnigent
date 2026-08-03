@@ -49,6 +49,7 @@ import {
   SquareCheckIcon,
   SquarePenIcon,
   Trash2Icon,
+  UsersIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -251,7 +252,7 @@ interface SidebarProps {
 }
 
 /**
- * Which top-level nav button (New session / Inbox) is active for the current
+ * Which top-level nav button is active for the current route.
  * route.
  *
  * The inbox route has no param to key off, and the sidebar is basename-agnostic
@@ -265,15 +266,19 @@ function useActiveNavItem(): {
   isNewChatPage: boolean;
   isInboxPage: boolean;
   isTasksPage: boolean;
+  isTeamsPage: boolean;
 } {
   const { conversationId: activeConversationId } = useParams<{ conversationId: string }>();
-  const leaf = useLocation().pathname.split("/").filter(Boolean).at(-1);
+  const segments = useLocation().pathname.split("/").filter(Boolean);
+  const leaf = segments.at(-1);
   const isInboxPage = leaf === "inbox";
   const isTasksPage = leaf === "tasks";
-  // Exclude inbox/tasks: they also have no `:conversationId`, so they would
-  // otherwise light up the "New session" button.
-  const isNewChatPage = activeConversationId == null && !isInboxPage && !isTasksPage;
-  return { isNewChatPage, isInboxPage, isTasksPage };
+  const isTeamsPage = segments.includes("teams") || segments.includes("runs");
+  // Exclude top-level tools: they also have no `:conversationId`, so they
+  // would otherwise light up the "New session" button.
+  const isNewChatPage =
+    activeConversationId == null && !isInboxPage && !isTasksPage && !isTeamsPage;
+  return { isNewChatPage, isInboxPage, isTasksPage, isTeamsPage };
 }
 
 /**
@@ -526,7 +531,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
   }
 
   // Which top-level nav button to highlight for the current route.
-  const { isNewChatPage, isInboxPage, isTasksPage } = useActiveNavItem();
+  const { isNewChatPage, isInboxPage, isTasksPage, isTeamsPage } = useActiveNavItem();
 
   // On /settings the card keeps its chrome but swaps the conversation list
   // for the settings section nav (see settingsNav.tsx) — entering settings
@@ -829,6 +834,21 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                     {inboxCount}
                   </span>
                 )}
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className={cn(
+                "sidebar-compact-text h-7 w-full justify-start gap-2 rounded-[var(--radius-otto-button)] border-0 px-2 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isTeamsPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              data-testid="teams-nav"
+            >
+              <Link to="/teams" onClick={onNavClick}>
+                <UsersIcon className="size-3.5 text-muted-foreground" />
+                Teams
               </Link>
             </Button>
           </div>

@@ -1,7 +1,6 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, Outlet, useLocation, useParams, useSearchParams } from "@/lib/routing";
-import { UsersIcon } from "lucide-react";
+import { Outlet, useParams, useSearchParams } from "@/lib/routing";
 import { useConversations } from "@/hooks/useConversations";
 import { useSessionAgent } from "@/hooks/useAgents";
 import { useApproveHotkey } from "@/hooks/useApproveHotkey";
@@ -139,7 +138,6 @@ export function AppShell() {
   // Read early: the conversationId scopes the per-session workspace state
   // (rail open/width/tab/open files) used throughout this component.
   const { conversationId } = useParams<{ conversationId: string }>();
-  const location = useLocation();
   const [fileViewerCommentsOpen, setFileViewerCommentsOpen] = useState(false);
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>(() =>
     conversationId ? (readSessionWorkspaceState(conversationId).rightRailTab ?? "files") : "files",
@@ -1374,24 +1372,6 @@ export function AppShell() {
           flex row holding the chat+workspace group and the push panels
           as siblings. */}
             <div className="relative flex min-h-0 min-w-0 flex-1">
-              <nav
-                aria-label="Primary navigation"
-                className="absolute left-2 top-1 z-40 md:left-3"
-              >
-                <Link
-                  to="/teams"
-                  aria-current={location.pathname.endsWith("/teams") ? "page" : undefined}
-                  className={cn(
-                    "inline-flex h-7 items-center gap-1.5 rounded-[var(--radius-otto-button)] px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-[var(--sidebar-hover)] hover:text-foreground",
-                    location.pathname.includes("/teams") || location.pathname.includes("/runs/")
-                      ? "bg-[var(--sidebar-active)] text-[var(--sidebar-active-foreground)]"
-                      : undefined,
-                  )}
-                >
-                  <UsersIcon className="size-3.5" />
-                  Teams
-                </Link>
-              </nav>
               {/* Chat + workspace group. The full-width header overlay is
             scoped to this group, so it spans the chat *and* the right
             workspace card but never reaches over the push panels (which

@@ -423,6 +423,26 @@ describe("Sidebar session list", () => {
     );
   });
 
+  it("renders Teams in the primary navigation after Inbox and before Projects", () => {
+    mockConversations(THREE_TYPE_CONVERSATIONS);
+    renderSidebar(true, "/teams");
+
+    const primaryNav = screen.getByTestId("sidebar-primary-nav");
+    const inbox = within(primaryNav).getByTestId("inbox-button");
+    const teams = within(primaryNav).getByTestId("teams-nav");
+    const projects = screen.getByText("Projects");
+
+    expect(teams).toHaveAttribute("href", "/teams");
+    expect(teams).toHaveTextContent("Teams");
+    expect(teams).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(inbox.compareDocumentPosition(teams) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(teams.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
   it("marks the 'Automations' nav row active when on /tasks", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
     renderSidebar(true, "/tasks");
