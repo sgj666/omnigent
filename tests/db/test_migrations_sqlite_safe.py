@@ -163,3 +163,53 @@ def test_full_migration_chain_round_trips_on_sqlite() -> None:
             )
         finally:
             engine.dispose()
+
+
+def test_harness_event_sequence_backfills_existing_workspace_rows(tmp_path: Path) -> None:
+    """The sequence migration handles multiple pre-existing rows per workspace."""
+
+    uri = f"sqlite:///{tmp_path / 'sequence-backfill.db'}"
+    config = Config()
+    config.set_main_option(
+        "script_location", str(Path(omnigent.db.__file__).parent / "migrations")
+    )
+    config.set_main_option("sqlalchemy.url", uri)
+    command.upgrade(config, "za1b2c3d4e5f")
+
+    engine = sa.create_engine(uri)
+    run_id = bytes.fromhex("0123456789abcdef0123456789abcdef")
+    with engine.begin() as connection:
+        for row_id, created_at in (
+            (bytes.fromhex("00000000000000000000000000000003"), 20),
+            (bytes.fromhex("00000000000000000000000000000001"), 10),
+            (bytes.fromhex("00000000000000000000000000000002"), 10),
+        ):
+            connection.execute(
+                sa.text(
+                    "INSERT INTO harness_events "
+                    "(workspace_id, id, event_id, run_id, event_type, created_at) "
+                    "VALUES (:workspace_id, :id, :event_id, :run_id, :event_type, :created_at)"
+                ),
+                {
+                    "workspace_id": 7,
+                    "id": row_id,
+                    "event_id": row_id.hex(),
+                    "run_id": run_id,
+                    "event_type": "worker_completed",
+                    "created_at": created_at,
+                },
+            )
+
+    command.upgrade(config, "zb2c3d4e5f6a")
+    with engine.connect() as connection:
+        sequence_rows = (
+            connection.execute(
+                sa.text(
+                    "SELECT sequence FROM harness_events WHERE workspace_id = 7 ORDER BY sequence"
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert sequence_rows == [1, 2, 3]
+    engine.dispose()

@@ -1828,6 +1828,7 @@ class SqlHarnessEvent(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     event_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
     run_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
@@ -1837,6 +1838,8 @@ class SqlHarnessEvent(OmnigentBase):
 
     __table_args__ = (
         UniqueConstraint("workspace_id", "event_id", name="uq_harness_events_event_id"),
+        UniqueConstraint("workspace_id", "sequence", name="uq_harness_events_sequence"),
+        Index("ix_harness_events_workspace_sequence", "workspace_id", "sequence", "id"),
         Index("ix_harness_events_attempt_id", "workspace_id", "attempt_id", "id"),
     )
 
