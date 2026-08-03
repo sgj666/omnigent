@@ -178,6 +178,59 @@ send_test         → 发送一条无副作用测试消息
 
 Phase 2 再增加 Card Builder：用户可以通过表单或拖拽配置头部、状态区、进度区、详情区、产物区和操作区，并从白名单中选择组件和动作。高级模板仍然只能使用受限 Card Schema，不能执行任意服务端动作。
 
+### 4.6 Bot Surface：扫码后自动初始化机器人工作台
+
+扫码安装成功后，Lark Adapter 不仅保存 Installation，还调用幂等的 `Bot Surface Provisioner` 初始化默认机器人工作台。工作台分为三层：飞书应用级入口、机器人工作台级上下文选择器和 Run 级动态操作。
+
+默认 Surface Profile 为 `omnigent-team`：
+
+```yaml
+feishu_surface:
+  preset: omnigent-team
+  top_entries: [team_work, all_sessions, code_changes, settings]
+  quick_commands:
+    - create_run
+    - current_run
+    - workers
+    - failures
+    - switch_workspace
+    - deliverables
+    - help
+  context_selectors: [workspace, repository, host, execution_mode]
+  defaults:
+    workspace: current_thread
+    repository: all
+    host: auto
+    execution_mode: auto
+```
+
+对应的用户体验为：
+
+```text
+顶部入口：团队工作 | 全部会话 | 代码变更 | 设置
+快捷指令：新建任务 | 当前任务 | 查看 Worker | 查看失败
+           切换工作区 | 查看成品 | 帮助
+上下文选择：工作区 | 仓库/服务 | 本地 Host | 执行模式
+```
+
+工作区选择只改变当前话题后续新 Run 的默认值；仓库选择是 Coordinator 的上下文提示，默认“全部仓库”，不直接强制限制 Coordinator 的影响范围；Host 默认由 Coordinator 根据资源自动选择；执行模式为“自动模式、谨慎模式、只读分析”。第一阶段不把具体模型、Harness 或 Worker Profile 做成常驻选择器，以保持 Coordinator 的自动路由。
+
+Provisioner 先执行能力探测：如果当前 PersonalAgent/租户权限支持飞书应用级菜单或入口 API，就创建或更新对应菜单；如果不支持，则发送或更新一张常驻的“Omnigent 工作台”交互卡片，提供相同的入口和选择器。降级不是失败，必须在 UI 和 Ledger 中记录为 `partial`，并明确哪些入口使用了卡片替代。
+
+安装记录增加以下 Surface 状态：
+
+```text
+surface_profile_id
+surface_version
+provision_status: pending | ready | partial | failed
+provision_error
+last_provisioned_at
+```
+
+Provisioner 必须幂等：重复扫码、服务重启或手动“重新初始化工作台”都不能创建重复菜单、重复快捷指令或重复工作台卡片。每次初始化、更新、降级和失败均写入 Ledger。
+
+第一版的常驻操作固定为查看 Run、查看 Worker、查看失败、切换工作区、查看成品、帮助和新建任务；写操作仍然通过 Coordinator/状态机，不能从常驻菜单直接执行任意命令。后续 Web UI 可调整显示顺序、隐藏入口并增加白名单中的受限动作。
+
 ## 5. Workspace Bundle 与多仓支持
 
 ### 5.1 目录兼容原则
@@ -329,7 +382,7 @@ Feishu Event → Run → Plan Revision → Task → Attempt → Session
 - 多仓 manifest 解析和独立 worktree；
 - Codex/Claude Worker Profile；
 - 自动测试、Review、失败分类和飞书汇总通知；
-- Web UI Team Builder、Agent Pairing 和固定卡片快捷操作。
+- Web UI Team Builder、Agent Pairing、固定卡片快捷操作和默认 Bot Surface 初始化。
 
 ### Phase 2：恢复与治理
 
@@ -339,7 +392,8 @@ Feishu Event → Run → Plan Revision → Task → Attempt → Session
 - Policy 审批和 Hard Block 卡片；
 - Worker 失败自动换 Profile/Harness；
 - 详情页事件追踪；
-- `card.action.trigger` 回调、签名校验、幂等和卡片更新。
+- `card.action.trigger` 回调、签名校验、幂等和卡片更新；
+- 飞书应用级菜单能力探测、创建和常驻工作台卡片降级。
 
 ### Phase 3：评测与规模化
 
