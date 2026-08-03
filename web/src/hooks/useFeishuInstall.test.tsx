@@ -103,4 +103,31 @@ describe("useFeishuInstallStatus", () => {
     await act(async () => void (await vi.advanceTimersByTimeAsync(5_000)));
     expect(pollMock).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps the verification URL while a pending installation is polled", async () => {
+    pollMock.mockResolvedValue({
+      session: "device-code-1",
+      status: "pending",
+      interval: 5,
+      polled: true,
+    });
+    const { result } = renderHook(
+      () =>
+        useFeishuInstallStatus({
+          session: "device-code-1",
+          status: "pending",
+          interval: 5,
+          verification_uri_complete: "https://open.feishu.cn/page/launcher?user_code=TEST",
+        }),
+      { wrapper },
+    );
+
+    await act(async () => void (await vi.advanceTimersByTimeAsync(5_000)));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(1)));
+
+    expect(result.current.data?.polled).toBe(true);
+    expect(result.current.data?.verification_uri_complete).toBe(
+      "https://open.feishu.cn/page/launcher?user_code=TEST",
+    );
+  });
 });

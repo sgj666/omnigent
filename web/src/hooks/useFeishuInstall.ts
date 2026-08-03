@@ -21,7 +21,10 @@ export function useFeishuInstallStatus(session: FeishuInstallSession | null, ena
   return useQuery({
     queryKey:
       session === null ? feishuInstallQueryKey : [...feishuInstallQueryKey, session.session],
-    queryFn: () => pollFeishuInstall((session as FeishuInstallSession).session),
+    queryFn: async () => ({
+      ...(session as FeishuInstallSession),
+      ...(await pollFeishuInstall((session as FeishuInstallSession).session)),
+    }),
     enabled: enabled && session !== null,
     initialData: session ?? undefined,
     staleTime: intervalMs,
