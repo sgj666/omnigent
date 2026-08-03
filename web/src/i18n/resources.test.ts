@@ -65,4 +65,24 @@ describe("bundled localization resources", () => {
     expect(resources.en.common.documentTitle).toBe("Omnigent");
     expect(resources["zh-CN"].common.documentTitle).toBe("Omnigent");
   });
+
+  it("keeps ChatPage status and context feedback professionally localized", () => {
+    expect(resources["zh-CN"].chat).toMatchObject({
+      loadingConversation: "正在加载会话…",
+      conversationLoadFailed: "无法加载",
+      startNewChat: "开始新聊天",
+      jumpToFirstMessage: "跳转到第一条消息",
+      planMode: "规划模式",
+      contextUsed: "已使用上下文的 {{percent}}%",
+      contextUsage: "{{used}} / {{limit}} Token（{{percent}}%）",
+      contextWindowUnknown: "（上下文窗口大小未知）",
+      contextUsageUnavailable: "暂无用量数据 — 发送一条消息后即可查看。",
+      contextItems: "上下文中的条目：{{count}}",
+      unknownCommand: "未知命令：{{command}}。可用命令：{{available}}",
+      closedSubAgent: "此子智能体会话已关闭",
+      readOnlySubAgent: "Claude Code 子智能体为只读",
+    });
+    expect(resources["zh-CN"].chat.contextModel).toContain("{{model}}");
+    expect(resources["zh-CN"].chat.contextModelOverride).toContain("{{model}}");
+  });
 });

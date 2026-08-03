@@ -574,6 +574,7 @@ const sessionDrafts = loadDraftsFromStorage();
  * items fetch (no useConversationItems here).
  */
 export function ChatPage() {
+  const { t } = useTranslation("chat");
   const { conversationId: urlConvId } = useParams<{ conversationId: string }>();
   const navigate = useNavigate();
   // Optional first message handed off by the landing composer through the
@@ -1080,7 +1081,8 @@ export function ChatPage() {
     conversationsData !== undefined,
   );
   const canApprove = activeSession?.canApprove ?? activeConv?.can_approve ?? true;
-  const readOnlyReason = readOnlyReasonForSessionLabels(activeSession, activeConv);
+  const readOnlyReasonCode = readOnlyReasonForSessionLabels(activeSession, activeConv);
+  const readOnlyReason = readOnlyReasonCode === null ? null : t(readOnlyReasonCode);
   // Once present, the live session snapshot is authoritative.
   const capabilitySource = {
     labels: activeSession ? (activeSession.labels ?? {}) : (activeConv?.labels ?? {}),
@@ -1901,10 +1903,11 @@ function MainAgentSurface({
 }
 
 function HydratingPlaceholder() {
+  const { t } = useTranslation("chat");
   return (
     <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground text-sm">
       <Loader2Icon className="size-4 animate-spin" />
-      Loading conversation…
+      {t("loadingConversation")}
     </div>
   );
 }
@@ -1931,13 +1934,13 @@ function ConversationLoadError({
       <div className="flex max-w-md flex-col items-center gap-3 text-center">
         <h1 className="font-medium text-foreground text-lg">{t("conversationNotFound")}</h1>
         <p className="text-muted-foreground text-sm">
-          Couldn't load{" "}
+          {t("conversationLoadFailed")}{" "}
           <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{conversationId}</code>
           : {error.message}
         </p>
         {/* Route to the home composer ("/"), which owns session creation. */}
         <Button type="button" variant="outline" onClick={() => navigate("/")}>
-          Start a new chat
+          {t("startNewChat")}
         </Button>
       </div>
     </div>
@@ -2558,7 +2561,7 @@ export function JumpToTopButton({
         size="sm"
         disabled={jumping}
         onClick={() => void jumpToTop()}
-        aria-label="Jump to the first message"
+        aria-label={t("jumpToFirstMessage")}
         // When hidden (opacity-0 / pointer-events-none) keep the button out of
         // the tab order and the accessibility tree so it can't take focus or be
         // announced while invisible.
@@ -3709,6 +3712,7 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * 5.5;
 
 /** Circular progress ring showing how much context window is used, with the used percentage beside it. */
 function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tokensUsed: number }) {
+  const { t } = useTranslation("chat");
   const pct = Math.min(tokensUsed / contextWindow, 1);
   // Arc, %, label, and tooltip all encode context USED: a fresh session
   // shows an empty ring at 0% and the ring fills as context is consumed.
@@ -3723,7 +3727,7 @@ function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tok
       <TooltipTrigger asChild>
         <span
           className={cn("flex items-center gap-1.5", color)}
-          aria-label={`${usedPct}% of context used`}
+          aria-label={t("contextUsed", { percent: usedPct })}
         >
           <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
             {/* Track */}
@@ -3748,7 +3752,7 @@ function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tok
         </span>
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-44 text-center text-xs">
-        <p className="tabular-nums">{usedPct}% of context used.</p>
+        <p className="tabular-nums">{t("contextUsedTooltip", { percent: usedPct })}</p>
       </TooltipContent>
     </Tooltip>
   );
@@ -3859,6 +3863,7 @@ function ComposerStatusLine({
    */
   onHostReconnect?: () => void;
 }) {
+  const { t } = useTranslation("chat");
   const conversationId = useChatStore((s) => s.conversationId);
   const contextWindow = useChatStore((s) => s.contextWindow);
   const tokensUsed = useChatStore((s) => s.tokensUsed);
@@ -3939,7 +3944,7 @@ function ComposerStatusLine({
             className="inline-flex items-center gap-1 text-xs font-medium text-foreground"
           >
             <FileTextIcon className="size-3.5 shrink-0" />
-            <span>Plan mode</span>
+            <span>{t("planMode")}</span>
           </span>
         )}
         {showGoal && goal && <GoalStatusPill goal={goal} />}
@@ -4481,8 +4486,11 @@ export function Composer({
         const state = useChatStore.getState();
         const { contextWindow, llmModel, sessionModelOverride, tokensUsed, blocks } = state;
         const lines: string[] = [];
-        if (sessionModelOverride) lines.push(`Model: ${sessionModelOverride} (override)`);
-        else if (llmModel) lines.push(`Model: ${llmModel}`);
+        if (sessionModelOverride) {
+          lines.push(t("contextModelOverride", { model: sessionModelOverride }));
+        } else if (llmModel) {
+          lines.push(t("contextModel", { model: llmModel }));
+        }
         // contextWindow > 0 keeps a zero window out of the division (0/0 → "NaN%").
         if (tokensUsed != null && contextWindow != null && contextWindow > 0) {
           const pct = Math.min(tokensUsed / contextWindow, 1);
@@ -4490,16 +4498,20 @@ export function Composer({
           const bar = "█".repeat(filled) + "░".repeat(20 - filled);
           const pctStr = (pct * 100).toFixed(1);
           lines.push(
-            `${tokensUsed.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${pctStr}%)`,
+            t("contextUsage", {
+              used: tokensUsed.toLocaleString(),
+              limit: contextWindow.toLocaleString(),
+              percent: pctStr,
+            }),
           );
           lines.push(bar);
         } else if (tokensUsed != null) {
-          lines.push(`${tokensUsed.toLocaleString()} tokens`);
-          lines.push("(Context window size unknown)");
+          lines.push(t("contextUsageOnly", { used: tokensUsed.toLocaleString() }));
+          lines.push(t("contextWindowUnknown"));
         } else {
-          lines.push("No usage data yet — send a message first.");
+          lines.push(t("contextUsageUnavailable"));
         }
-        lines.push(`Items in context: ${blocks.length}`);
+        lines.push(t("contextItems", { count: blocks.length }));
         setCommandError(lines.join("\n"));
         return true;
       }
@@ -4510,7 +4522,10 @@ export function Composer({
       }
       default:
         setCommandError(
-          `Unknown command: ${cmd}. Available: ${Object.keys(slashCommands).join(", ")}`,
+          t("unknownCommand", {
+            command: cmd,
+            available: Object.keys(slashCommands).join(", "),
+          }),
         );
         return false;
     }
@@ -5481,17 +5496,19 @@ type LabelSource = { labels?: Record<string, string | null> | null } | null | un
  * @returns Placeholder text for the composer when the session is
  *   structurally read-only, or ``null`` when normal permissions apply.
  */
+export type ReadOnlyReasonCode = "closedSubAgent" | "readOnlySubAgent";
+
 export function readOnlyReasonForSessionLabels(
   activeSession: LabelSource,
   activeConv: LabelSource,
-): string | null {
+): ReadOnlyReasonCode | null {
   const closed =
     activeSession?.labels?.["omnigent.closed"] ?? activeConv?.labels?.["omnigent.closed"];
-  if (closed === "true") return "This sub-agent session is closed";
+  if (closed === "true") return "closedSubAgent";
   const wrapper =
     activeSession?.labels?.["omnigent.wrapper"] ?? activeConv?.labels?.["omnigent.wrapper"];
   if (wrapper === "claude-code-native-ui-subagent") {
-    return "Claude Code sub-agents are read-only";
+    return "readOnlySubAgent";
   }
   return null;
 }

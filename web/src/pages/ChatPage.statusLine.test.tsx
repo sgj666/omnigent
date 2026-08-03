@@ -8,6 +8,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useChatStore } from "@/store/chatStore";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 // Composer reads workspace files via a TanStack query hook (for "@"-file
 // mentions); these status-line tests don't exercise it, so stub the hook to
@@ -174,6 +175,22 @@ describe("Composer status line (branch + context ring)", () => {
     // 25k of 100k → 25% used; a wrong value means the ring wired the
     // wrong store fields through its props.
     expect(screen.getByLabelText("25% of context used")).toBeInTheDocument();
+  });
+
+  it("localizes the context ring accessibility label and Plan mode badge", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      useChatStore.setState({
+        contextWindow: 100_000,
+        tokensUsed: 25_000,
+        codexPlanMode: true,
+      });
+      renderComposer();
+      expect(screen.getByLabelText("已使用上下文的 25%")).toBeInTheDocument();
+      expect(screen.getByTestId("composer-plan-mode")).toHaveTextContent("规划模式");
+    } finally {
+      await restore();
+    }
   });
 
   it("no longer renders the harness label in the status tray (moved to the config gear)", () => {

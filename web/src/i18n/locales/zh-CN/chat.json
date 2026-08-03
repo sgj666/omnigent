@@ -4,6 +4,9 @@
   "emptyTitle": "我们接下来要处理什么？",
   "emptyDescription": "发送消息开始工作。",
   "conversationNotFound": "未找到会话",
+  "loadingConversation": "正在加载会话…",
+  "conversationLoadFailed": "无法加载",
+  "startNewChat": "开始新聊天",
   "working": "处理中…",
   "workingLabels": ["处理中…", "准备中…", "分析中…", "调整中…", "推理中…", "酝酿中…"],
   "backgroundTask_one": "仍有 1 个后台任务在运行",
@@ -11,6 +14,9 @@
   "loadingHistory": "正在加载历史记录…",
   "jumpToTop": "跳转到顶部",
   "jumpToFirstMessage": "跳转到第一条消息",
+  "contextUsed": "已使用上下文的 {{percent}}%",
+  "contextUsedTooltip": "已使用上下文的 {{percent}}%。",
+  "planMode": "规划模式",
   "sandboxLaunchFailed": "沙箱启动失败",
   "sandboxStages": {
     "provisioning": "正在准备沙箱",
@@ -58,5 +64,13 @@
   "enterPlanMode": "进入规划模式",
   "plan": "规划",
   "closedSubAgent": "此子智能体会话已关闭",
-  "readOnlySubAgent": "Claude Code 子智能体为只读"
+  "readOnlySubAgent": "Claude Code 子智能体为只读",
+  "contextModel": "模型：{{model}}",
+  "contextModelOverride": "模型：{{model}}（覆盖）",
+  "contextUsage": "{{used}} / {{limit}} Token（{{percent}}%）",
+  "contextUsageOnly": "{{used}} Token",
+  "contextWindowUnknown": "（上下文窗口大小未知）",
+  "contextUsageUnavailable": "暂无用量数据 — 发送一条消息后即可查看。",
+  "contextItems": "上下文中的条目：{{count}}",
+  "unknownCommand": "未知命令：{{command}}。可用命令：{{available}}"
 }
