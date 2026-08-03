@@ -1,6 +1,18 @@
 {
   "meta": { "languageName": "English" },
   "title": "Settings",
+  "nav": {
+    "desktop": "Desktop",
+    "general": "General",
+    "archived": "Archived",
+    "back": "Back to Omnigent",
+    "close": "Close sidebar",
+    "collapse": "Collapse sidebar",
+    "sharing": "Sharing",
+    "archivedSessions": "Archived sessions",
+    "localCli": "Local CLI",
+    "updates": "Updates"
+  },
   "language": {
     "title": "Language",
     "description": "Choose the language used throughout Omnigent.",
@@ -41,6 +53,7 @@
     "colorTheme": "Color theme",
     "colorThemeHelper": "Choose a preset, then tune it across light and dark mode.",
     "themePalette": "Theme palette",
+    "basedOn": "Based on {{palette}}",
     "custom": "Custom",
     "accent": "Accent",
     "backgroundTint": "Background tint",
@@ -55,7 +68,41 @@
     "codeFontSize": "Code font size",
     "codeFontFamily": "Code font family",
     "systemDefault": "System default",
-    "editorDefault": "Editor default"
+    "editorDefault": "Editor default",
+    "uiFontSizeHelper": "Scale text and spacing across the rest of the interface.",
+    "fontFamilyHelper": "Use any font installed on this device. Leave blank for the system default.",
+    "codeFontSizeHelper": "Size of code in the editor and terminal.",
+    "codeFontFamilyHelper": "Font for the code editor and terminal. Leave blank for the default.",
+    "decreaseUiFontSize": "Decrease interface font size",
+    "increaseUiFontSize": "Increase interface font size",
+    "uiFontSizePixels": "Interface font size in pixels",
+    "fontFamilyGroup": "Font family",
+    "uiFontFamilyAria": "UI font family",
+    "codeFontSizeGroup": "Code font size",
+    "decreaseCodeFontSize": "Decrease code font size",
+    "increaseCodeFontSize": "Increase code font size",
+    "codeFontSizePixels": "Code font size in pixels",
+    "codeFontFamilyGroup": "Code font family",
+    "codeFontFamilyAria": "Code font family",
+    "resetControl": "Reset",
+    "paletteBlurb": {
+      "omni": "The signature pink brand look.",
+      "dracula": "Moody purple with a pink pop.",
+      "github": "Clean neutrals with a signal blue.",
+      "catppuccin": "Soft pastels — Latte & Mocha.",
+      "gruvbox": "Warm retro earth tones.",
+      "nord": "Arctic frost blues over polar-night neutrals."
+    },
+    "paletteLabel": {
+      "omni": "Omnigent",
+      "dracula": "Dracula",
+      "github": "GitHub",
+      "catppuccin": "Catppuccin",
+      "gruvbox": "Gruvbox",
+      "nord": "Nord"
+    },
+    "contrastAria": "Theme contrast",
+    "translucentAria": "Translucent sidebars"
   },
   "git": {
     "title": "Git",
@@ -103,7 +150,11 @@
     "resetPath": "Reset path",
     "resetting": "Resetting…",
     "resetDescription": "Reset the configured CLI path and use automatic detection.",
-    "checkFailed": "Security verification failed."
+    "checkFailed": "Security verification failed.",
+    "found": "Found",
+    "securityNote": "For security, a custom path can only be set from the connect screen — this prevents a connected server from pointing the app at a different binary. Open it from the Server menu (Change Server…) and use the settings gear.",
+    "missingDescription": "The Omnigent CLI wasn't found. Install it, then set its path from the connect screen:",
+    "resetToAuto": "Reset to auto-detected"
   },
   "updates": {
     "title": "Updates",
@@ -118,6 +169,8 @@
     "lastCheckFailed": "Last check failed",
     "start": "Check when Omnigent starts",
     "manual": "Manual only",
-    "off": "Off"
+    "off": "Off",
+    "automatic": "Automatic (check periodically, ask before installing)",
+    "securityError": "Security verification failed."
   }
 }

@@ -245,7 +245,7 @@ export function MembersPage() {
                     )}
                   </td>
                   <td className="px-3 py-2 align-middle text-muted-foreground">
-                    {formatEpoch(u.last_login_at)}
+                    {formatEpoch(u.last_login_at, t)}
                   </td>
                   {manageable && (
                     <td className="px-3 py-2 text-right">
@@ -345,7 +345,7 @@ export function MembersPage() {
           <DialogHeader>
             <DialogTitle>{t("members.inviteUrl")}</DialogTitle>
             <DialogDescription>
-              {t("members.inviteUrlDescription", { ttl: formatTtl(inviteResult?.expires_at) })}
+              {t("members.inviteUrlDescription", { ttl: formatTtl(inviteResult?.expires_at, t) })}
             </DialogDescription>
           </DialogHeader>
           {inviteResult !== null && <CopyableValue value={rebaseUrl(inviteResult.register_url)} />}
@@ -473,14 +473,14 @@ function rebaseUrl(serverUrl: string): string {
   }
 }
 
-function formatEpoch(epoch: number | null): string {
-  if (epoch === null) return "Never";
+function formatEpoch(epoch: number | null, t: (key: string) => string): string {
+  if (epoch === null) return t("members.never");
   const d = new Date(epoch * 1000);
   return d.toLocaleString();
 }
 
-function formatTtl(expiresAt: number | undefined): string {
-  if (expiresAt === undefined) return "soon";
+function formatTtl(expiresAt: number | undefined, t: (key: string) => string): string {
+  if (expiresAt === undefined) return t("members.soon");
   const secs = Math.max(0, expiresAt - Math.floor(Date.now() / 1000));
   const hours = Math.round(secs / 3600);
   if (hours >= 1) return `${hours}h`;

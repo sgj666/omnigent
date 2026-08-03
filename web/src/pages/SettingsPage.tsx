@@ -626,7 +626,13 @@ function ColorThemeControl() {
           light: customSwatches.light,
           dark: customSwatches.dark,
         }
-      : selectedPalette!;
+      : selectedPalette
+        ? {
+            ...selectedPalette,
+            label: t(`appearance.paletteLabel.${selectedPalette.id}`),
+            blurb: t(`appearance.paletteBlurb.${selectedPalette.id}`),
+          }
+        : PALETTES[0];
 
   return (
     <ThemeSubsection
@@ -644,8 +650,10 @@ function ColorThemeControl() {
               <div className="text-sm font-medium">{t("appearance.themePalette")}</div>
               <div className="truncate text-xs text-muted-foreground">
                 {selection === "custom"
-                  ? `Based on ${PALETTES.find((palette) => palette.id === customTheme.basePalette)?.label ?? "Omnigent"}`
-                  : selectedPalette?.blurb}
+                  ? t("appearance.basedOn", {
+                      palette: t(`appearance.paletteLabel.${customTheme.basePalette}`),
+                    })
+                  : selectedPalette && t(`appearance.paletteBlurb.${selectedPalette.id}`)}
               </div>
             </div>
           </div>
@@ -673,7 +681,7 @@ function ColorThemeControl() {
                   data-testid={`palette-${palette.id}`}
                 >
                   <PaletteChip swatch={isDark ? palette.dark : palette.light} />
-                  <span>{palette.label}</span>
+                  <span>{t(`appearance.paletteLabel.${palette.id}`)}</span>
                 </SelectItem>
               ))}
               <SelectItem value="custom" data-testid="palette-custom">
@@ -709,7 +717,7 @@ function ColorThemeControl() {
                 min="0"
                 max="100"
                 value={editableTheme.contrast}
-                aria-label="Theme contrast"
+                aria-label={t("appearance.contrastAria")}
                 data-testid="custom-theme-contrast"
                 onChange={(event) => updateCustomTheme({ contrast: Number(event.target.value) })}
                 className="h-1.5 min-w-0 flex-1 cursor-pointer accent-primary"
@@ -731,7 +739,7 @@ function ColorThemeControl() {
               </div>
             </div>
             <Switch
-              aria-label="Translucent sidebars"
+              aria-label={t("appearance.translucentAria")}
               checked={editableTheme.translucentSidebar}
               onCheckedChange={(translucentSidebar) => updateCustomTheme({ translucentSidebar })}
               data-testid="custom-theme-translucent-sidebar"
@@ -1056,6 +1064,7 @@ function DefaultBaseBranchControl() {
  * per-device readability pref that doesn't conflict with host theming.
  */
 function UiFontSizeControl() {
+  const { t } = useTranslation("settings");
   // `px` is the committed value: clamped, persisted, and applied to the UI.
   // `draft` is the raw text in the box, kept separate so mid-edit states the
   // committed value can't hold — a transient out-of-range number (e.g. "1" on
@@ -1100,23 +1109,21 @@ function UiFontSizeControl() {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
       <div className="flex flex-col">
-        <span className="text-sm font-medium">Interface font size</span>
-        <span className="text-sm text-muted-foreground">
-          Scale text and spacing across the rest of the interface.
-        </span>
+        <span className="text-sm font-medium">{t("appearance.uiFontSize")}</span>
+        <span className="text-sm text-muted-foreground">{t("appearance.uiFontSizeHelper")}</span>
       </div>
       {/* One cohesive pill: [ −  | value px |  + ]. Segments share the pill
           border via inner dividers rather than floating as separate boxes. */}
       <div
         role="group"
-        aria-label="Interface font size"
+        aria-label={t("appearance.uiFontSize")}
         className={cn(
           "inline-flex h-9 items-stretch overflow-hidden rounded-lg border border-input bg-background transition-colors dark:bg-input/30",
           "focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50",
         )}
       >
         <StepperButton
-          label="Decrease interface font size"
+          label={t("appearance.decreaseUiFontSize")}
           testId="ui-font-size-dec"
           disabled={atMin}
           onClick={() => commit(px - UI_FONT_SIZE_STEP)}
@@ -1130,7 +1137,7 @@ function UiFontSizeControl() {
             min={UI_FONT_SIZE_MIN}
             max={UI_FONT_SIZE_MAX}
             step={UI_FONT_SIZE_STEP}
-            aria-label="Interface font size in pixels"
+            aria-label={t("appearance.uiFontSizePixels")}
             data-testid="ui-font-size-input"
             className="w-8 bg-transparent text-center text-sm font-medium tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             value={draft}
@@ -1142,7 +1149,7 @@ function UiFontSizeControl() {
           />
         </div>
         <StepperButton
-          label="Increase interface font size"
+          label={t("appearance.increaseUiFontSize")}
           testId="ui-font-size-inc"
           disabled={atMax}
           onClick={() => commit(px + UI_FONT_SIZE_STEP)}
@@ -1163,6 +1170,7 @@ function UiFontSizeControl() {
  * doesn't conflict with host theming.
  */
 function UiFontFamilyControl() {
+  const { t } = useTranslation("settings");
   const [family, setFamily] = useState(() => readUiFontFamily());
 
   const update = useCallback((next: string) => {
@@ -1179,15 +1187,17 @@ function UiFontFamilyControl() {
           this column) so the input stays inline instead of dropping to its own
           row — matches the font-size row's alignment. */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="text-sm font-medium">Font family</span>
-        <span className="text-sm text-muted-foreground">
-          Use any font installed on this device. Leave blank for the system default.
-        </span>
+        <span className="text-sm font-medium">{t("appearance.uiFontFamily")}</span>
+        <span className="text-sm text-muted-foreground">{t("appearance.fontFamilyHelper")}</span>
       </div>
       {/* Reset sits left of the input so the input is the rightmost element and
           its right edge lines up flush with the font-size stepper above.
           `invisible` (not removed) at the default keeps the row from shifting. */}
-      <div role="group" aria-label="Font family" className="flex shrink-0 items-center gap-2">
+      <div
+        role="group"
+        aria-label={t("appearance.fontFamilyGroup")}
+        className="flex shrink-0 items-center gap-2"
+      >
         <Button
           type="button"
           variant="ghost"
@@ -1197,13 +1207,13 @@ function UiFontFamilyControl() {
           className={cn("h-9", isDefault && "invisible")}
           onClick={() => update(UI_FONT_FAMILY_DEFAULT)}
         >
-          Reset
+          {t("appearance.resetControl")}
         </Button>
         <Input
           type="text"
-          aria-label="UI font family"
+          aria-label={t("appearance.uiFontFamilyAria")}
           data-testid="ui-font-family-input"
-          placeholder="System default"
+          placeholder={t("appearance.systemDefault")}
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
@@ -1224,6 +1234,7 @@ function UiFontFamilyControl() {
  * behavior as UiFontSizeControl; only the bounds and storage differ.
  */
 function UiCodeFontSizeControl() {
+  const { t } = useTranslation("settings");
   // `px` is the committed value; `draft` is the raw text in the box, kept
   // separate so a transient out-of-range/empty mid-edit state isn't clamped or
   // persisted on every keystroke. We only commit while typing when the draft is
@@ -1264,23 +1275,21 @@ function UiCodeFontSizeControl() {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
       <div className="flex flex-col">
-        <span className="text-sm font-medium">Code font size</span>
-        <span className="text-sm text-muted-foreground">
-          Size of code in the editor and terminal.
-        </span>
+        <span className="text-sm font-medium">{t("appearance.codeFontSize")}</span>
+        <span className="text-sm text-muted-foreground">{t("appearance.codeFontSizeHelper")}</span>
       </div>
       {/* One cohesive pill: [ −  | value px |  + ] — same shell as the UI
           font-size control. */}
       <div
         role="group"
-        aria-label="Code font size"
+        aria-label={t("appearance.codeFontSizeGroup")}
         className={cn(
           "inline-flex h-9 items-stretch overflow-hidden rounded-lg border border-input bg-background transition-colors dark:bg-input/30",
           "focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50",
         )}
       >
         <StepperButton
-          label="Decrease code font size"
+          label={t("appearance.decreaseCodeFontSize")}
           testId="code-font-size-dec"
           disabled={atMin}
           onClick={() => commit(px - CODE_FONT_SIZE_STEP)}
@@ -1294,7 +1303,7 @@ function UiCodeFontSizeControl() {
             min={CODE_FONT_SIZE_MIN}
             max={CODE_FONT_SIZE_MAX}
             step={CODE_FONT_SIZE_STEP}
-            aria-label="Code font size in pixels"
+            aria-label={t("appearance.codeFontSizePixels")}
             data-testid="code-font-size-input"
             className="w-8 bg-transparent text-center text-sm font-medium tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             value={draft}
@@ -1306,7 +1315,7 @@ function UiCodeFontSizeControl() {
           />
         </div>
         <StepperButton
-          label="Increase code font size"
+          label={t("appearance.increaseCodeFontSize")}
           testId="code-font-size-inc"
           disabled={atMax}
           onClick={() => commit(px + CODE_FONT_SIZE_STEP)}
@@ -1325,6 +1334,7 @@ function UiCodeFontSizeControl() {
  * pub/sub (see lib/codeFontPreferences.ts). Mirrors UiFontFamilyControl.
  */
 function UiCodeFontFamilyControl() {
+  const { t } = useTranslation("settings");
   const [family, setFamily] = useState(() => readCodeFontFamily());
 
   const update = useCallback((next: string) => {
@@ -1337,15 +1347,19 @@ function UiCodeFontFamilyControl() {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="text-sm font-medium">Code font family</span>
+        <span className="text-sm font-medium">{t("appearance.codeFontFamily")}</span>
         <span className="text-sm text-muted-foreground">
-          Font for the code editor and terminal. Leave blank for the default.
+          {t("appearance.codeFontFamilyHelper")}
         </span>
       </div>
       {/* Reset sits left of the input so the input's right edge lines up flush
           with the size stepper above. `invisible` (not removed) at the default
           keeps the row from shifting. */}
-      <div role="group" aria-label="Code font family" className="flex shrink-0 items-center gap-2">
+      <div
+        role="group"
+        aria-label={t("appearance.codeFontFamilyGroup")}
+        className="flex shrink-0 items-center gap-2"
+      >
         <Button
           type="button"
           variant="ghost"
@@ -1355,13 +1369,13 @@ function UiCodeFontFamilyControl() {
           className={cn("h-9", isDefault && "invisible")}
           onClick={() => update(CODE_FONT_FAMILY_DEFAULT)}
         >
-          Reset
+          {t("appearance.resetControl")}
         </Button>
         <Input
           type="text"
-          aria-label="Code font family"
+          aria-label={t("appearance.codeFontFamilyAria")}
           data-testid="code-font-family-input"
-          placeholder="Editor default"
+          placeholder={t("appearance.editorDefault")}
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
@@ -1423,6 +1437,7 @@ function ShortcutsSection() {
  * here since it chooses no path.
  */
 function LocalCliSection() {
+  const { t } = useTranslation("settings");
   const [status, setStatus] = useState<CliStatus | null | "loading">("loading");
   const [busy, setBusy] = useState(false);
 
@@ -1439,19 +1454,16 @@ function LocalCliSection() {
 
   if (status === "loading") {
     return (
-      <Section title="Local CLI">
-        <p className="text-sm text-muted-foreground">Checking…</p>
+      <Section title={t("cli.title")}>
+        <p className="text-sm text-muted-foreground">{t("cli.checking")}</p>
       </Section>
     );
   }
 
   return (
-    <Section
-      title="Local CLI"
-      description="The Omnigent command-line tool this app uses to run a local server and connect this machine as a runner."
-    >
+    <Section title={t("cli.title")} description={t("cli.description")}>
       {status === null ? (
-        <p className="text-sm text-muted-foreground">CLI status is unavailable.</p>
+        <p className="text-sm text-muted-foreground">{t("cli.unavailable")}</p>
       ) : (
         <div className="flex flex-col gap-4">
           <div className="flex items-center gap-2 text-sm">
@@ -1464,15 +1476,15 @@ function LocalCliSection() {
             />
             <span>
               {status.installed
-                ? `Found${status.version ? ` · ${status.version}` : ""}`
-                : "Not found"}
+                ? `${t("cli.found")}${status.version ? ` · ${status.version}` : ""}`
+                : t("cli.notFound")}
             </span>
           </div>
 
           {status.path ? (
             <div className="flex flex-col gap-1">
               <span className="text-xs text-muted-foreground">
-                {status.source === "configured" ? "Path (custom)" : "Path (auto-detected)"}
+                {status.source === "configured" ? t("cli.customPath") : t("cli.autoPath")}
               </span>
               <code className="block overflow-x-auto rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
                 {status.path}
@@ -1480,10 +1492,7 @@ function LocalCliSection() {
             </div>
           ) : (
             <div className="flex flex-col gap-2">
-              <p className="text-sm text-muted-foreground">
-                The Omnigent CLI wasn't found. Install it, then set its path from the connect
-                screen:
-              </p>
+              <p className="text-sm text-muted-foreground">{t("cli.missingDescription")}</p>
               {status.installCommand && (
                 <code className="block overflow-x-auto rounded-md border border-border bg-muted/40 px-3 py-2 text-xs">
                   {status.installCommand}
@@ -1492,16 +1501,12 @@ function LocalCliSection() {
             </div>
           )}
 
-          <p className="text-xs text-muted-foreground">
-            For security, a custom path can only be set from the connect screen — this prevents a
-            connected server from pointing the app at a different binary. Open it from the Server
-            menu (Change Server…) and use the settings gear.
-          </p>
+          <p className="text-xs text-muted-foreground">{t("cli.securityNote")}</p>
 
           {status.source === "configured" && (
             <div>
               <Button variant="ghost" size="sm" disabled={busy} onClick={() => void onReset()}>
-                Reset to auto-detected
+                {t("cli.resetToAuto")}
               </Button>
             </div>
           )}
@@ -1512,13 +1517,14 @@ function LocalCliSection() {
 }
 
 const UPDATE_MODE_LABELS: Record<UpdateMode, string> = {
-  default: "Automatic (check periodically, ask before installing)",
-  start: "Check when Omnigent starts",
-  manual: "Manual only",
-  none: "Off",
+  default: "automatic",
+  start: "start",
+  manual: "manual",
+  none: "off",
 };
 
 function UpdatesSection() {
+  const { t } = useTranslation("settings");
   const bridge = updateBridge();
   const [config, setConfig] = useState<UpdateConfig | null | "loading">("loading");
   const [saving, setSaving] = useState(false);
@@ -1542,7 +1548,7 @@ function UpdatesSection() {
       });
     const unsubscribe = bridge.onStatus((status) => {
       if (status.state === "error-security") {
-        setLastCheckError(status.lastError ?? "Security verification failed.");
+        setLastCheckError(status.lastError ?? t("updates.securityError"));
       } else if (status.state === "idle" && status.lastError) {
         setLastCheckError(status.lastError);
       } else if (
@@ -1557,7 +1563,7 @@ function UpdatesSection() {
       alive = false;
       unsubscribe();
     };
-  }, [bridge]);
+  }, [bridge, t]);
 
   const persistConfig = useCallback(
     async (patch: Partial<UpdateConfig>) => {
@@ -1588,23 +1594,20 @@ function UpdatesSection() {
 
   if (config === "loading") {
     return (
-      <Section title="Updates">
-        <p className="text-sm text-muted-foreground">Checking…</p>
+      <Section title={t("updates.title")}>
+        <p className="text-sm text-muted-foreground">{t("updates.checking")}</p>
       </Section>
     );
   }
 
   return (
-    <Section
-      title="Updates"
-      description="Desktop app update preferences for this installed Omnigent shell."
-    >
+    <Section title={t("updates.title")} description={t("updates.description")}>
       {config === null ? (
-        <p className="text-sm text-muted-foreground">Update settings are unavailable.</p>
+        <p className="text-sm text-muted-foreground">{t("updates.unavailable")}</p>
       ) : (
         <div className="flex max-w-2xl flex-col gap-5">
           <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium">Update mode</span>
+            <span className="text-sm font-medium">{t("updates.updateMode")}</span>
             <Select
               value={config.mode}
               onValueChange={(value) => void persistConfig({ mode: value as UpdateMode })}
@@ -1616,7 +1619,7 @@ function UpdatesSection() {
               <SelectContent>
                 {(Object.keys(UPDATE_MODE_LABELS) as UpdateMode[]).map((mode) => (
                   <SelectItem key={mode} value={mode}>
-                    {UPDATE_MODE_LABELS[mode]}
+                    {t(`updates.${UPDATE_MODE_LABELS[mode]}`)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1625,31 +1628,31 @@ function UpdatesSection() {
 
           <div className="flex items-center justify-between gap-4 rounded-lg border border-border px-4 py-3">
             <div className="flex flex-col gap-1">
-              <span className="text-sm font-medium">Install downloaded updates on next quit</span>
+              <span className="text-sm font-medium">{t("updates.installOnQuit")}</span>
               <span className="text-xs text-muted-foreground">
-                Applies only after you choose to download an update.
+                {t("updates.installOnQuitHelper")}
               </span>
             </div>
             <Switch
               checked={config.autoInstall}
               onCheckedChange={(checked) => void persistConfig({ autoInstall: checked })}
               disabled={saving}
-              aria-label="Install downloaded updates on next quit"
+              aria-label={t("updates.installOnQuit")}
             />
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={() => void onCheck()} loading={checking}>
-              Check for updates now
+              {t("updates.checkNow")}
             </Button>
-            {saving && <span className="text-xs text-muted-foreground">Saving…</span>}
+            {saving && <span className="text-xs text-muted-foreground">{t("updates.saving")}</span>}
           </div>
 
           {lastCheckError && (
             <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm">
               <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
               <div>
-                <div className="font-medium">Last check failed</div>
+                <div className="font-medium">{t("updates.lastCheckFailed")}</div>
                 <div className="text-muted-foreground">{lastCheckError}</div>
               </div>
             </div>
@@ -1881,7 +1884,11 @@ function selectValueToProject(value: string): string | undefined {
   return value.slice(PROJECT_VALUE_PREFIX.length);
 }
 
-function dateGroupLabel(timestampSec: number, now: Date = new Date()): string {
+function dateGroupLabel(
+  timestampSec: number,
+  t: (key: string) => string,
+  now: Date = new Date(),
+): string {
   const date = new Date(timestampSec * 1000);
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
@@ -1894,14 +1901,15 @@ function dateGroupLabel(timestampSec: number, now: Date = new Date()): string {
   const thirtyDaysAgo = new Date(startOfToday);
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  if (date >= startOfToday) return "Today";
-  if (date >= yesterday) return "Yesterday";
-  if (date >= sevenDaysAgo) return "Previous 7 days";
-  if (date >= thirtyDaysAgo) return "Previous 30 days";
+  if (date >= startOfToday) return t("archived.today");
+  if (date >= yesterday) return t("archived.yesterday");
+  if (date >= sevenDaysAgo) return t("archived.previous7Days");
+  if (date >= thirtyDaysAgo) return t("archived.previous30Days");
   return date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 }
 
 function ArchivedSection() {
+  const { t } = useTranslation("settings");
   // `undefined` = all projects; a name scopes the list to that project.
   const [project, setProject] = useState<string | undefined>(undefined);
 
@@ -1940,7 +1948,7 @@ function ArchivedSection() {
     const groups: { label: string; conversations: typeof archived }[] = [];
     let currentLabel = "";
     for (const conv of archived) {
-      const label = dateGroupLabel(conv.updated_at, now);
+      const label = dateGroupLabel(conv.updated_at, t, now);
       if (label !== currentLabel) {
         currentLabel = label;
         groups.push({ label, conversations: [] });
@@ -1948,7 +1956,7 @@ function ArchivedSection() {
       groups[groups.length - 1].conversations.push(conv);
     }
     return groups;
-  }, [archived]);
+  }, [archived, t]);
 
   // Keep a picked project listed even if it drops out of the option set (its
   // last archived session was just unarchived) so the trigger never shows a
@@ -1957,14 +1965,11 @@ function ArchivedSection() {
     project && !projectNames.includes(project) ? [project, ...projectNames] : projectNames;
 
   return (
-    <Section
-      title="Archived sessions"
-      description="Sessions you've archived. Restore one to the sidebar, or delete it for good."
-    >
+    <Section title={t("archived.title")} description={t("archived.description")}>
       {items.length > 0 && (
         <div className="mb-4 flex items-center gap-2">
           <label htmlFor="archived-project-filter" className="text-sm text-muted-foreground">
-            Project
+            {t("archived.project")}
           </label>
           <Select
             value={projectToSelectValue(project)}
@@ -1972,14 +1977,14 @@ function ArchivedSection() {
           >
             <SelectTrigger
               id="archived-project-filter"
-              aria-label="Filter archived sessions by project"
+              aria-label={t("archived.filterAria")}
               data-testid="archived-project-filter"
               className="w-56"
             >
               <SelectValue />
             </SelectTrigger>
             <SelectContent position="popper" align="start">
-              <SelectItem value={ALL_PROJECTS_VALUE}>All projects</SelectItem>
+              <SelectItem value={ALL_PROJECTS_VALUE}>{t("archived.allProjects")}</SelectItem>
               {items.map((name) => (
                 <SelectItem
                   key={name}
@@ -1995,12 +2000,12 @@ function ArchivedSection() {
       )}
 
       {listQuery.isLoading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">{t("archived.loading")}</p>
       ) : archived.length === 0 && !listQuery.hasNextPage ? (
         // Definitive empty only when there are no archived rows AND no further
         // pages to fetch.
         <p className="text-sm text-muted-foreground">
-          {project ? "No archived sessions in this project." : "No archived sessions."}
+          {project ? t("archived.emptyProject") : t("archived.empty")}
         </p>
       ) : (
         <>
@@ -2026,9 +2031,7 @@ function ArchivedSection() {
             // onto later pages, so a page with none isn't the end. Offer to page
             // forward instead of dead-ending on the definitive empty state.
             <p className="text-sm text-muted-foreground">
-              {project
-                ? "No archived sessions in this project on this page."
-                : "No archived sessions on this page."}
+              {project ? t("archived.emptyProjectPage") : t("archived.emptyPage")}
             </p>
           )}
           {/* Keep the pager visible whenever more pages exist, independent of the
@@ -2044,7 +2047,7 @@ function ArchivedSection() {
                 disabled={listQuery.isFetchingNextPage}
                 onClick={() => void listQuery.fetchNextPage()}
               >
-                {listQuery.isFetchingNextPage ? "Loading…" : "Load more"}
+                {listQuery.isFetchingNextPage ? t("archived.loading") : t("archived.loadMore")}
               </Button>
             </div>
           )}
@@ -2060,6 +2063,7 @@ function ArchivedSection() {
  * Delete / Unarchive controls reveal on hover (always visible on touch).
  */
 function ArchivedRow({ conversation }: { conversation: Conversation }) {
+  const { t } = useTranslation("settings");
   const archive = useArchiveConversation();
   const del = useStopAndDeleteConversation();
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -2085,7 +2089,7 @@ function ArchivedRow({ conversation }: { conversation: Conversation }) {
           type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label="Delete session"
+          aria-label={t("archived.deleteSession")}
           data-testid="delete-archived"
           disabled={busy}
           onClick={() => setDeleteOpen(true)}
@@ -2105,22 +2109,19 @@ function ArchivedRow({ conversation }: { conversation: Conversation }) {
           onClick={() => archive.mutate({ id: conversation.id, archived: false })}
         >
           <ArchiveRestoreIcon className="size-3.5" />
-          Unarchive
+          {t("archived.unarchive")}
         </Button>
       </div>
 
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete session?</DialogTitle>
-            <DialogDescription>
-              <span className="font-medium break-all">{label}</span> and all of its history will be
-              removed. This cannot be undone.
-            </DialogDescription>
+            <DialogTitle>{t("archived.deleteQuestion")}</DialogTitle>
+            <DialogDescription>{t("archived.deleteDescription", { label })}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDeleteOpen(false)} disabled={del.isPending}>
-              Cancel
+              {t("archived.cancel")}
             </Button>
             <Button
               variant="destructive"
@@ -2132,7 +2133,7 @@ function ArchivedRow({ conversation }: { conversation: Conversation }) {
                 setDeleteOpen(false);
               }}
             >
-              Delete
+              {t("archived.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

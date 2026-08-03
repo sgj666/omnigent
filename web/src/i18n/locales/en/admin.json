@@ -39,7 +39,9 @@
     "removing": "Removing…",
     "copy": "Copy",
     "copied": "Copied",
-    "copyAria": "Copy"
+    "copyAria": "Copy",
+    "never": "Never",
+    "soon": "soon"
   },
   "policies": {
     "title": "Global Policies",

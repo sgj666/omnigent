@@ -1,6 +1,18 @@
 {
   "meta": { "languageName": "简体中文" },
   "title": "设置",
+  "nav": {
+    "desktop": "桌面端",
+    "general": "通用",
+    "archived": "归档",
+    "back": "返回 Omnigent",
+    "close": "关闭侧栏",
+    "collapse": "折叠侧栏",
+    "sharing": "共享",
+    "archivedSessions": "已归档会话",
+    "localCli": "本地 CLI",
+    "updates": "更新"
+  },
   "language": {
     "title": "语言",
     "description": "选择 Omnigent 使用的界面语言。",
@@ -41,6 +53,7 @@
     "colorTheme": "配色主题",
     "colorThemeHelper": "选择预设，再分别调整浅色和深色模式。",
     "themePalette": "主题调色板",
+    "basedOn": "基于 {{palette}}",
     "custom": "自定义",
     "accent": "强调色",
     "backgroundTint": "背景色调",
@@ -55,7 +68,41 @@
     "codeFontSize": "代码字号",
     "codeFontFamily": "代码字体",
     "systemDefault": "系统默认",
-    "editorDefault": "编辑器默认"
+    "editorDefault": "编辑器默认",
+    "uiFontSizeHelper": "调整界面其余部分的文字和间距比例。",
+    "fontFamilyHelper": "使用此设备上已安装的任意字体；留空则使用系统默认字体。",
+    "codeFontSizeHelper": "调整代码编辑器和终端中的字号。",
+    "codeFontFamilyHelper": "设置代码编辑器和终端使用的字体；留空则使用默认字体。",
+    "decreaseUiFontSize": "减小界面字号",
+    "increaseUiFontSize": "增大界面字号",
+    "uiFontSizePixels": "界面字号（像素）",
+    "fontFamilyGroup": "字体",
+    "uiFontFamilyAria": "界面字体",
+    "codeFontSizeGroup": "代码字号",
+    "decreaseCodeFontSize": "减小代码字号",
+    "increaseCodeFontSize": "增大代码字号",
+    "codeFontSizePixels": "代码字号（像素）",
+    "codeFontFamilyGroup": "代码字体",
+    "codeFontFamilyAria": "代码字体",
+    "resetControl": "重置",
+    "paletteBlurb": {
+      "omni": "标志性的粉色品牌风格。",
+      "dracula": "沉郁紫色与亮粉色点缀。",
+      "github": "清爽中性色与信号蓝。",
+      "catppuccin": "柔和粉彩色——Latte 与 Mocha。",
+      "gruvbox": "温暖的复古大地色。",
+      "nord": "北极霜蓝搭配极夜中性色。"
+    },
+    "paletteLabel": {
+      "omni": "Omnigent",
+      "dracula": "Dracula",
+      "github": "GitHub",
+      "catppuccin": "Catppuccin",
+      "gruvbox": "Gruvbox",
+      "nord": "Nord"
+    },
+    "contrastAria": "主题对比度",
+    "translucentAria": "半透明侧栏"
   },
   "git": {
     "title": "Git",
@@ -100,7 +147,11 @@
     "resetPath": "重置路径",
     "resetting": "正在重置…",
     "resetDescription": "重置已配置的 CLI 路径并改用自动检测。",
-    "checkFailed": "安全校验失败。"
+    "checkFailed": "安全校验失败。",
+    "found": "已找到",
+    "securityNote": "出于安全考虑，自定义路径只能在连接界面设置，避免已连接的服务器将应用指向其他二进制文件。请从服务器菜单（更换服务器…）打开连接界面，然后使用设置齿轮。",
+    "missingDescription": "未找到 Omnigent CLI。请先安装，再从连接界面设置其路径：",
+    "resetToAuto": "重置为自动检测"
   },
   "updates": {
     "title": "更新",
@@ -115,6 +166,8 @@
     "lastCheckFailed": "上次检查失败",
     "start": "Omnigent 启动时检查",
     "manual": "仅手动检查",
-    "off": "关闭"
+    "off": "关闭",
+    "automatic": "自动（定期检查，安装前询问）",
+    "securityError": "安全校验失败。"
   }
 }

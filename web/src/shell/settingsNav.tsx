@@ -234,7 +234,7 @@ export function SettingsSidebarBody({
           (persistent card), so dropping it changes nothing there. */}
           <Link to={settingsReturnPath}>
             <ArrowLeftIcon className="size-4" />
-            Back to Omnigent
+            {tSettings("nav.back")}
           </Link>
         </Button>
         <Tooltip>
@@ -243,14 +243,14 @@ export function SettingsSidebarBody({
               type="button"
               variant="ghost"
               size="icon"
-              aria-label="Close sidebar"
+              aria-label={tSettings("nav.close")}
               onClick={onClose}
               className="rounded-full"
             >
               <PanelRightOpenIcon className="size-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">Collapse sidebar</TooltipContent>
+          <TooltipContent side="bottom">{tSettings("nav.collapse")}</TooltipContent>
         </Tooltip>
       </div>
       <nav className="flex flex-1 flex-col gap-4 overflow-y-auto px-3 py-3">
@@ -260,8 +260,10 @@ export function SettingsSidebarBody({
               {group.title === "Admin"
                 ? tAdmin("title")
                 : group.title === "General"
-                  ? tSettings("title")
-                  : group.title}
+                  ? tSettings("nav.general")
+                  : group.title === "Desktop"
+                    ? tSettings("nav.desktop")
+                    : tSettings("nav.archived")}
             </h2>
             {group.items.map((item) => {
               const Icon = item.icon;
@@ -298,7 +300,15 @@ export function SettingsSidebarBody({
                                 ? tSettings("git.title")
                                 : item.id === "shortcuts"
                                   ? tSettings("shortcuts.title")
-                                  : item.label}
+                                  : item.id === "cli"
+                                    ? tSettings("nav.localCli")
+                                    : item.id === "updates"
+                                      ? tSettings("nav.updates")
+                                      : item.id === "sharing"
+                                        ? tSettings("nav.sharing")
+                                        : item.id === "archived"
+                                          ? tSettings("nav.archivedSessions")
+                                          : item.label}
                   </Link>
                 </Button>
               );

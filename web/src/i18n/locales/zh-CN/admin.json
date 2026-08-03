@@ -39,7 +39,9 @@
     "removing": "正在移除…",
     "copy": "复制",
     "copied": "已复制",
-    "copyAria": "复制"
+    "copyAria": "复制",
+    "never": "从未",
+    "soon": "即将"
   },
   "policies": {
     "title": "全局策略",
