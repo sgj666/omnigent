@@ -24,6 +24,7 @@ from omnigent.integrations.lark.device_flow import (
     FeishuDeviceFlowError,
     FeishuPersonalAgentDeviceFlow,
 )
+from omnigent.integrations.lark.surface import SurfaceResult
 
 _logger = logging.getLogger(__name__)
 
@@ -37,6 +38,14 @@ class FeishuInstallationSaver(Protocol):
         *,
         bot: Mapping[str, Any],
     ) -> Mapping[str, Any] | None: ...
+
+
+class FeishuSurfaceProvisioner(Protocol):
+    """Provision and inspect the stable workspace for one installation."""
+
+    def ensure(self, installation_id: str) -> SurfaceResult: ...
+
+    def status(self, installation_id: str) -> SurfaceResult | None: ...
 
 
 def _flow_error(error: FeishuDeviceFlowError) -> HTTPException:
@@ -58,6 +67,7 @@ def create_feishu_router(
     save_installation: FeishuInstallationSaver,
     *,
     lark_adapter: Any | None = None,
+    surface_provisioner: FeishuSurfaceProvisioner | None = None,
 ) -> APIRouter:
     """Build routes for a QR-based Feishu PersonalAgent installation.
 
@@ -128,7 +138,35 @@ def create_feishu_router(
                     if key in {"id", "tenant_key", "status"}
                 }
             )
+        if surface_provisioner is not None:
+            installation_id = str(response["id"])
+            surface = await asyncio.to_thread(surface_provisioner.ensure, installation_id)
+            response["surface"] = surface.to_dict()
         return response
+
+    @router.post("/feishu/installations/{installation_id}/surface/reinitialize")
+    async def reinitialize_surface(installation_id: str) -> dict[str, object]:
+        """Re-probe capabilities and upsert the installation's existing surface."""
+        if surface_provisioner is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Feishu surface provisioner is not configured",
+            )
+        result = await asyncio.to_thread(surface_provisioner.ensure, installation_id)
+        return result.to_dict()
+
+    @router.get("/feishu/installations/{installation_id}/surface/status")
+    async def surface_status(installation_id: str) -> dict[str, object]:
+        """Return the persisted provisioning status without contacting Feishu."""
+        if surface_provisioner is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Feishu surface provisioner is not configured",
+            )
+        result = await asyncio.to_thread(surface_provisioner.status, installation_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Feishu surface status not found")
+        return result.to_dict()
 
     # Team Builder clients use a team-scoped install URL.  Keep the original
     # provider-neutral endpoints above for existing callers, while these
