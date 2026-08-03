@@ -8,6 +8,7 @@ from omnigent.entities.run import Task, TaskStatus
 from omnigent.entities.team import AgentProfile, AgentRole
 from omnigent.teams.coordinator import Coordinator
 from omnigent.teams.router import CoordinatorRouter, ParentInbox
+from omnigent.teams.scheduler import DAGScheduler
 
 
 def _coordinator() -> Coordinator:
@@ -63,6 +64,20 @@ def test_task_waits_when_no_profile_has_required_capability() -> None:
 
     assert coordinator.start_run("run-1") == ()
     assert coordinator.task("task-1").status is TaskStatus.PENDING
+
+
+def test_scheduler_rechecks_capabilities_for_explicit_profile_and_selector() -> None:
+    profile = AgentProfile("worker", "Worker", AgentRole.WORKER, ["code"])
+    for scheduler in (
+        DAGScheduler([profile]),
+        DAGScheduler([profile], profile_selector=lambda _stage, _caps: profile),
+    ):
+        scheduler.add_task(
+            Task(f"task-{id(scheduler)}", "run-1", "task"),
+            required_capabilities=("security",),
+            profile_id="worker" if scheduler.profile_selector is None else None,
+        )
+        assert scheduler.schedule() == ()
 
 
 def test_failure_retries_then_hard_blocks_with_diagnostics() -> None:

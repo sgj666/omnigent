@@ -171,18 +171,18 @@ class Coordinator:
     ) -> tuple[object, ...]:
         """Consume a Parent Inbox completion and wake the coordinator once."""
 
-        key = (run_id, attempt_id)
-        if key in self._wake_keys:
-            return ()
-        state = self._run_states.get(run_id)
-        if state is None or state.status is not RunStatus.RUNNING:
-            raise ValueError(f"run {run_id!r} is not running")
         spec = self.scheduler.tasks.get(task_id)
         if spec is None or spec.task.run_id != run_id:
             raise ValueError("task does not belong to run")
         attempt = self.scheduler.attempts.get(attempt_id)
         if attempt is None or attempt.task_id != task_id:
             raise ValueError("attempt does not belong to task")
+        key = (run_id, attempt_id)
+        if key in self._wake_keys:
+            return ()
+        state = self._run_states.get(run_id)
+        if state is None or state.status is not RunStatus.RUNNING:
+            raise ValueError(f"run {run_id!r} is not running")
         changed = self.scheduler.complete(task_id, attempt_id)
         if not changed:
             return ()

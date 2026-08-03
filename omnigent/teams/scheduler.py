@@ -209,12 +209,19 @@ class DAGScheduler:
         )
 
     def _profile_for(self, spec: TaskSpec) -> AgentProfile | None:
+        required = set(spec.required_capabilities)
         if spec.profile_id is not None:
-            return self.profiles.get(spec.profile_id)
+            profile = self.profiles.get(spec.profile_id)
+            if profile is not None and required.issubset(profile.capabilities):
+                return profile
+            return None
         if self.profile_selector is not None:
-            return self.profile_selector(spec.stage, spec.required_capabilities)
+            profile = self.profile_selector(spec.stage, spec.required_capabilities)
+            if profile is not None and required.issubset(profile.capabilities):
+                return profile
+            return None
         for profile in self.profiles.values():
-            if set(spec.required_capabilities).issubset(profile.capabilities):
+            if required.issubset(profile.capabilities):
                 return profile
         return None
 
