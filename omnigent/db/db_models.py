@@ -1583,3 +1583,342 @@ class SqlScheduledTaskRun(OmnigentBase):
             "conversation_id",
         ),
     )
+
+
+class SqlTeam(OmnigentBase):
+    """A workspace-scoped team of harness agent profiles."""
+
+    __tablename__ = "teams"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    coordinator_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (Index("ix_teams_status", "workspace_id", "status", "id"),)
+
+
+class SqlAgentProfile(OmnigentBase):
+    """A named coordinator or worker configuration."""
+
+    __tablename__ = "agent_profiles"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    capabilities: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (Index("ix_agent_profiles_role", "workspace_id", "role", "id"),)
+
+
+class SqlTeamMember(OmnigentBase):
+    """Application-owned association between a team and agent profile."""
+
+    __tablename__ = "team_members"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    team_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    agent_profile_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "team_id", "agent_profile_id", name="uq_team_members_team_profile"
+        ),
+        Index("ix_team_members_team_id", "workspace_id", "team_id", "id"),
+    )
+
+
+class SqlWorkspaceBundle(OmnigentBase):
+    """The filesystem root made available to a run."""
+
+    __tablename__ = "workspace_bundles"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    root_path: Mapped[str] = mapped_column(String(2048), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class SqlWorkspaceRepository(OmnigentBase):
+    """A repository mounted in a workspace bundle."""
+
+    __tablename__ = "workspace_repositories"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    workspace_bundle_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    path: Mapped[str] = mapped_column(String(2048), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "workspace_bundle_id",
+            "name",
+            name="uq_workspace_repositories_bundle_name",
+        ),
+        Index("ix_workspace_repositories_bundle_id", "workspace_id", "workspace_bundle_id", "id"),
+    )
+
+
+class SqlRun(OmnigentBase):
+    """A requested execution of a team in a workspace bundle."""
+
+    __tablename__ = "runs"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    team_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    workspace_bundle_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (Index("ix_runs_team_status", "workspace_id", "team_id", "status", "id"),)
+
+
+class SqlRunTask(OmnigentBase):
+    """A durable unit of work in a team run."""
+
+    __tablename__ = "run_tasks"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    run_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (Index("ix_run_tasks_run_status", "workspace_id", "run_id", "status", "id"),)
+
+
+class SqlTaskDependency(OmnigentBase):
+    """An application-owned directed dependency between run tasks."""
+
+    __tablename__ = "task_dependencies"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    depends_on_task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "task_id", "depends_on_task_id", name="uq_task_dependencies_edge"
+        ),
+        Index("ix_task_dependencies_task_id", "workspace_id", "task_id", "id"),
+    )
+
+
+class SqlAttempt(OmnigentBase):
+    """One execution attempt for a run task and agent profile."""
+
+    __tablename__ = "attempts"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    agent_profile_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (Index("ix_attempts_task_status", "workspace_id", "task_id", "status", "id"),)
+
+
+class SqlHarnessEvent(OmnigentBase):
+    """An externally identified event emitted while executing a harness."""
+
+    __tablename__ = "harness_events"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    run_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "event_id", name="uq_harness_events_event_id"),
+        Index("ix_harness_events_attempt_id", "workspace_id", "attempt_id", "id"),
+    )
+
+
+class SqlArtifact(OmnigentBase):
+    """A named artifact emitted by a run, task, or attempt."""
+
+    __tablename__ = "artifacts"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    run_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    name: Mapped[str] = mapped_column(String(512), nullable=False)
+    location: Mapped[str] = mapped_column(String(2048), nullable=False)
+    content_type: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (Index("ix_artifacts_run_id", "workspace_id", "run_id", "id"),)
+
+
+class SqlFeishuInstallation(OmnigentBase):
+    """A Feishu app installation with encrypted credential material only."""
+
+    __tablename__ = "feishu_installations"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    team_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    app_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    app_secret_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "app_id", name="uq_feishu_installations_app_id"),
+        Index("ix_feishu_installations_team_id", "workspace_id", "team_id", "id"),
+    )
+
+
+class SqlFeishuNotification(OmnigentBase):
+    """A notification delivery associated with a Feishu installation."""
+
+    __tablename__ = "feishu_notifications"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    installation_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    run_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    event_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    sent_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        Index("ix_feishu_notifications_installation_id", "workspace_id", "installation_id", "id"),
+    )
+
+
+class SqlIdempotencyKey(OmnigentBase):
+    """A durable key preventing duplicate workspace-scoped mutations."""
+
+    __tablename__ = "idempotency_keys"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(128), nullable=False)
+    key: Mapped[str] = mapped_column(String(256), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "scope", "key", name="uq_idempotency_keys_scope_key"),
+        Index("ix_idempotency_keys_expires_at", "workspace_id", "expires_at", "id"),
+    )
