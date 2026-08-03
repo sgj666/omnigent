@@ -150,7 +150,7 @@ class FeishuPersonalAgentDeviceFlow:
         payload = await self._call("GET", f"{_APPLICATIONS_PATH}/{session}", None)
         data = _data(payload)
         state = (_string(data.get("status")) or _string(data.get("state")) or "").lower()
-        if state in {"pending", "waiting", "processing", ""}:
+        if state in {"pending", "waiting", "processing"}:
             return None
         if state in {"denied", "rejected", "cancelled", "canceled"}:
             raise FeishuDeviceFlowError("denied", "Feishu registration was denied")
@@ -179,16 +179,15 @@ class FeishuPersonalAgentDeviceFlow:
         token = _string(_data(token_payload).get("tenant_access_token"))
         if token is None:
             raise FeishuDeviceFlowError("protocol", "Feishu did not issue a tenant access token")
-        bot_payload = _data(
-            await self._call(
-                "GET",
-                _BOT_INFO_PATH,
-                None,
-                headers={"Authorization": f"Bearer {token}"},
-            )
+        bot_response = await self._call(
+            "GET",
+            _BOT_INFO_PATH,
+            None,
+            headers={"Authorization": f"Bearer {token}"},
         )
-        bot = bot_payload.get("bot", bot_payload)
-        if not isinstance(bot, Mapping):
+        bot_data = bot_response.get("data")
+        bot = bot_data.get("bot") if isinstance(bot_data, Mapping) else None
+        if not isinstance(bot, Mapping) or _string(bot.get("open_id")) is None:
             raise FeishuDeviceFlowError("protocol", "Feishu returned invalid Bot Info")
         return bot
 

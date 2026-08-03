@@ -78,7 +78,7 @@ async def test_poll_success_fetches_bot_info_before_returning_secret() -> None:
                 },
             },
             {"code": 0, "tenant_access_token": "tenant-token"},
-            {"code": 0, "bot": {"open_id": "ou_bot", "app_name": "Agent"}},
+            {"code": 0, "data": {"bot": {"open_id": "ou_bot", "app_name": "Agent"}}},
         ]
     )
     flow = FeishuPersonalAgentDeviceFlow(request=fake, api_base_url="https://feishu.test")
@@ -112,6 +112,42 @@ async def test_poll_reports_terminal_session_diagnostics(state: str, kind: str) 
         await flow.poll("session-1")
 
     assert exc_info.value.kind == kind
+
+
+@pytest.mark.asyncio
+async def test_poll_rejects_a_response_without_an_explicit_state() -> None:
+    flow = FeishuPersonalAgentDeviceFlow(request=FakeFeishu([{"code": 0, "data": {}}]))
+
+    with pytest.raises(FeishuDeviceFlowError, match="registration state") as exc_info:
+        await flow.poll("session-1")
+
+    assert exc_info.value.kind == "protocol"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bot_reply",
+    [
+        {"code": 0},
+        {"code": 0, "data": {"bot": {}}},
+    ],
+)
+async def test_bot_info_requires_an_explicit_bot_with_open_id(
+    bot_reply: Mapping[str, Any],
+) -> None:
+    flow = FeishuPersonalAgentDeviceFlow(
+        request=FakeFeishu(
+            [
+                {"code": 0, "tenant_access_token": "tenant-token"},
+                bot_reply,
+            ]
+        )
+    )
+
+    with pytest.raises(FeishuDeviceFlowError, match="Bot Info") as exc_info:
+        await flow.bot_info("cli_123", "top-secret")
+
+    assert exc_info.value.kind == "protocol"
 
 
 @pytest.mark.asyncio
