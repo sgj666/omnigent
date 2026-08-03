@@ -12,6 +12,8 @@
   "backgroundTask_one": "1 background task still running",
   "backgroundTask_other": "{{count}} background tasks still running",
   "loadingHistory": "Loading history…",
+  "historyLoading": "Loading earlier messages…",
+  "agentsLoadFailed": "Failed to load agents: {{error}}",
   "jumpToTop": "Jump to top",
   "jumpToFirstMessage": "Jump to the first message",
   "contextUsed": "{{percent}}% of context used",
@@ -72,5 +74,13 @@
   "contextWindowUnknown": "(Context window size unknown)",
   "contextUsageUnavailable": "No usage data yet — send a message first.",
   "contextItems": "Items in context: {{count}}",
-  "unknownCommand": "Unknown command: {{command}}. Available: {{available}}"
+  "unknownCommand": "Unknown command: {{command}}. Available: {{available}}",
+  "commandCompactUnsupported": "/compact is not supported for this agent type",
+  "commandCompactFailed": "Compact failed: {{error}}",
+  "commandEffortUsage": "Usage: /effort {{levels}}",
+  "commandEffortFailed": "Failed to set effort: {{error}}",
+  "commandModelInfo": "Model: {{model}}\nUsage: /model <name> · /model default to reset",
+  "commandModelFailed": "Failed to set model: {{error}}",
+  "planModeEnterFailed": "Could not enter Plan mode: {{error}}",
+  "planModeExitFailed": "Could not exit Plan mode: {{error}}"
 }

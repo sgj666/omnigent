@@ -12,6 +12,8 @@
   "backgroundTask_one": "仍有 1 个后台任务在运行",
   "backgroundTask_other": "仍有 {{count}} 个后台任务在运行",
   "loadingHistory": "正在加载历史记录…",
+  "historyLoading": "正在加载更早的消息…",
+  "agentsLoadFailed": "加载智能体失败：{{error}}",
   "jumpToTop": "跳转到顶部",
   "jumpToFirstMessage": "跳转到第一条消息",
   "contextUsed": "已使用上下文的 {{percent}}%",
@@ -72,5 +74,13 @@
   "contextWindowUnknown": "（上下文窗口大小未知）",
   "contextUsageUnavailable": "暂无用量数据 — 发送一条消息后即可查看。",
   "contextItems": "上下文中的条目：{{count}}",
-  "unknownCommand": "未知命令：{{command}}。可用命令：{{available}}"
+  "unknownCommand": "未知命令：{{command}}。可用命令：{{available}}",
+  "commandCompactUnsupported": "当前智能体类型不支持 /compact",
+  "commandCompactFailed": "会话压缩失败：{{error}}",
+  "commandEffortUsage": "用法：/effort {{levels}}",
+  "commandEffortFailed": "设置推理强度失败：{{error}}",
+  "commandModelInfo": "模型：{{model}}\n用法：/model <name> · /model default 重置模型",
+  "commandModelFailed": "设置模型失败：{{error}}",
+  "planModeEnterFailed": "无法进入规划模式：{{error}}",
+  "planModeExitFailed": "无法退出规划模式：{{error}}"
 }

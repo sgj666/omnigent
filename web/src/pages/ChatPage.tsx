@@ -1745,7 +1745,12 @@ function MainAgentSurface({
                     </h3>
                     <p className="text-muted-foreground text-base">
                       {agentsError
-                        ? `Failed to load agents: ${agentsError instanceof Error ? agentsError.message : String(agentsError)}`
+                        ? t("agentsLoadFailed", {
+                            error:
+                              agentsError instanceof Error
+                                ? agentsError.message
+                                : String(agentsError),
+                          })
                         : t("emptyDescription", { ns: "chat" })}
                     </p>
                   </div>
@@ -2117,14 +2122,15 @@ function PreserveScrollDistanceOnResize() {
   return null;
 }
 
-function HistoryLoadingIndicator() {
+export function HistoryLoadingIndicator() {
+  const { t } = useTranslation("chat");
   return (
     <div
       role="status"
       className="flex items-center justify-center gap-2 py-2 text-muted-foreground text-sm"
     >
       <Loader2Icon className="size-4 animate-spin" aria-hidden />
-      Loading earlier messages…
+      {t("historyLoading")}
     </div>
   );
 }
@@ -4292,7 +4298,9 @@ export function Composer({
       await useChatStore.getState().setCodexPlanMode(!codexPlanMode);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setCommandError(`Could not ${codexPlanMode ? "exit" : "enter"} Plan mode: ${message}`);
+      setCommandError(
+        t(codexPlanMode ? "planModeExitFailed" : "planModeEnterFailed", { error: message }),
+      );
     } finally {
       setPlanModeBusy(false);
     }
@@ -4419,7 +4427,7 @@ export function Composer({
     switch (cmd) {
       case "/compact":
         if (!showCompact) {
-          setCommandError("/compact is not supported for this agent type");
+          setCommandError(t("commandCompactUnsupported"));
           return true;
         }
         dirtyRef.current = true;
@@ -4429,14 +4437,18 @@ export function Composer({
           .getState()
           .compact()
           .catch((err: unknown) => {
-            setCommandError(err instanceof Error ? err.message : "Compact failed");
+            setCommandError(
+              t("commandCompactFailed", {
+                error: err instanceof Error ? err.message : "Compact failed",
+              }),
+            );
           });
         return true;
       case "/effort": {
         if (!showEffort) return false;
         const valid = [...effortLevels, "default"];
         if (!arg || !valid.includes(arg.toLowerCase())) {
-          setCommandError(`Usage: /effort ${valid.join(" | ")}`);
+          setCommandError(t("commandEffortUsage", { levels: valid.join(" | ") }));
           return true;
         }
         const level = arg.toLowerCase() === "default" ? null : arg.toLowerCase();
@@ -4447,7 +4459,11 @@ export function Composer({
           .getState()
           .setEffort(level)
           .catch((err: unknown) => {
-            setCommandError(err instanceof Error ? err.message : "Failed to set effort");
+            setCommandError(
+              t("commandEffortFailed", {
+                error: err instanceof Error ? err.message : "Failed to set effort",
+              }),
+            );
           });
         return true;
       }
@@ -4462,7 +4478,7 @@ export function Composer({
           const current = sessionModelOverride
             ? `${sessionModelOverride} (override)`
             : (llmModel ?? "agent default");
-          setCommandError(`Model: ${current}\nUsage: /model <name> · /model default to reset`);
+          setCommandError(t("commandModelInfo", { model: current }));
           return true;
         }
         // ``default | off | reset`` clear the override (REPL clear aliases);
@@ -4478,7 +4494,11 @@ export function Composer({
           .getState()
           .setModel(clear ? null : target)
           .catch((err: unknown) => {
-            setCommandError(err instanceof Error ? err.message : "Failed to set model");
+            setCommandError(
+              t("commandModelFailed", {
+                error: err instanceof Error ? err.message : "Failed to set model",
+              }),
+            );
           });
         return true;
       }

@@ -49,7 +49,7 @@ vi.mock("@/lib/agentLabels", async (importOriginal) => ({
 }));
 import type { ElicitationBlock } from "@/lib/blocks";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Composer, shouldQueueSend } from "./ChatPage";
+import { Composer, HistoryLoadingIndicator, shouldQueueSend } from "./ChatPage";
 import type { QueuedMessage } from "@/store/chatStore";
 import {
   BUILTIN_SLASH_COMMANDS,
@@ -631,6 +631,112 @@ describe("Composer slash-command submit routing", () => {
 
     expect(setModel).toHaveBeenCalledWith("gpt-5.4");
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("localizes slash-command usage and preserves command arguments in Chinese", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      renderWithTooltips(<Composer {...composerProps({ effortLevels: ["low", "high"] })} />);
+      const ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "/effort turbo" } });
+      fireEvent.keyDown(ta, { key: "Enter" });
+
+      expect(screen.getByText("用法：/effort low | high | default")).toBeInTheDocument();
+
+      cleanup();
+      useChatStore.setState({ llmModel: "anthropic/claude-opus-4-8" });
+      renderWithTooltips(
+        <Composer
+          {...composerProps({
+            isTerminalFirst: true,
+            isNativeWrapper: true,
+            showModels: true,
+            modelPickerKind: "claude",
+            codexModelOptions: [],
+          })}
+        />,
+      );
+      const modelTextarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(modelTextarea, { target: { value: "/model " } });
+      fireEvent.keyDown(modelTextarea, { key: "Enter" });
+
+      const modelHint = screen.getByText(/模型：anthropic\/claude-opus-4-8/);
+      expect(modelHint).toHaveTextContent("用法：/model <name> · /model default 重置模型");
+      expect(modelHint).toHaveTextContent("anthropic/claude-opus-4-8");
+    } finally {
+      await restore();
+    }
+  });
+
+  it("localizes compact and model failure feedback while preserving raw errors", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    const realCompact = useChatStore.getState().compact;
+    const originalSetModelForFailureTest = useChatStore.getState().setModel;
+    const originalSetCodexPlanMode = useChatStore.getState().setCodexPlanMode;
+    try {
+      const compact = vi.fn().mockRejectedValue(new Error("runner timeout"));
+      useChatStore.setState({ compact });
+      renderWithTooltips(
+        <Composer
+          {...composerProps({
+            isTerminalFirst: true,
+            isNativeWrapper: true,
+          })}
+        />,
+      );
+      const compactTextarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(compactTextarea, { target: { value: "/compact" } });
+      fireEvent.keyDown(compactTextarea, { key: "Enter" });
+      await waitFor(() =>
+        expect(screen.getByText("会话压缩失败：runner timeout")).toBeInTheDocument(),
+      );
+
+      cleanup();
+      const setModel = vi.fn().mockRejectedValue(new Error("provider unavailable"));
+      useChatStore.setState({ setModel });
+      renderWithTooltips(<Composer {...composerProps()} />);
+      const modelTextarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(modelTextarea, { target: { value: "/model gpt-5.4" } });
+      fireEvent.keyDown(modelTextarea, { key: "Enter" });
+      await waitFor(() =>
+        expect(screen.getByText("设置模型失败：provider unavailable")).toBeInTheDocument(),
+      );
+
+      cleanup();
+      useChatStore.setState({
+        codexPlanMode: false,
+        setCodexPlanMode: vi.fn().mockRejectedValue(new Error("plan service unavailable")),
+      });
+      renderWithTooltips(<Composer {...composerProps({ showCodexPlanMode: true })} />);
+      fireEvent.click(screen.getByTestId("codex-plan-mode-toggle"));
+      await waitFor(() =>
+        expect(screen.getByText("无法进入规划模式：plan service unavailable")).toBeInTheDocument(),
+      );
+    } finally {
+      useChatStore.setState({
+        compact: realCompact,
+        setModel: originalSetModelForFailureTest,
+        setCodexPlanMode: originalSetCodexPlanMode,
+      });
+      await restore();
+    }
+  });
+});
+
+describe("HistoryLoadingIndicator localization", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("renders the Chinese loading copy", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      render(<HistoryLoadingIndicator />);
+      expect(screen.getByRole("status")).toHaveTextContent("正在加载更早的消息…");
+    } finally {
+      await restore();
+    }
   });
 });
 
