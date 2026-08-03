@@ -79,7 +79,8 @@
     "copySessionId": "复制会话 ID",
     "copiedSessionId": "已复制会话 ID",
     "agentToolsPolicies": "智能体工具与策略",
-    "agentToolsPoliciesTooltip": "智能体工具与策略"
+    "agentToolsPoliciesTooltip": "智能体工具与策略",
+    "agentInfoDescription": "当前智能体已配置的工具与策略。"
   },
   "picker": {
     "createCustom": "创建自定义智能体",

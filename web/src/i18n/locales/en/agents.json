@@ -79,7 +79,8 @@
     "copySessionId": "Copy session ID",
     "copiedSessionId": "Copied session ID",
     "agentToolsPolicies": "Agent tools and policies",
-    "agentToolsPoliciesTooltip": "Agent tools & policies"
+    "agentToolsPoliciesTooltip": "Agent tools & policies",
+    "agentInfoDescription": "Tools and policies configured for the active agent."
   },
   "picker": {
     "createCustom": "Create custom agent",

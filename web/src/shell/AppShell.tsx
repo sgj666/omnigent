@@ -1630,7 +1630,7 @@ export function AppShell() {
                 <DialogHeader>
                   <DialogTitle>{translateAgent("dialogs.switch.agent")}</DialogTitle>
                   <DialogDescription className="sr-only">
-                    Tools and policies configured for the active agent.
+                    {translateAgent("labels.agentInfoDescription")}
                   </DialogDescription>
                 </DialogHeader>
                 <AgentInfoContent agent={boundAgent} sessionId={conversationId} />
