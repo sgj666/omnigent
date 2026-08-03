@@ -90,7 +90,9 @@ class LarkAdapter:
                 "invalid_signature", "Card action signature verification failed"
             )
 
-    def _validate_message_signature(self, payload: Mapping[str, Any]) -> None:
+    def _validate_message_signature(
+        self, payload: Mapping[str, Any], raw_body: bytes | None = None
+    ) -> None:
         if self.signing_secret is None:
             return
         header = payload.get("header", {})
@@ -109,7 +111,7 @@ class LarkAdapter:
             raise LarkRoutingError("invalid_signature", "Message timestamp is invalid") from exc
         if expired:
             raise LarkRoutingError("invalid_signature", "Message signature expired")
-        encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        encoded = raw_body or json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
         if not verify_signature(timestamp=timestamp, nonce=nonce, body=encoded,
                                 secret=self.signing_secret, signature=signature):
             raise LarkRoutingError("invalid_signature", "Message signature verification failed")
@@ -120,9 +122,15 @@ class LarkAdapter:
         except TypeError:
             return bool(self.deduper.claim("lark", key))
 
-    def receive(self, payload: Mapping[str, Any] | bytes | str | LarkMessage | LarkCardAction,
-                *, headers: Mapping[str, str] | None = None) -> AdapterResult:
+    def receive(
+        self,
+        payload: Mapping[str, Any] | bytes | str | LarkMessage | LarkCardAction,
+        *,
+        headers: Mapping[str, str] | None = None,
+        raw: bytes | None = None,
+    ) -> AdapterResult:
         """Process one decoded or raw event; replay returns the original result."""
+        raw_body = raw
         try:
             if isinstance(payload, LarkMessage):
                 event: LarkMessage | LarkCardAction = payload
@@ -130,6 +138,7 @@ class LarkAdapter:
                 event = payload
             else:
                 if isinstance(payload, bytes | str):
+                    raw_body = payload if isinstance(payload, bytes) else payload.encode()
                     decoded = json.loads(payload)
                     payload = decoded
                 header = payload.get("header", {})
@@ -163,7 +172,7 @@ class LarkAdapter:
                         )
                         payload.setdefault("timestamp", headers.get("X-Lark-Timestamp"))
                         payload.setdefault("nonce", headers.get("X-Lark-Nonce"))
-                    self._validate_message_signature(payload)
+                    self._validate_message_signature(payload, raw_body)
                 if not self._claim(f"event:{event.event_id}"):
                     prior = self._seen_events.get(event.event_id)
                     return AdapterResult(prior.result if prior else None, duplicate=True)

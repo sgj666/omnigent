@@ -15,6 +15,8 @@ class Coordinator:
         self.received.append(request)
         return request
 
+    start_run = receive
+
     def handle_action(self, action):
         self.retry_count += 1
         return {"action": action.action_id, "count": self.retry_count}

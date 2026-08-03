@@ -132,11 +132,16 @@ def decode_card_action(payload: Mapping[str, Any]) -> LarkCardAction:
     if not isinstance(nonce, str) or not nonce:
         raise LarkProtocolError("card action is missing nonce")
     actor = _obj(event.get("operator", event.get("user", {})))
-    actor_id = _identity(actor)
+    actor_id = _identity(actor.get("operator_id") or actor)
     if actor_id is None:
         raise LarkProtocolError("card action is missing actor id")
     context = _obj(event.get("context", {}))
-    chat_id = event.get("chat_id") or context.get("chat_id") or value.get("chat_id")
+    chat_id = (
+        event.get("chat_id")
+        or context.get("chat_id")
+        or context.get("open_chat_id")
+        or value.get("chat_id")
+    )
     if not isinstance(chat_id, str) or not chat_id:
         raise LarkProtocolError("card action is missing chat_id")
     event_id = header.get("event_id") or envelope.get("event_id") or f"{action_id}:{nonce}"
@@ -145,7 +150,8 @@ def decode_card_action(payload: Mapping[str, Any]) -> LarkCardAction:
         action_id=action_id,
         nonce=nonce,
         chat_id=chat_id,
-        thread_id=event.get("thread_id") or context.get("thread_id") or value.get("thread_id"),
+        thread_id=(event.get("thread_id") or context.get("thread_id")
+                   or context.get("open_thread_id") or value.get("thread_id")),
         actor_id=actor_id,
         value=dict(value),
         signature=action.get("signature") or envelope.get("signature"),

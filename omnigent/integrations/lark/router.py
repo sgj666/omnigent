@@ -96,14 +96,14 @@ class LarkRouter:
         if self.coordinator_callback is not None:
             return self.coordinator_callback(request)
         coordinator = context.coordinator
-        for method in ("receive", "submit", "request_run", "handle_request"):
-            callback = getattr(coordinator, method, None)
-            if callback is not None:
-                try:
-                    return callback(request)
-                except TypeError:
-                    return callback(event.text)
-        raise LarkRoutingError("coordinator_unavailable", "Team has no Coordinator entrypoint")
+        if hasattr(coordinator, "start_run"):
+            return coordinator.start_run(request)
+        if hasattr(coordinator, "submit"):
+            return coordinator.submit(request)
+        if hasattr(coordinator, "request_run"):
+            return coordinator.request_run(request)
+        # Explicit callback is preferred; no arbitrary method dispatch.
+        raise LarkRoutingError("coordinator_unavailable", "Coordinator bridge is not configured")
 
     def authorize_action(self, event: LarkCardAction) -> RouteContext:
         context = self.resolve(event.chat_id, event.thread_id)
@@ -115,6 +115,18 @@ class LarkRouter:
 
     def route_action(self, event: LarkCardAction) -> Any:
         context = self.authorize_action(event)
+        allowed = {"retry", "cancel", "approve", "rerun"}
+        if event.action_id not in allowed:
+            raise LarkRoutingError("action_forbidden", "Card action is not in the allow-list")
+        team_id = self._id(context.team)
+        value_team = event.value.get("team_id")
+        if value_team is not None and value_team != team_id:
+            raise LarkRoutingError("binding_mismatch", "Card action Team binding mismatch")
+        if context.workspace_id and event.value.get("workspace_id") not in (
+            None,
+            context.workspace_id,
+        ):
+            raise LarkRoutingError("binding_mismatch", "Card action workspace binding mismatch")
         validator = getattr(context.coordinator, "validate_action", None)
         if callable(validator) and not validator(event):
             raise LarkRoutingError(
@@ -122,18 +134,6 @@ class LarkRouter:
             )
         if self.action_callback is not None:
             return self.action_callback(context, event)
-        coordinator = context.coordinator
-        for method in ("handle_action", "dispatch_action", "action"):
-            callback = getattr(coordinator, method, None)
-            if callback is not None:
-                try:
-                    return callback(event)
-                except TypeError:
-                    return callback(event.action_id, event.value)
-        # Keep deterministic actions useful with tiny coordinator fakes.
-        callback = getattr(coordinator, event.action_id, None)
-        if callable(callback):
-            return callback(event.value)
-        raise LarkRoutingError(
-            "action_unavailable", f"Coordinator cannot handle {event.action_id!r}"
-        )
+        if hasattr(context.coordinator, "handle_action"):
+            return context.coordinator.handle_action(event)
+        raise LarkRoutingError("action_unavailable", "Coordinator action bridge is not configured")
