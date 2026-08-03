@@ -15,7 +15,8 @@
 3. Run、Task、Attempt、Session、事件、工具调用和产物可追溯；
 4. 可按 Run 重放和比较 Agent/Harness/策略的表现；
 5. 通过并发、配额、超时和 worktree lease 控制资源；
-6. 从飞书选择本地工作区，并接收进度、失败、阻塞和最终结果。
+6. 从飞书选择本地工作区，并接收进度、失败、阻塞和最终结果；
+7. 在 Web UI 可视化配置 Team、Agent Pairing、飞书卡片展示和快捷操作。
 
 ### 非目标
 
@@ -152,6 +153,30 @@ Pairing 用于显示名称、头像、通知策略和消息目标，不授予 Wo
 ```
 
 `/workspace use` 更新当前话题/群的新 Run 默认值；卡片选择可以对单条 Run 临时覆盖。运行中的 Run 固定其 `workspace_id`，不得被切换操作修改。切换动作、操作者和生效范围写入 Ledger。
+
+### 4.5 卡片挂件与快捷操作
+
+飞书 Bot 消息使用 Interactive Card 协议。每个 Agent Profile 可以配置 Card Profile，用于控制显示身份、状态字段、通知级别和快捷操作；Team/Coordinator 统一控制动作权限和状态迁移。Web UI 配置的是白名单卡片组件和预定义动作，不允许 Agent 任意注入回调 URL、Shell 命令或未经授权的状态写操作。
+
+支持的展示组件包括 Agent 头像/名称、状态标签、Markdown、进度、Key-Value 字段、折叠详情、仓库/提交/测试链接和操作区。Phase 1 使用固定动作集合并允许 Agent 配置显示/隐藏：查看 Run、查看 Worker、查看日志、查看测试、查看提交、重试、暂停、取消、切换工作区和发送测试消息。URL 类动作打开 Omnigent/产物页面；写操作类动作使用卡片回调。
+
+回调按钮携带不可猜测的、服务端签名的 `action_id`、Run/Task/Attempt 引用和 nonce。Lark Adapter 处理 `card.action.trigger` 时必须完成签名、成员权限、Team/Workspace 绑定、状态机合法性和幂等校验，再将动作提交给 Coordinator 或确定性状态机。处理结果写入 Ledger，并更新原卡片；Worker Bot 的按钮也不能绕过 Coordinator。
+
+卡片回调至少覆盖以下动作：
+
+```text
+view_run          → 打开 Run Inspector
+view_worker       → 打开 Worker/Attempt 详情
+retry             → 创建新的 Attempt
+pause             → 暂停可暂停的 Run
+cancel            → 二次确认后取消 Run
+switch_workspace  → 只改变后续新 Run 的默认工作区
+send_test         → 发送一条无副作用测试消息
+```
+
+二维码绑定、普通文本回复和卡片按钮是三个独立生命周期：二维码使用一次性 Device Flow；卡片更新使用 `update_multi`；按钮点击使用事件回调。任一通道失败都不能改变 Ledger 中的真实 Run 状态。
+
+Phase 2 再增加 Card Builder：用户可以通过表单或拖拽配置头部、状态区、进度区、详情区、产物区和操作区，并从白名单中选择组件和动作。高级模板仍然只能使用受限 Card Schema，不能执行任意服务端动作。
 
 ## 5. Workspace Bundle 与多仓支持
 
@@ -303,7 +328,8 @@ Feishu Event → Run → Plan Revision → Task → Attempt → Session
 - Coordinator Parent Inbox 自动唤醒；
 - 多仓 manifest 解析和独立 worktree；
 - Codex/Claude Worker Profile；
-- 自动测试、Review、失败分类和飞书汇总通知。
+- 自动测试、Review、失败分类和飞书汇总通知；
+- Web UI Team Builder、Agent Pairing 和固定卡片快捷操作。
 
 ### Phase 2：恢复与治理
 
@@ -312,7 +338,8 @@ Feishu Event → Run → Plan Revision → Task → Attempt → Session
 - 分层资源限流和 worktree lease 回收；
 - Policy 审批和 Hard Block 卡片；
 - Worker 失败自动换 Profile/Harness；
-- 详情页事件追踪。
+- 详情页事件追踪；
+- `card.action.trigger` 回调、签名校验、幂等和卡片更新。
 
 ### Phase 3：评测与规模化
 
@@ -320,6 +347,7 @@ Feishu Event → Run → Plan Revision → Task → Attempt → Session
 - Profile/Harness 对比评测；
 - 成本与质量报表；
 - 多 Team、多 Feishu App；
+- 可视化 Card Builder 和自定义受限卡片模板；
 - 可选外部队列或工作流持久化组件。
 
 ## 11. 关键取舍
