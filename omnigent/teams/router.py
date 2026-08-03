@@ -23,6 +23,7 @@ class ParentInbox:
     def __init__(self, coordinator: Coordinator | None = None) -> None:
         self.coordinator = coordinator
         self._seen: set[str] = set()
+        self._logical_seen: set[tuple[str, str, str]] = set()
         self._queue: deque[WorkerCompletedMessage] = deque()
 
     def put(
@@ -52,9 +53,11 @@ class ParentInbox:
                 attempt_id=str(message["attempt_id"]),
                 event_id=str(message.get("event_id", f"worker-completed:{message['attempt_id']}")),
             )
-        if message.event_id in self._seen:
+        logical_key = (message.run_id, message.task_id, message.attempt_id)
+        if message.event_id in self._seen or logical_key in self._logical_seen:
             return False
         self._seen.add(message.event_id)
+        self._logical_seen.add(logical_key)
         self._queue.append(message)
         if self.coordinator is not None:
             self.drain()

@@ -75,6 +75,7 @@ class Coordinator:
         self._run_states: dict[str, RunState] = {}
         self._wake_keys: set[tuple[str, str]] = set()
         self._wake_counts: dict[str, int] = {}
+        self.failure_events: list[AttemptFailed] = []
 
     def add_task(
         self,
@@ -169,6 +170,15 @@ class Coordinator:
         key = (run_id, attempt_id)
         if key in self._wake_keys:
             return ()
+        state = self._run_states.get(run_id)
+        if state is None or state.status is not RunStatus.RUNNING:
+            raise ValueError(f"run {run_id!r} is not running")
+        spec = self.scheduler.tasks.get(task_id)
+        if spec is None or spec.task.run_id != run_id:
+            raise ValueError("task does not belong to run")
+        attempt = self.scheduler.attempts.get(attempt_id)
+        if attempt is None or attempt.task_id != task_id:
+            raise ValueError("attempt does not belong to task")
         changed = self.scheduler.complete(task_id, attempt_id)
         if not changed:
             return ()
@@ -191,7 +201,18 @@ class Coordinator:
     def on_attempt_failed(
         self, run_id: str, task_id: str, attempt_id: str, **details: object
     ) -> AttemptFailed:
+        state = self._run_states.get(run_id)
+        if state is None or state.status is not RunStatus.RUNNING:
+            raise ValueError(f"run {run_id!r} is not running")
+        spec = self.scheduler.tasks.get(task_id)
+        attempt = self.scheduler.attempts.get(attempt_id)
+        if spec is None or spec.task.run_id != run_id:
+            raise ValueError("task does not belong to run")
+        if attempt is None or attempt.task_id != task_id:
+            raise ValueError("attempt does not belong to task")
         failure = self.scheduler.fail(task_id, attempt_id, **details)  # type: ignore[arg-type]
+        self.failure_events.append(failure)
+        self._record_failure(run_id, failure)
         if failure.hard_block:
             self._run_states[run_id] = RunState.failed(run_id)
         else:
@@ -220,6 +241,17 @@ class Coordinator:
         append = getattr(self.ledger, "append", None)
         if callable(append):
             append(run_id, event)
+
+    def _record_failure(self, run_id: str, failure: AttemptFailed) -> None:
+        """Persist a structured failure without assuming a new EventType."""
+
+        record = getattr(self.ledger, "record_failure", None)
+        if callable(record):
+            record(run_id, failure)
+            return
+        record = getattr(self.ledger, "append_attempt_failed", None)
+        if callable(record):
+            record(run_id, failure)
 
 
 CoordinatorSession = Coordinator

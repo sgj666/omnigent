@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from omnigent.entities.run import Task, TaskStatus
 from omnigent.entities.team import AgentProfile, AgentRole
 from omnigent.teams.coordinator import Coordinator
@@ -106,6 +108,39 @@ def test_parent_inbox_duplicate_completion_wakes_once() -> None:
     assert router.route_worker_completed("run-1", "task-1", attempt.id, event_id="evt-1")
     assert not router.route_worker_completed("run-1", "task-1", attempt.id, event_id="evt-1")
     assert coordinator.wake_count("run-1") == 1
+
+
+def test_cross_run_and_terminal_completion_is_rejected() -> None:
+    coordinator = _coordinator()
+    coordinator.add_task(Task("task-1", "run-1", "implementation"))
+    attempt = coordinator.start_run("run-1")[0]
+    with pytest.raises(ValueError, match="run"):
+        coordinator.on_worker_completed("run-2", "task-1", attempt.id)
+    coordinator.on_worker_completed("run-1", "task-1", attempt.id)
+    coordinator.on_worker_completed("run-1", "task-1", attempt.id)
+
+
+class _FailureLedger:
+    def __init__(self) -> None:
+        self.failures: list[tuple[str, object]] = []
+
+    def record_failure(self, run_id: str, failure: object) -> None:
+        self.failures.append((run_id, failure))
+
+
+def test_failure_is_recorded_in_injected_ledger() -> None:
+    ledger = _FailureLedger()
+    coordinator = Coordinator(
+        profiles=[AgentProfile("backend", "Backend", AgentRole.WORKER, ["code"])],
+        ledger=ledger,
+    )
+    coordinator.add_task(Task("task-1", "run-1", "implementation"))
+    attempt = coordinator.start_run("run-1")[0]
+    coordinator.on_attempt_failed(
+        "run-1", "task-1", attempt.id, failure_code="EXIT", exit_code=1
+    )
+    assert len(ledger.failures) == 1
+    assert ledger.failures[0][1].failure_code == "EXIT"  # type: ignore[union-attr]
 
 
 def test_inbox_can_buffer_before_coordinator_is_attached() -> None:
