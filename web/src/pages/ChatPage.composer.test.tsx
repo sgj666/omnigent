@@ -721,6 +721,67 @@ describe("Composer slash-command submit routing", () => {
       await restore();
     }
   });
+
+  it("uses localized fallbacks when slash-command failures have no Error details", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    const realCompact = useChatStore.getState().compact;
+    const realSetEffort = useChatStore.getState().setEffort;
+    const realSetModelForFallbackTest = useChatStore.getState().setModel;
+    try {
+      useChatStore.setState({ compact: vi.fn().mockRejectedValue(null) });
+      renderWithTooltips(
+        <Composer
+          {...composerProps({
+            isTerminalFirst: true,
+            isNativeWrapper: true,
+          })}
+        />,
+      );
+      let ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "/compact" } });
+      fireEvent.keyDown(ta, { key: "Enter" });
+      await waitFor(() => expect(screen.getByText("会话压缩失败：未知错误")).toBeInTheDocument());
+
+      cleanup();
+      useChatStore.setState({ setEffort: vi.fn().mockRejectedValue({ code: "offline" }) });
+      renderWithTooltips(<Composer {...composerProps()} />);
+      ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "/effort high" } });
+      fireEvent.keyDown(ta, { key: "Enter" });
+      await waitFor(() =>
+        expect(screen.getByText("设置推理强度失败：未知错误")).toBeInTheDocument(),
+      );
+
+      cleanup();
+      useChatStore.setState({ setModel: vi.fn().mockRejectedValue("offline") });
+      renderWithTooltips(<Composer {...composerProps()} />);
+      ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "/model gpt-5.4" } });
+      fireEvent.keyDown(ta, { key: "Enter" });
+      await waitFor(() => expect(screen.getByText("设置模型失败：未知错误")).toBeInTheDocument());
+    } finally {
+      useChatStore.setState({
+        compact: realCompact,
+        setEffort: realSetEffort,
+        setModel: realSetModelForFallbackTest,
+      });
+      await restore();
+    }
+  });
+
+  it("localizes the agent-default label while preserving model ids", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      useChatStore.setState({ llmModel: null, sessionModelOverride: null });
+      renderWithTooltips(<Composer {...composerProps()} />);
+      const ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "/model " } });
+      fireEvent.keyDown(ta, { key: "Enter" });
+      expect(screen.getByText(/模型：智能体默认模型/)).toBeInTheDocument();
+    } finally {
+      await restore();
+    }
+  });
 });
 
 describe("HistoryLoadingIndicator localization", () => {
