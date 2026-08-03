@@ -416,4 +416,12 @@ def create_teams_router(
             "data": [deepcopy(run) for run in store.runs.values() if run["team_id"] == team_id],
         }
 
+    @router.get("/runs/{run_id}")
+    async def get_run(request: Request, run_id: str) -> dict[str, Any]:
+        require_user(request, auth_provider)
+        run = store.runs.get(run_id)
+        if run is None:
+            raise OmnigentError("Run not found", code=ErrorCode.NOT_FOUND)
+        return deepcopy(run)
+
     return router

@@ -72,6 +72,18 @@ async def test_team_requires_exactly_one_coordinator(client: httpx.AsyncClient) 
     assert response.status_code == 422
 
 
+async def test_run_inspector_endpoint_returns_run_or_not_found(
+    client: httpx.AsyncClient,
+) -> None:
+    store = client._transport.app.state.team_store  # type: ignore[attr-defined]
+    run = store.create_run(team_id="team", thread_id="thread", source="test")
+
+    response = await client.get(f"/v1/runs/{run['id']}")
+    assert response.status_code == 200
+    assert response.json() == run
+    assert (await client.get("/v1/runs/missing")).status_code == 404
+
+
 async def test_workspace_selection_copies_thread_default_and_never_rewrites_running_run(
     client: httpx.AsyncClient, tmp_path: object,
 ) -> None:
