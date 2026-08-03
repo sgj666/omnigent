@@ -470,14 +470,15 @@ function ThemeSubsection({
 
 /** Appearance mode: System / Light / Dark. */
 function ModeControl() {
+  const { t } = useTranslation("settings");
   const { theme, setTheme } = useTheme();
   const mode = normalizeThemeMode(theme);
   const labelId = useId();
   return (
     <ThemeSubsection
       labelId={labelId}
-      title="Mode"
-      helper="Follow your system, or force light or dark."
+      title={t("appearance.mode")}
+      helper={t("appearance.modeHelper")}
     >
       <CardRadioGroup<ThemeMode>
         labelledBy={labelId}
@@ -491,7 +492,9 @@ function ModeControl() {
           body: (
             <>
               <ModePreview variant={card.mode} />
-              <span className="text-center text-sm font-medium">{card.label}</span>
+              <span className="text-center text-sm font-medium">
+                {t(`appearance.${card.mode}`)}
+              </span>
             </>
           ),
         }))}
@@ -502,6 +505,7 @@ function ModeControl() {
 
 /** Terminal light/dark/match-app theme — its own section. */
 function TerminalThemeControl() {
+  const { t } = useTranslation("settings");
   const [mode, setMode] = useState(() => readTerminalThemeMode());
   const labelId = useId();
   const choose = useCallback((next: TerminalThemeMode) => {
@@ -511,8 +515,8 @@ function TerminalThemeControl() {
   return (
     <ThemeSubsection
       labelId={labelId}
-      title="Terminal theme"
-      helper="Use a light or dark terminal, or match the app."
+      title={t("appearance.terminalTheme")}
+      helper={t("appearance.terminalThemeHelper")}
     >
       <CardRadioGroup<TerminalThemeMode>
         labelledBy={labelId}
@@ -523,7 +527,10 @@ function TerminalThemeControl() {
         items={terminalThemeCards.map((card) => ({
           value: card.mode,
           testId: `terminal-theme-${card.mode}`,
-          body: iconCardBody(card.icon, card.label),
+          body: iconCardBody(
+            card.icon,
+            card.mode === "auto" ? t("appearance.matchApp") : t(`appearance.${card.mode}`),
+          ),
         }))}
       />
     </ThemeSubsection>
@@ -536,6 +543,7 @@ function TerminalThemeControl() {
  * sessions keep restoring whatever the user last left them as.
  */
 function WorkspacePanelDefaultControl() {
+  const { t } = useTranslation("settings");
   const [value, setValue] = useState(() => readWorkspacePanelDefault());
   const labelId = useId();
   const choose = useCallback((next: WorkspacePanelDefault) => {
@@ -545,8 +553,8 @@ function WorkspacePanelDefaultControl() {
   return (
     <ThemeSubsection
       labelId={labelId}
-      title="Workspace panel"
-      helper="Whether new chats open with the Files / Agents / Shells panel visible. Existing chats keep their last layout."
+      title={t("appearance.workspacePanel")}
+      helper={t("appearance.workspacePanelHelper")}
     >
       <CardRadioGroup<WorkspacePanelDefault>
         labelledBy={labelId}
@@ -557,7 +565,7 @@ function WorkspacePanelDefaultControl() {
         items={workspacePanelCards.map((card) => ({
           value: card.value,
           testId: `workspace-panel-default-${card.value}`,
-          body: iconCardBody(card.icon, card.label),
+          body: iconCardBody(card.icon, t(`appearance.${card.value}`)),
         }))}
       />
     </ThemeSubsection>
@@ -565,6 +573,7 @@ function WorkspacePanelDefaultControl() {
 }
 
 function ColorThemeControl() {
+  const { t } = useTranslation("settings");
   // Render each chip in the currently-resolved mode so it matches the app now.
   const { resolvedTheme } = useTheme();
   const isDark = normalizeResolvedTheme(resolvedTheme) === "dark";
@@ -613,7 +622,7 @@ function ColorThemeControl() {
   const selected =
     selection === "custom"
       ? {
-          label: "Custom",
+          label: t("appearance.custom"),
           light: customSwatches.light,
           dark: customSwatches.dark,
         }
@@ -622,8 +631,8 @@ function ColorThemeControl() {
   return (
     <ThemeSubsection
       labelId={labelId}
-      title="Color theme"
-      helper="Choose a preset, then tune it across light and dark mode."
+      title={t("appearance.colorTheme")}
+      helper={t("appearance.colorThemeHelper")}
     >
       <div className="overflow-hidden rounded-xl border bg-card/55 shadow-xs">
         <div className="flex flex-col gap-3 border-b bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -632,7 +641,7 @@ function ColorThemeControl() {
               <PaletteSwatchPreview swatch={isDark ? selected.dark : selected.light} />
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-medium">Theme palette</div>
+              <div className="text-sm font-medium">{t("appearance.themePalette")}</div>
               <div className="truncate text-xs text-muted-foreground">
                 {selection === "custom"
                   ? `Based on ${PALETTES.find((palette) => palette.id === customTheme.basePalette)?.label ?? "Omnigent"}`
@@ -669,7 +678,7 @@ function ColorThemeControl() {
               ))}
               <SelectItem value="custom" data-testid="palette-custom">
                 <PaletteChip swatch={isDark ? customSwatches.dark : customSwatches.light} />
-                <span>Custom</span>
+                <span>{t("appearance.custom")}</span>
               </SelectItem>
             </SelectContent>
           </Select>
@@ -677,23 +686,21 @@ function ColorThemeControl() {
 
         <div className="px-4">
           <ThemeColorPicker
-            label="Accent"
+            label={t("appearance.accent")}
             value={editableTheme.accent}
             testId="custom-theme-accent"
             onChange={(accent) => updateCustomTheme({ accent })}
           />
           <ThemeColorPicker
-            label="Background tint"
+            label={t("appearance.backgroundTint")}
             value={editableTheme.tint}
             testId="custom-theme-tint"
             onChange={(tint) => updateCustomTheme({ tint })}
           />
           <div className="flex items-center justify-between gap-4 border-b border-border/70 py-4">
             <div>
-              <div className="text-sm font-medium">Contrast</div>
-              <div className="text-xs text-muted-foreground">
-                Separates text, borders, and surfaces.
-              </div>
+              <div className="text-sm font-medium">{t("appearance.contrast")}</div>
+              <div className="text-xs text-muted-foreground">{t("appearance.contrastHelper")}</div>
             </div>
             <div className="flex w-52 items-center gap-3">
               <input
@@ -718,9 +725,9 @@ function ColorThemeControl() {
           </div>
           <div className="flex items-center justify-between gap-4 py-4">
             <div>
-              <div className="text-sm font-medium">Translucent sidebars</div>
+              <div className="text-sm font-medium">{t("appearance.translucentSidebars")}</div>
               <div className="text-xs text-muted-foreground">
-                Lets the canvas show through the conversation and workspace rails.
+                {t("appearance.translucentHelper")}
               </div>
             </div>
             <Switch
@@ -787,6 +794,7 @@ function PaletteSwatchPreview({ swatch }: { swatch: PaletteSwatch }) {
  * Fails open — with no connected host or readiness info, nothing is hidden.
  */
 function HideUnconfiguredHarnessesControl() {
+  const { t } = useTranslation("settings");
   const [value, setValue] = useState(() => readHideUnconfiguredHarnesses());
   const labelId = useId();
   const toggle = useCallback((next: boolean) => {
@@ -797,11 +805,10 @@ function HideUnconfiguredHarnessesControl() {
     <div className="flex items-start justify-between gap-6">
       <div className="flex flex-col">
         <span id={labelId} className="text-sm font-medium">
-          Hide unconfigured harnesses
+          {t("appearance.hideUnconfigured")}
         </span>
         <span className="text-sm text-muted-foreground">
-          Only show harnesses that are set up on the selected host in the new-chat picker. Harnesses
-          needing a CLI install or sign-in are hidden instead of badged.
+          {t("appearance.hideUnconfiguredHelper")}
         </span>
       </div>
       <Switch
@@ -861,6 +868,7 @@ function LanguageSection() {
 }
 
 function AppearanceSection() {
+  const { t } = useTranslation("settings");
   // Embedded: the host owns light/dark, so the Mode and Color theme pickers
   // would be no-ops — hide them and say so (matching ThemeModeMenu). Terminal
   // theme and the font controls are per-device prefs that don't conflict with
@@ -926,14 +934,12 @@ function AppearanceSection() {
   };
 
   return (
-    <Section title="Appearance" description="Choose how Omnigent looks on this device.">
+    <Section title={t("appearance.title")} description={t("appearance.description")}>
       <div key={resetKey} className="flex flex-col gap-8">
         {isEmbedded ? (
           <div className="flex flex-col gap-3">
-            <span className="text-sm font-medium">Theme</span>
-            <p className="text-sm text-muted-foreground">
-              Theme is controlled by the host application.
-            </p>
+            <span className="text-sm font-medium">{t("appearance.theme")}</span>
+            <p className="text-sm text-muted-foreground">{t("appearance.hostControlled")}</p>
           </div>
         ) : (
           <ModeControl />
@@ -964,20 +970,18 @@ function AppearanceSection() {
         <Dialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
           <DialogTrigger asChild>
             <Button variant="outline" size="sm" data-testid="reset-appearance-button">
-              Reset to defaults
+              {t("appearance.reset")}
             </Button>
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Reset appearance?</DialogTitle>
-              <DialogDescription>
-                This will reset every appearance choice back to its default.
-              </DialogDescription>
+              <DialogTitle>{t("appearance.resetQuestion")}</DialogTitle>
+              <DialogDescription>{t("appearance.resetDescription")}</DialogDescription>
             </DialogHeader>
             <DialogFooter>
               <DialogClose asChild>
                 <Button variant="outline" size="sm">
-                  Cancel
+                  {t("appearance.cancel")}
                 </Button>
               </DialogClose>
               <Button
@@ -986,7 +990,7 @@ function AppearanceSection() {
                 onClick={confirmResetAppearance}
                 data-testid="reset-appearance-confirm"
               >
-                Reset
+                {t("appearance.confirmReset")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -998,8 +1002,9 @@ function AppearanceSection() {
 
 /** Git behavior settings. */
 function GitSection() {
+  const { t } = useTranslation("settings");
   return (
-    <Section title="Git" description="Configure how Omnigent works with Git.">
+    <Section title={t("git.title")} description={t("git.description")}>
       <div className="flex flex-col gap-8">
         <DefaultBaseBranchControl />
       </div>
@@ -1014,6 +1019,7 @@ function GitSection() {
  * the current branch).
  */
 function DefaultBaseBranchControl() {
+  const { t } = useTranslation("settings");
   const [branch, setBranch] = useState(() => readDefaultBaseBranch() ?? "");
 
   const update = useCallback((next: string) => {
@@ -1024,16 +1030,14 @@ function DefaultBaseBranchControl() {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="text-sm font-medium">Default base branch</span>
-        <span className="text-sm text-muted-foreground">
-          Auto-filled as the base when you name a new worktree branch. Leave blank to not auto-fill.
-        </span>
+        <span className="text-sm font-medium">{t("git.defaultBaseBranch")}</span>
+        <span className="text-sm text-muted-foreground">{t("git.defaultBaseBranchHelper")}</span>
       </div>
       <Input
         type="text"
-        aria-label="Default base branch"
+        aria-label={t("git.defaultBaseBranch")}
         data-testid="settings-default-base-branch-input"
-        placeholder="e.g. main"
+        placeholder={t("git.placeholder")}
         spellCheck={false}
         autoCapitalize="off"
         autoCorrect="off"
@@ -1403,8 +1407,9 @@ function StepperButton({
 }
 
 function ShortcutsSection() {
+  const { t } = useTranslation("settings");
   return (
-    <Section title="Keyboard shortcuts" description="Speed up common actions with the keyboard.">
+    <Section title={t("shortcuts.title")} description={t("shortcuts.description")}>
       <KeyboardShortcutsList />
     </Section>
   );
@@ -1656,6 +1661,7 @@ function UpdatesSection() {
 }
 
 function AccountSection() {
+  const { t } = useTranslation("account");
   const info = useServerInfo();
   const accountsEnabled = info !== "loading" && info.accounts_enabled;
   // Identity for display. Sourced from the mode-agnostic `/v1/me` probe so it
@@ -1706,7 +1712,7 @@ function AccountSection() {
 
   const onSubmitPassword = useCallback(async () => {
     if (newPw !== confirmPw) {
-      setPwError("New passwords don't match.");
+      setPwError(t("auth.passwordMismatch"));
       return;
     }
     setPwBusy(true);
@@ -1721,14 +1727,14 @@ function AccountSection() {
     } else {
       setPwError(result.error);
     }
-  }, [oldPw, newPw, confirmPw]);
+  }, [oldPw, newPw, confirmPw, t]);
 
   if (me === "unknown" || me === null) {
-    return <Section title="Account">{null}</Section>;
+    return <Section title={t("title")}>{null}</Section>;
   }
 
   return (
-    <Section title="Account">
+    <Section title={t("title")}>
       <div className="flex flex-col gap-6">
         <div className="flex items-center gap-3">
           <span className="flex size-10 shrink-0 items-center justify-center rounded-md border border-border">
@@ -1738,7 +1744,9 @@ function AccountSection() {
             <div className="truncate font-medium">
               {me.id}
               {me.is_admin && (
-                <span className="ml-1 text-xs font-normal text-muted-foreground">(admin)</span>
+                <span className="ml-1 text-xs font-normal text-muted-foreground">
+                  ({t("auth.adminRole")})
+                </span>
               )}
             </div>
           </div>
@@ -1761,7 +1769,7 @@ function AccountSection() {
                 setPwOpen(true);
               }}
             >
-              <KeyRoundIcon className="size-4" /> Change password
+              <KeyRoundIcon className="size-4" /> {t("auth.changePassword")}
             </Button>
           )}
           <Button
@@ -1769,7 +1777,7 @@ function AccountSection() {
             className="w-full justify-start gap-2"
             onClick={() => void onSignOut()}
           >
-            <LogOutIcon className="size-4" /> Sign out
+            <LogOutIcon className="size-4" /> {t("auth.signOut")}
           </Button>
         </div>
       </div>
@@ -1783,11 +1791,9 @@ function AccountSection() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Change password</DialogTitle>
+            <DialogTitle>{t("auth.changePassword")}</DialogTitle>
             <DialogDescription>
-              {pwDone
-                ? "Your password has been changed."
-                : "Enter your current password and choose a new one."}
+              {pwDone ? t("auth.passwordChanged") : t("auth.passwordChangeDescription")}
             </DialogDescription>
           </DialogHeader>
 
@@ -1802,7 +1808,7 @@ function AccountSection() {
               <Input
                 type="password"
                 autoComplete="current-password"
-                placeholder="Current password"
+                placeholder={t("auth.currentPassword")}
                 value={oldPw}
                 onChange={(e) => setOldPw(e.target.value)}
                 disabled={pwBusy}
@@ -1811,7 +1817,7 @@ function AccountSection() {
               <Input
                 type="password"
                 autoComplete="new-password"
-                placeholder="New password"
+                placeholder={t("auth.newPassword")}
                 value={newPw}
                 onChange={(e) => setNewPw(e.target.value)}
                 disabled={pwBusy}
@@ -1820,7 +1826,7 @@ function AccountSection() {
               <Input
                 type="password"
                 autoComplete="new-password"
-                placeholder="Confirm new password"
+                placeholder={t("auth.confirmNewPassword")}
                 value={confirmPw}
                 onChange={(e) => setConfirmPw(e.target.value)}
                 disabled={pwBusy}
@@ -1841,7 +1847,7 @@ function AccountSection() {
                     pwBusy || oldPw.length === 0 || newPw.length === 0 || confirmPw.length === 0
                   }
                 >
-                  {pwBusy ? "Changing…" : "Change password"}
+                  {pwBusy ? t("auth.changing") : t("auth.changePassword")}
                 </Button>
               </DialogFooter>
             </form>
@@ -1849,7 +1855,7 @@ function AccountSection() {
 
           {pwDone && (
             <DialogFooter>
-              <Button onClick={() => setPwOpen(false)}>Done</Button>
+              <Button onClick={() => setPwOpen(false)}>{t("auth.done")}</Button>
             </DialogFooter>
           )}
         </DialogContent>

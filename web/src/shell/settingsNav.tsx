@@ -30,6 +30,7 @@ import { isSingleUserMode } from "@/lib/capabilities";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 export type SettingsSectionId =
   | "appearance"
@@ -202,6 +203,9 @@ export function SettingsSidebarBody({
   onNavClick: (e: React.MouseEvent<HTMLAnchorElement>) => void;
   onClose: () => void;
 }) {
+  const { t: tSettings } = useTranslation("settings");
+  const { t: tAccount } = useTranslation("account");
+  const { t: tAdmin } = useTranslation("admin");
   const info = useServerInfo();
   // Account section shows whenever there's a login session (accounts OR OIDC).
   const hasAuthSession = info !== "loading" && info.login_url !== null;
@@ -253,7 +257,11 @@ export function SettingsSidebarBody({
         {groups.map((group) => (
           <div key={group.title} className="flex flex-col gap-0.5">
             <h2 className="px-2 py-1 text-muted-foreground text-xs font-medium uppercase tracking-wide">
-              {group.title}
+              {group.title === "Admin"
+                ? tAdmin("title")
+                : group.title === "General"
+                  ? tSettings("title")
+                  : group.title}
             </h2>
             {group.items.map((item) => {
               const Icon = item.icon;
@@ -276,7 +284,21 @@ export function SettingsSidebarBody({
                     aria-current={selected ? "page" : undefined}
                   >
                     <Icon className="size-4 text-muted-foreground" />
-                    {item.label}
+                    {item.id === "account"
+                      ? tAccount("title")
+                      : item.id === "members"
+                        ? tAdmin("members.title")
+                        : item.id === "policies"
+                          ? tAdmin("policies.title")
+                          : item.id === "appearance"
+                            ? tSettings("appearance.title")
+                            : item.id === "language"
+                              ? tSettings("language.title")
+                              : item.id === "git"
+                                ? tSettings("git.title")
+                                : item.id === "shortcuts"
+                                  ? tSettings("shortcuts.title")
+                                  : item.label}
                   </Link>
                 </Button>
               );
