@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ArrowUpIcon,
   BotIcon,
@@ -5631,6 +5632,7 @@ function SessionConfigModal({
   codexModelOptions: readonly NativeModelOption[];
   costRoutingEligible: boolean;
 }) {
+  const { t } = useTranslation("models");
   const selectedEffort = useChatStore((s) => s.selectedEffort);
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
   const { llmModel, usesServerModelOptions, modelOptions, pickerSelectedModel } =
@@ -5738,10 +5740,8 @@ function SessionConfigModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md" data-testid="composer-config-modal">
         <DialogHeader>
-          <DialogTitle>Configure {harnessLabel ?? "session"}</DialogTitle>
-          <DialogDescription className="sr-only">
-            Change how this session runs. Model, effort, and smart routing apply to the next turn.
-          </DialogDescription>
+          <DialogTitle>{t("sessionConfigure", { name: harnessLabel ?? t("title") })}</DialogTitle>
+          <DialogDescription className="sr-only">{t("sessionDescription")}</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-5 py-1">
@@ -5749,13 +5749,13 @@ function SessionConfigModal({
           no Model dropdown to fold it into (e.g. Polly). Agents that render a
           Model dropdown (Claude, Codex, …) offer it as a Model option below. */}
           {costRoutingEligible && !showModels && (
-            <ConfigRow label="Smart Routing" description="Auto-pick the model per turn by task">
+            <ConfigRow label={t("smartRouting")} description={t("autoPick")}>
               <div className="flex h-8 items-center justify-end">
                 <Switch
                   size="sm"
                   checked={draftRoutingOn}
                   data-testid="composer-config-smart-routing"
-                  aria-label="Smart Routing"
+                  aria-label={t("smartRoutingAria")}
                   onCheckedChange={(next) => {
                     setDraftRoutingOn(next);
                     // Routing picks the model + effort per turn, so an explicit
@@ -5767,20 +5767,20 @@ function SessionConfigModal({
             </ConfigRow>
           )}
           {showModels && (
-            <ConfigRow label="Model" description="Underlying LLM">
+            <ConfigRow label={t("model")} description={t("underlyingLlm")}>
               <Select value={modelValue} onValueChange={onModelChange}>
                 <SelectTrigger
                   className="w-full"
                   data-testid="composer-config-model"
-                  aria-label="Model"
+                  aria-label={t("model")}
                 >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent position="popper" align="start">
                   {costRoutingEligible && (
-                    <SelectItem value={MODEL_SELECT_SMART}>Smart Routing</SelectItem>
+                    <SelectItem value={MODEL_SELECT_SMART}>{t("smartRouting")}</SelectItem>
                   )}
-                  <SelectItem value={MODEL_SELECT_DEFAULT}>Default</SelectItem>
+                  <SelectItem value={MODEL_SELECT_DEFAULT}>{t("reasoning.default")}</SelectItem>
                   {modelSelectOptions.map((m) => (
                     <SelectItem
                       key={m.id}
@@ -5796,7 +5796,7 @@ function SessionConfigModal({
             </ConfigRow>
           )}
           {showEffort && (
-            <ConfigRow label="Effort" description="Reasoning depth vs. speed">
+            <ConfigRow label={t("effort")} description={t("reasoningDepth")}>
               <Select
                 value={draftEffort ?? EFFORT_SELECT_NONE}
                 onValueChange={(v) => setDraftEffort(v === EFFORT_SELECT_NONE ? null : v)}
@@ -5807,12 +5807,12 @@ function SessionConfigModal({
                 <SelectTrigger
                   className="w-full"
                   data-testid="composer-config-effort"
-                  aria-label="Effort"
+                  aria-label={t("effort")}
                 >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent position="popper" align="start">
-                  <SelectItem value={EFFORT_SELECT_NONE}>Default</SelectItem>
+                  <SelectItem value={EFFORT_SELECT_NONE}>{t("reasoning.default")}</SelectItem>
                   {effortLevels.map((level) => (
                     <SelectItem
                       key={level}
@@ -5838,10 +5838,10 @@ function SessionConfigModal({
             onClick={() => onOpenChange(false)}
             data-testid="composer-config-cancel"
           >
-            Cancel
+            {t("cancel")}
           </Button>
           <Button type="button" onClick={save} data-testid="composer-config-save">
-            Save
+            {t("save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -5880,6 +5880,7 @@ function ComposerConfigGear({
   disabled: boolean;
   openNonce?: number;
 }) {
+  const { t } = useTranslation("models");
   const [open, setOpen] = useState(false);
   const appliedOpenNonce = useRef(0);
   useEffect(() => {
@@ -5925,7 +5926,7 @@ function ComposerConfigGear({
                 setOpen(true);
               }}
               data-testid="composer-config-gear"
-              aria-label="Configure session"
+              aria-label={t("configureSessionAria")}
             >
               <SettingsIcon className="size-4" />
             </Button>
@@ -5980,26 +5981,30 @@ function useSessionConfigSummary({
   codexModelOptions: readonly NativeModelOption[];
   costRoutingEligible: boolean;
 }): { label: string; value: string }[] {
+  const { t } = useTranslation("models");
   const selectedEffort = useChatStore((s) => s.selectedEffort);
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
   const { modelLabel } = useResolvedComposerModel(modelPickerKind, codexModelOptions);
   const routingOn = costRoutingEligible && costControlModeOverride === "on";
 
   const rows: { label: string; value: string }[] = [];
-  if (harnessLabel) rows.push({ label: "Harness", value: harnessLabel });
+  if (harnessLabel) rows.push({ label: t("summaryHarness"), value: harnessLabel });
   if (showModels) {
-    rows.push({ label: "Model", value: routingOn ? "Smart Routing" : (modelLabel ?? "Default") });
+    rows.push({
+      label: t("model"),
+      value: routingOn ? t("smartRouting") : (modelLabel ?? t("reasoning.default")),
+    });
   }
   // Suppress Effort while Smart Routing is on: the router picks the model and
   // its effort per turn, so a pinned effort doesn't apply and would mislead.
   if (showEffort && !routingOn) {
     const effortValue = formatStatusEffortLabel(selectedEffort, modelPickerKind === "codex");
-    rows.push({ label: "Effort", value: effortValue ?? "Default" });
+    rows.push({ label: t("summaryEffort"), value: effortValue ?? t("reasoning.default") });
   }
   // Routable agents with no Model row surface Smart Routing as a standalone row;
   // those with a Model dropdown fold it into Model above (shown as the value).
   if (costRoutingEligible && !showModels && routingOn) {
-    rows.push({ label: "Smart Routing", value: "On" });
+    rows.push({ label: t("smartRouting"), value: t("configOptions.labels.auto") });
   }
   return rows;
 }
@@ -6130,6 +6135,7 @@ function ComposerModelEffortLabel({
   costRoutingEligible: boolean;
   harnessLabel: string | null;
 }) {
+  const { t } = useTranslation("models");
   const selectedEffort = useChatStore((s) => s.selectedEffort);
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
   const { modelLabel } = useResolvedComposerModel(modelPickerKind, codexModelOptions);
@@ -6142,13 +6148,20 @@ function ComposerModelEffortLabel({
         data-testid="composer-model-effort-label"
         className="min-w-0 shrink truncate px-1 text-xs tabular-nums text-muted-foreground"
       >
-        <span className="text-foreground">Smart Routing</span>
+        <span className="text-foreground">{t("smartRouting")}</span>
       </span>
     );
   }
   const effortLabel =
     showEffort && selectedEffort
-      ? formatStatusEffortLabel(selectedEffort, modelPickerKind === "codex")
+      ? (() => {
+          const key = selectedEffort.toLowerCase();
+          const translated =
+            key === "low" || key === "medium" || key === "high" || key === "xhigh" || key === "max"
+              ? t(`reasoning.${key}`)
+              : null;
+          return translated ?? formatStatusEffortLabel(selectedEffort, modelPickerKind === "codex");
+        })()
       : null;
   // SDK/bundle sessions (no native picker) still surface their resolved model
   // in the label even though the gear modal has no Model dropdown for them —

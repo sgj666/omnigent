@@ -44,6 +44,7 @@ import { setOmnigentHostConfig } from "@/lib/host";
 import { writeHideUnconfiguredHarnesses } from "@/lib/harnessVisibilityPreferences";
 import { setPendingInitialPrompt } from "@/store/chatStore";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 // Only authenticatedFetch is stubbed (the create POST under test);
 // the module's other exports stay real for any other consumer in the tree.
@@ -2587,6 +2588,22 @@ describe("NewChatLandingScreen agent picker + config gear", () => {
     fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
     expect(screen.getByTestId("new-chat-landing-config-modal")).toBeTruthy();
     expect(screen.getByTestId("new-chat-landing-config-permission")).toBeTruthy();
+  });
+
+  it("renders the run configuration modal with professional Chinese labels", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      renderLanding();
+      fireEvent.click(screen.getByTestId("new-chat-landing-config-gear"));
+      expect(screen.getByText("配置 Claude Code")).toBeTruthy();
+      expect(screen.getByText("模型")).toBeTruthy();
+      expect(screen.getByText("推理强度")).toBeTruthy();
+      expect(screen.getByText("权限")).toBeTruthy();
+      expect(screen.getByTestId("new-chat-landing-config-cancel")).toHaveTextContent("取消");
+      expect(screen.getByTestId("new-chat-landing-config-save")).toHaveTextContent("保存");
+    } finally {
+      await restore();
+    }
   });
 
   it("summarizes the current settings in the gear tooltip on hover", async () => {
