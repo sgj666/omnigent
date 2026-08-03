@@ -243,7 +243,7 @@ export function ResumeWithDirectoryDialog({
       handleOpenChange(false);
       onBound?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't start the session. Try again.");
+      setError(e instanceof Error ? e.message : t("startSessionErrorGeneric"));
     } finally {
       setSubmitting(false);
     }

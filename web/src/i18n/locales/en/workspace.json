@@ -193,11 +193,13 @@
   "notebookOutputImageAlt": "Notebook output",
   "notebookImageDecodeError": "Image output ({{mime}}) could not be decoded.",
   "notebookRichHtmlHidden": "Rich HTML output hidden — showing plain text.",
+  "notebookInvalidStructure": "Not a notebook: missing cells array",
   "notebookCannotRender": "Cannot render notebook: {{error}}",
   "notebookSourceViewHint": "Switch to the source view to inspect the raw file.",
   "modelPreviewAriaLabel": "3D preview of {{filename}}",
   "modelTooLarge": "Model is too large to preview (truncated by the server).",
   "unableRenderModel": "Unable to render 3D model.",
   "resumeErrorWithMessage": "Couldn't resume session: {{message}}",
-  "resumeErrorGeneric": "Couldn't resume session."
+  "resumeErrorGeneric": "Couldn't resume session.",
+  "startSessionErrorGeneric": "Couldn't start the session. Try again."
 }

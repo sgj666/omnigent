@@ -45,6 +45,8 @@ interface Notebook {
   metadata?: { language_info?: { name?: string } };
 }
 
+const MISSING_CELLS_ERROR = "not a notebook: missing cells array";
+
 // nbformat stores text as a list of lines (or a single string); normalize.
 function joinSource(src: string | string[] | undefined): string {
   if (src === undefined) return "";
@@ -225,9 +227,13 @@ export function NotebookPreview({
   const { notebook, error } = parseNotebook(content);
 
   if (error || !notebook) {
+    const errorMessage =
+      error === MISSING_CELLS_ERROR
+        ? t("notebookInvalidStructure")
+        : t("notebookCannotRender", { error });
     return (
       <div className="p-8 text-sm">
-        <div className="text-destructive">{t("notebookCannotRender", { error })}</div>
+        <div className="text-destructive">{errorMessage}</div>
         <div className="mt-1 text-muted-foreground">{t("notebookSourceViewHint")}</div>
       </div>
     );

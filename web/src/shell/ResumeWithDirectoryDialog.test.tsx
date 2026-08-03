@@ -9,6 +9,7 @@ import { useDirectorySessions } from "@/hooks/useDirectorySessions";
 import { useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
 import { getSessionSlim, launchRunner } from "@/lib/sessionsApi";
 import type { Session } from "@/lib/types";
+import { withTestLanguage } from "@/i18n/testHelpers";
 
 // Heavy children are exercised by their own tests; stub them so this
 // test focuses on the dialog's prefill + bind + fallback logic.
@@ -163,6 +164,25 @@ describe("ResumeWithDirectoryDialog", () => {
         undefined,
       ),
     );
+  });
+
+  it("uses localized fallback copy when the runner start error has no message", async () => {
+    await withTestLanguage("zh-CN", async () => {
+      useHostsMock.mockReturnValue({
+        data: [{ host_id: "host_src", name: "laptop", owner: "me", status: "online" }],
+      } as unknown as ReturnType<typeof useHosts>);
+      getSessionMock.mockResolvedValue(sourceSession({ workspace: "/Users/alice/repo" }));
+      launchRunnerMock.mockRejectedValueOnce("runner unavailable");
+
+      renderDialog();
+      const bindBtn = await screen.findByTestId("resume-dir-bind-button");
+      await waitFor(() => expect((bindBtn as HTMLButtonElement).disabled).toBe(false));
+      fireEvent.click(bindBtn);
+
+      expect(await screen.findByTestId("resume-dir-error")).toHaveTextContent(
+        "无法启动会话，请重试。",
+      );
+    });
   });
 
   it("shows the CLI reconnect fallback when the source host is offline", async () => {

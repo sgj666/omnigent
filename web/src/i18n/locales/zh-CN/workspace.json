@@ -193,11 +193,13 @@
   "notebookOutputImageAlt": "Notebook 输出",
   "notebookImageDecodeError": "图像输出（{{mime}}）无法解码。",
   "notebookRichHtmlHidden": "已隐藏富 HTML 输出，当前显示纯文本。",
+  "notebookInvalidStructure": "不是 Notebook：缺少 cells 数组（missing cells array）",
   "notebookCannotRender": "无法渲染 Notebook：{{error}}",
   "notebookSourceViewHint": "切换到源文件视图以检查原始文件。",
   "modelPreviewAriaLabel": "{{filename}} 的 3D 预览",
   "modelTooLarge": "模型过大，无法预览（服务器已截断）。",
   "unableRenderModel": "无法渲染 3D 模型。",
   "resumeErrorWithMessage": "无法恢复会话：{{message}}",
-  "resumeErrorGeneric": "无法恢复会话。"
+  "resumeErrorGeneric": "无法恢复会话。",
+  "startSessionErrorGeneric": "无法启动会话，请重试。"
 }
