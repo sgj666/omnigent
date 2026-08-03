@@ -113,8 +113,12 @@ function TerminalsCard({ terminals, onExpand }: TerminalsCardProps) {
             <p className="text-muted-foreground text-xs">{t("shell.noOpenTerminals")}</p>
           ) : (
             <ul className="flex flex-col gap-0.5">
-              {terminals.map((t) => (
-                <TerminalRow key={t.id} terminal={t} onOpen={() => onExpand(terminalTabKey(t))} />
+              {terminals.map((terminal) => (
+                <TerminalRow
+                  key={terminal.id}
+                  terminal={terminal}
+                  onOpen={() => onExpand(terminalTabKey(terminal))}
+                />
               ))}
             </ul>
           )}
