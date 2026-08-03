@@ -8,6 +8,7 @@ import {
   type SupportedLanguage,
 } from "./languagePreferences";
 import { namespaceKeys, resources } from "./resources";
+import { setDesktopLanguage } from "../lib/nativeBridge";
 
 type NativeLanguageSync = (
   preference: LanguagePreference,
@@ -65,6 +66,10 @@ void i18n.use(initReactI18next).init({
   initImmediate: false,
   showSupportNotice: false,
   interpolation: { escapeValue: false },
+});
+
+registerNativeLanguageSync((preference, effectiveLanguage) => {
+  setDesktopLanguage(preference, effectiveLanguage);
 });
 
 synchronizeDocument();

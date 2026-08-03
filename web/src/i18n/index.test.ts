@@ -11,6 +11,20 @@ afterEach(async () => {
 });
 
 describe("i18n runtime", () => {
+  it("synchronizes language changes with the Electron desktop bridge", async () => {
+    const setLanguage = vi.fn();
+    (window as unknown as Record<string, unknown>).omnigentDesktop = {
+      kind: "electron",
+      setLanguage,
+    };
+    try {
+      await setUiLanguagePreference("zh-CN");
+      expect(setLanguage).toHaveBeenCalledWith("zh-CN", "zh-CN");
+    } finally {
+      delete (window as unknown as Record<string, unknown>).omnigentDesktop;
+    }
+  });
+
   it("applies a manual language immediately and synchronizes the document", async () => {
     await setUiLanguagePreference("zh-CN");
     expect(i18n.resolvedLanguage).toBe("zh-CN");
