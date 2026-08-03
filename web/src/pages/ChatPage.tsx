@@ -878,7 +878,7 @@ export function ChatPage() {
   // Non-null only when the active session is a sub-agent (child): the
   // composer then peeks a "Chatting with sub-agent …" tray and the
   // scroll-pinned "Working…" tab is suppressed (the tray owns that slot).
-  const subAgentLabel = subAgentComposerLabel(activeSession);
+  const subAgentLabel = subAgentComposerLabel(activeSession, t("subAgentDefault"));
 
   // Hoisted above the early-return guards so the title-update effect can read them.
   const activeConv = urlConvId ? conversations?.find((c) => c.id === urlConvId) : null;
@@ -2984,10 +2984,13 @@ export function mcpStartingLine(starting: string[], total: number): string {
  * @param names Failed or cancelled server names, sorted.
  * @returns e.g. `"a, b, c, d, e, f, g, h, +12 more"`.
  */
-export function mcpSettledNames(names: string[]): string {
+export function mcpSettledNames(
+  names: string[],
+  formatMore: (count: number) => string = (count) => `+${count} more`,
+): string {
   if (names.length <= MCP_SETTLED_NAMES_SHOWN) return names.join(", ");
   const shown = names.slice(0, MCP_SETTLED_NAMES_SHOWN);
-  return `${shown.join(", ")}, +${names.length - MCP_SETTLED_NAMES_SHOWN} more`;
+  return `${shown.join(", ")}, ${formatMore(names.length - MCP_SETTLED_NAMES_SHOWN)}`;
 }
 
 /**
@@ -3006,6 +3009,7 @@ export function McpStartupIndicator() {
   const names = Object.keys(mcpStartup).sort();
   const starting = names.filter((name) => mcpStartup[name].status === "starting");
   if (starting.length > 0) {
+    const formatMore = (count: number) => t("mcpMoreNames", { count });
     return (
       <Message
         from="assistant"
@@ -3021,7 +3025,7 @@ export function McpStartupIndicator() {
               : t("mcpStartingServers", {
                   ready: names.length - starting.length,
                   total: names.length,
-                  names: mcpSettledNames(starting),
+                  names: mcpSettledNames(starting, formatMore),
                 })}
           </span>
         </MessageContent>
@@ -3032,8 +3036,13 @@ export function McpStartupIndicator() {
   const cancelled = names.filter((name) => mcpStartup[name].status === "cancelled");
   if (failed.length === 0 && cancelled.length === 0) return null;
   const parts: string[] = [];
-  if (failed.length > 0) parts.push(t("mcpFailed", { names: mcpSettledNames(failed) }));
-  if (cancelled.length > 0) parts.push(t("mcpCancelled", { names: mcpSettledNames(cancelled) }));
+  const formatMore = (count: number) => t("mcpMoreNames", { count });
+  if (failed.length > 0) {
+    parts.push(t("mcpFailed", { names: mcpSettledNames(failed, formatMore) }));
+  }
+  if (cancelled.length > 0) {
+    parts.push(t("mcpCancelled", { names: mcpSettledNames(cancelled, formatMore) }));
+  }
   return (
     <Message from="assistant" data-testid="mcp-startup-indicator" role="status">
       <MessageContent>
@@ -3980,6 +3989,7 @@ function ComposerStatusLine({
  */
 export function subAgentComposerLabel(
   session: Pick<Session, "parentSessionId" | "title" | "subAgentName" | "agentName"> | null,
+  fallbackLabel = "sub-agent",
 ): string | null {
   if (!session || session.parentSessionId == null) return null;
   // Strip the user-added "ui:" sentinel so its "agent:name" suffix reads
@@ -3993,7 +4003,7 @@ export function subAgentComposerLabel(
   // Last-resort display string: a sub-agent session always has a seeded
   // title in practice, so the final "sub-agent" only guards a degenerate
   // all-null snapshot (the tray still needs something to render).
-  return title ?? session.subAgentName ?? session.agentName ?? "sub-agent";
+  return title ?? session.subAgentName ?? session.agentName ?? fallbackLabel;
 }
 
 /**
@@ -4441,7 +4451,7 @@ export function Composer({
           .catch((err: unknown) => {
             setCommandError(
               t("commandCompactFailed", {
-                error: err instanceof Error ? err.message : "Compact failed",
+                error: err instanceof Error ? err.message : t("unknownError"),
               }),
             );
           });
@@ -4463,7 +4473,7 @@ export function Composer({
           .catch((err: unknown) => {
             setCommandError(
               t("commandEffortFailed", {
-                error: err instanceof Error ? err.message : "Failed to set effort",
+                error: err instanceof Error ? err.message : t("unknownError"),
               }),
             );
           });
@@ -4479,7 +4489,7 @@ export function Composer({
           const { sessionModelOverride, llmModel } = useChatStore.getState();
           const current = sessionModelOverride
             ? `${sessionModelOverride} (override)`
-            : (llmModel ?? "agent default");
+            : (llmModel ?? t("commandModelDefault"));
           setCommandError(t("commandModelInfo", { model: current }));
           return true;
         }
@@ -4498,7 +4508,7 @@ export function Composer({
           .catch((err: unknown) => {
             setCommandError(
               t("commandModelFailed", {
-                error: err instanceof Error ? err.message : "Failed to set model",
+                error: err instanceof Error ? err.message : t("unknownError"),
               }),
             );
           });

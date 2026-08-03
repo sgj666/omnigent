@@ -831,6 +831,10 @@ describe("subAgentComposerLabel", () => {
     // Degenerate snapshot — the tray still needs something to render.
     expect(subAgentComposerLabel(mkSession())).toBe("sub-agent");
   });
+
+  it("accepts the localized generic fallback used by the Chinese tray", () => {
+    expect(subAgentComposerLabel(mkSession(), "子智能体")).toBe("子智能体");
+  });
 });
 
 // ── containsMarkdownTable ──────────────────────────────────────────────────
