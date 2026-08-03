@@ -65,7 +65,13 @@ def _text(content: object) -> str:
         except (TypeError, ValueError):
             return content
         if isinstance(decoded, Mapping):
-            return str(decoded.get("text", ""))
+            if decoded.get("text"):
+                return str(decoded["text"])
+            locale = decoded.get("zh_cn")
+            if isinstance(locale, Mapping):
+                return str(locale.get("text", locale.get("content", "")))
+            if isinstance(locale, list):
+                return " ".join(str(item) for item in locale)
         return content
     if isinstance(content, Mapping):
         return str(content.get("text", ""))
@@ -129,7 +135,8 @@ def decode_card_action(payload: Mapping[str, Any]) -> LarkCardAction:
     actor_id = _identity(actor)
     if actor_id is None:
         raise LarkProtocolError("card action is missing actor id")
-    chat_id = event.get("chat_id") or value.get("chat_id")
+    context = _obj(event.get("context", {}))
+    chat_id = event.get("chat_id") or context.get("chat_id") or value.get("chat_id")
     if not isinstance(chat_id, str) or not chat_id:
         raise LarkProtocolError("card action is missing chat_id")
     event_id = header.get("event_id") or envelope.get("event_id") or f"{action_id}:{nonce}"
@@ -138,7 +145,7 @@ def decode_card_action(payload: Mapping[str, Any]) -> LarkCardAction:
         action_id=action_id,
         nonce=nonce,
         chat_id=chat_id,
-        thread_id=event.get("thread_id") or value.get("thread_id"),
+        thread_id=event.get("thread_id") or context.get("thread_id") or value.get("thread_id"),
         actor_id=actor_id,
         value=dict(value),
         signature=action.get("signature") or envelope.get("signature"),
@@ -148,8 +155,10 @@ def decode_card_action(payload: Mapping[str, Any]) -> LarkCardAction:
     )
 
 
-def decode_event(payload: Mapping[str, Any]) -> LarkMessage | LarkCardAction:
+def decode_event(payload: Mapping[str, Any] | bytes | str) -> LarkMessage | LarkCardAction:
     """Dispatch decoding using the provider's event type discriminator."""
+    if isinstance(payload, bytes | str):
+        payload = json.loads(payload)
     header = payload.get("header", {})
     event_type = header.get("event_type") if isinstance(header, Mapping) else None
     event = payload.get("event", {})

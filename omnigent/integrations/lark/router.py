@@ -49,9 +49,14 @@ class LarkRouter:
     """
 
     def __init__(self, *, bindings: Mapping[tuple[str, str | None], RouteContext] | None = None,
-                 resolver: Callable[[str, str | None], RouteContext | None] | None = None) -> None:
+                 resolver: Callable[[str, str | None], RouteContext | None] | None = None,
+                 coordinator_callback: Callable[[RunRequest], Any] | None = None,
+                 action_callback: Callable[[RouteContext, LarkCardAction], Any] | None = None,
+                 ) -> None:
         self.bindings = dict(bindings or {})
         self.resolver = resolver
+        self.coordinator_callback = coordinator_callback
+        self.action_callback = action_callback
 
     def bind(self, chat_id: str, team: Any, coordinator: Any, *, thread_id: str | None = None,
              workspace_id: str | None = None, members: set[str] | None = None) -> RouteContext:
@@ -88,6 +93,8 @@ class LarkRouter:
         coordinator_id = self._id(context.coordinator)
         request = RunRequest(event.text, "coordinator", event.sender_id, team_id, coordinator_id,
                              context.workspace_id, event.chat_id, event.thread_id, event.mentions)
+        if self.coordinator_callback is not None:
+            return self.coordinator_callback(request)
         coordinator = context.coordinator
         for method in ("receive", "submit", "request_run", "handle_request"):
             callback = getattr(coordinator, method, None)
@@ -108,6 +115,13 @@ class LarkRouter:
 
     def route_action(self, event: LarkCardAction) -> Any:
         context = self.authorize_action(event)
+        validator = getattr(context.coordinator, "validate_action", None)
+        if callable(validator) and not validator(event):
+            raise LarkRoutingError(
+                "invalid_transition", "Card action is not legal in current state"
+            )
+        if self.action_callback is not None:
+            return self.action_callback(context, event)
         coordinator = context.coordinator
         for method in ("handle_action", "dispatch_action", "action"):
             callback = getattr(coordinator, method, None)

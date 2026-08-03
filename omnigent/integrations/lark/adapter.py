@@ -120,7 +120,8 @@ class LarkAdapter:
         except TypeError:
             return bool(self.deduper.claim("lark", key))
 
-    def receive(self, payload: Mapping[str, Any] | LarkMessage | LarkCardAction) -> AdapterResult:
+    def receive(self, payload: Mapping[str, Any] | bytes | str | LarkMessage | LarkCardAction,
+                *, headers: Mapping[str, str] | None = None) -> AdapterResult:
         """Process one decoded or raw event; replay returns the original result."""
         try:
             if isinstance(payload, LarkMessage):
@@ -128,6 +129,9 @@ class LarkAdapter:
             elif isinstance(payload, LarkCardAction):
                 event = payload
             else:
+                if isinstance(payload, bytes | str):
+                    decoded = json.loads(payload)
+                    payload = decoded
                 header = payload.get("header", {})
                 event_type = (
                     str(header.get("event_type", payload.get("event_type", "")))
@@ -150,6 +154,15 @@ class LarkAdapter:
         try:
             if isinstance(event, LarkMessage):
                 if isinstance(payload, Mapping):
+                    if headers:
+                        payload = dict(payload)
+                        payload.setdefault(
+                            "signature",
+                            headers.get("X-Lark-Signature")
+                            or headers.get("X-Las-Signature"),
+                        )
+                        payload.setdefault("timestamp", headers.get("X-Lark-Timestamp"))
+                        payload.setdefault("nonce", headers.get("X-Lark-Nonce"))
                     self._validate_message_signature(payload)
                 if not self._claim(f"event:{event.event_id}"):
                     prior = self._seen_events.get(event.event_id)
@@ -157,6 +170,10 @@ class LarkAdapter:
                 result = self.router.route_message(event)
             else:
                 raw = payload if isinstance(payload, Mapping) else {}
+                if headers:
+                    raw = dict(raw)
+                    raw.setdefault("signature", headers.get("X-Lark-Signature"))
+                    raw.setdefault("timestamp", headers.get("X-Lark-Timestamp"))
                 self._validate_signature(raw, event)
                 nonce_key = (event.action_id, event.nonce)
                 if nonce_key in self._seen_actions or not self._claim(
@@ -217,6 +234,10 @@ class LarkAdapter:
         self.connected = False
         self.reconnect_count += 1
         return self.reconnect_count
+
+    def reconnect_delay(self) -> float:
+        """Exponential reconnect backoff capped for a bounded reconnect loop."""
+        return min(30.0, 0.5 * (2 ** max(0, self.reconnect_count - 1)))
 
 
 __all__ = ["AdapterResult", "LarkAdapter"]
