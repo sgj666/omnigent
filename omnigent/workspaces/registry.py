@@ -89,6 +89,10 @@ class WorkspaceRegistry:
             raise WorkspaceManifestError(
                 f"repository path must stay within the workspace: {relative_path}"
             )
+        if root == resolved:
+            raise WorkspaceManifestError(
+                f"repository path must be a child of the workspace: {relative_path}"
+            )
         return resolved
 
     @staticmethod

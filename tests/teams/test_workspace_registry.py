@@ -129,3 +129,14 @@ def test_load_rejects_canonical_path_aliases(tmp_path: Path) -> None:
 
     with pytest.raises(WorkspaceManifestError, match="duplicate"):
         WorkspaceRegistry().load(root)
+
+
+def test_load_rejects_repository_path_resolving_to_workspace_root(tmp_path: Path) -> None:
+    root = tmp_path / "a需求"
+    root.mkdir()
+    (root / ".git").mkdir()
+    (root / "self").symlink_to(root, target_is_directory=True)
+    _write_manifest(root, [{"id": "self", "path": "self"}])
+
+    with pytest.raises(WorkspaceManifestError, match="child"):
+        WorkspaceRegistry().load(root)

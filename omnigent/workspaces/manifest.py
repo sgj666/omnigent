@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TypeAlias, cast
 
 MANIFEST_FILENAME = ".workbench-workspace.json"
+JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+JsonObject: TypeAlias = dict[str, JsonValue]
 
 
 class WorkspaceManifestError(ValueError):
@@ -43,7 +45,7 @@ def load_workspace_manifest(root: Path | str) -> WorkspaceManifest:
     if not manifest_path.is_file():
         raise WorkspaceManifestError(f"workspace manifest not found: {manifest_path}")
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload = _coerce_json(cast(object, json.loads(manifest_path.read_text(encoding="utf-8"))))
     except (OSError, json.JSONDecodeError) as exc:
         raise WorkspaceManifestError(f"invalid workspace manifest: {manifest_path}") from exc
     if not isinstance(payload, dict):
@@ -62,6 +64,7 @@ def load_workspace_manifest(root: Path | str) -> WorkspaceManifest:
 def _parse_repository(project: object, index: int) -> WorkspaceRepository:
     if not isinstance(project, dict):
         raise WorkspaceManifestError(f"expertProjects[{index}] must be an object")
+    project = cast(JsonObject, project)
 
     path = _required_string(project, "path", index)
     repository_id = _optional_string(project, "id", index) or _optional_string(
@@ -82,7 +85,7 @@ def _parse_repository(project: object, index: int) -> WorkspaceRepository:
     )
 
 
-def _required_string(project: dict[str, Any], field_name: str, index: int) -> str:
+def _required_string(project: JsonObject, field_name: str, index: int) -> str:
     value = project.get(field_name)
     if not isinstance(value, str) or not value:
         raise WorkspaceManifestError(
@@ -91,7 +94,7 @@ def _required_string(project: dict[str, Any], field_name: str, index: int) -> st
     return value
 
 
-def _optional_string(project: dict[str, Any], field_name: str, index: int) -> str | None:
+def _optional_string(project: JsonObject, field_name: str, index: int) -> str | None:
     value = project.get(field_name)
     if value is None:
         return None
@@ -102,7 +105,7 @@ def _optional_string(project: dict[str, Any], field_name: str, index: int) -> st
     return value
 
 
-def _optional_bool(project: dict[str, Any], field_name: str, index: int, *, default: bool) -> bool:
+def _optional_bool(project: JsonObject, field_name: str, index: int, *, default: bool) -> bool:
     value = project.get(field_name, default)
     if not isinstance(value, bool):
         raise WorkspaceManifestError(f"expertProjects[{index}].{field_name} must be a boolean")
@@ -110,19 +113,24 @@ def _optional_bool(project: dict[str, Any], field_name: str, index: int, *, defa
 
 
 def _commands(
-    project: dict[str, Any], camel_name: str, snake_name: str, index: int
+    project: JsonObject, camel_name: str, snake_name: str, index: int
 ) -> tuple[str, ...]:
     value = project.get(camel_name, project.get(snake_name, []))
-    if not isinstance(value, list) or not all(
-        isinstance(command, str) and command for command in value
-    ):
+    if not isinstance(value, list):
         raise WorkspaceManifestError(
             f"expertProjects[{index}].{camel_name} must be a list of strings"
         )
-    return tuple(value)
+    commands: list[str] = []
+    for command in value:
+        if not isinstance(command, str) or not command:
+            raise WorkspaceManifestError(
+                f"expertProjects[{index}].{camel_name} must be a list of strings"
+            )
+        commands.append(command)
+    return tuple(commands)
 
 
-def _permissions(project: dict[str, Any], index: int) -> dict[str, object]:
+def _permissions(project: JsonObject, index: int) -> dict[str, object]:
     value = project.get("permissions", {})
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
         raise WorkspaceManifestError(f"expertProjects[{index}].permissions must be an object")
@@ -136,3 +144,19 @@ def _validate_unique_repositories(repositories: tuple[WorkspaceRepository, ...])
         raise WorkspaceManifestError("workspace manifest contains duplicate repository ids")
     if len(set(paths)) != len(paths):
         raise WorkspaceManifestError("workspace manifest contains duplicate repository paths")
+
+
+def _coerce_json(value: object) -> JsonValue:
+    """Convert the untyped JSON decoder result to the supported JSON shape."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, list):
+        return [_coerce_json(item) for item in value]
+    if isinstance(value, dict):
+        result: JsonObject = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise WorkspaceManifestError("workspace manifest object keys must be strings")
+            result[key] = _coerce_json(item)
+        return result
+    raise WorkspaceManifestError("workspace manifest contains an unsupported JSON value")
