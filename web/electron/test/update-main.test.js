@@ -220,6 +220,50 @@ function findMenuItem(menu, id) {
 }
 
 describe("update overlay locale propagation", () => {
+  it("defers locale resolution until the overlay is created", () => {
+    let ready = false;
+    const getLocale = () => {
+      if (!ready) throw new Error("app is not ready");
+      return "zh-CN";
+    };
+    const parent = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+    });
+    const loaded = [];
+    const webContents = Object.assign(new EventEmitter(), { send: () => {} });
+    const overlay = Object.assign(new EventEmitter(), {
+      webContents,
+      isDestroyed: () => false,
+      isVisible: () => true,
+      loadFile: (_page, options) => {
+        loaded.push(options.search);
+        return Promise.resolve();
+      },
+      setBounds: () => {},
+      setIgnoreMouseEvents: () => {},
+      showInactive: () => {},
+      destroy: () => {},
+    });
+    function BrowserWindow() {
+      return overlay;
+    }
+    const nativeTheme = Object.assign(new EventEmitter(), { shouldUseDarkColors: false });
+
+    const manager = createUpdateOverlay({
+      BrowserWindow,
+      ipcMain: { on: () => {}, handle: () => {} },
+      nativeTheme,
+      updater: {},
+      overlayPage: "/overlay.html",
+      preloadPath: "/overlay-preload.js",
+      getLocale,
+    });
+    ready = true;
+    manager.ensureOverlay(parent);
+    assert.equal(loaded[0], "theme=light&locale=zh-CN");
+  });
+
   it("includes the effective locale in the overlay URL and refreshes it", () => {
     const parent = Object.assign(new EventEmitter(), {
       isDestroyed: () => false,

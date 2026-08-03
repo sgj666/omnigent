@@ -41,7 +41,16 @@ function createUpdateOverlay({
   const overlays = new Map();
   /** @type {WeakMap<Electron.BrowserWindow, number>} overlay -> last reported height */
   const heights = new WeakMap();
-  let locale = getLocale() === "zh-CN" ? "zh-CN" : "en";
+  let locale = "en";
+
+  function resolveLocale() {
+    try {
+      locale = getLocale() === "zh-CN" ? "zh-CN" : "en";
+    } catch {
+      locale = "en";
+    }
+    return locale;
+  }
 
   function overlayForSender(event) {
     for (const ov of overlays.values()) {
@@ -101,7 +110,7 @@ function createUpdateOverlay({
     // pushed via setColorScheme since). did-finish-load fires on every load —
     // including Cmd+R reloads — so push the LIVE theme here to correct it.
     const theme = nativeTheme.shouldUseDarkColors ? "dark" : "light";
-    const search = new URLSearchParams({ theme, locale });
+    const search = new URLSearchParams({ theme, locale: resolveLocale() });
     void overlay.loadFile(overlayPage, { search: search.toString() });
     overlay.webContents.on("did-finish-load", () => {
       if (overlay.isDestroyed()) return;
