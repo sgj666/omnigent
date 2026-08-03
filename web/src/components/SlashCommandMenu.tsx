@@ -22,6 +22,14 @@ export const BUILTIN_SLASH_COMMANDS: Record<string, string> = {
   "/help": "Show available slash commands",
 };
 
+const BUILTIN_DESCRIPTION_KEYS: Record<string, string> = {
+  "/compact": "slashDescriptions.compact",
+  "/context": "slashDescriptions.context",
+  "/effort": "slashDescriptions.effort",
+  "/model": "slashDescriptions.model",
+  "/help": "slashDescriptions.help",
+};
+
 // First token must read as a command name (`/cross-review`,
 // `/dev-productivity:simplify`) — letters/digits then word chars, `:`, `-`.
 // The leading `/` is the only slash allowed IN THE NAME, so file paths like
@@ -190,7 +198,9 @@ export function SlashCommandMenu({
   // visual = keyboard order.
   const rows: MenuRow[] = matchedNames.map((name, flatIndex) => ({
     name,
-    description: commands[name] ?? "",
+    description: BUILTIN_DESCRIPTION_KEYS[name]
+      ? t(BUILTIN_DESCRIPTION_KEYS[name]!, { defaultValue: commands[name] ?? "" })
+      : (commands[name] ?? ""),
     flatIndex,
   }));
   const builtinRows = rows.filter((r) => r.name in BUILTIN_SLASH_COMMANDS);

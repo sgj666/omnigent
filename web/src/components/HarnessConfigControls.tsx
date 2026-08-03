@@ -19,6 +19,52 @@ export const MODEL_SELECT_SMART = "__smart__";
 // Sentinel for the "no explicit effort" (—) choice, same reasoning.
 export const EFFORT_SELECT_NONE = "__none__";
 
+const OPTION_LABEL_KEYS: Record<string, string> = {
+  Low: "reasoning.low",
+  Medium: "reasoning.medium",
+  High: "reasoning.high",
+  xHigh: "reasoning.xhigh",
+  Max: "reasoning.max",
+  Default: "reasoning.default",
+  "No override": "reasoning.none",
+  "Smart Routing": "smartRouting",
+  Auto: "configOptions.labels.auto",
+  "Accept edits": "configOptions.labels.acceptEdits",
+  Plan: "configOptions.labels.plan",
+  "Don't ask": "configOptions.labels.dontAsk",
+  "Bypass permissions": "configOptions.labels.bypassPermissions",
+  "Full access": "configOptions.labels.fullAccess",
+  "Read only": "configOptions.labels.readOnly",
+  "Bypass approvals & sandbox": "configOptions.labels.bypassApprovalsSandbox",
+  "Auto-review": "configOptions.labels.autoReview",
+  Ask: "configOptions.labels.ask",
+  Yolo: "configOptions.labels.yolo",
+};
+
+const OPTION_DESCRIPTION_KEYS: Record<string, string> = {
+  "Prompts before edits and commands": "configOptions.descriptions.claudeDefault",
+  "Auto-runs; a classifier blocks risky actions": "configOptions.descriptions.claudeAuto",
+  "Auto-applies file edits; commands still prompt": "configOptions.descriptions.claudeAcceptEdits",
+  "Plans only; makes no edits": "configOptions.descriptions.claudePlan",
+  "Auto-denies anything not pre-approved": "configOptions.descriptions.claudeDontAsk",
+  "Runs everything; no prompts or safety checks": "configOptions.descriptions.noSafetyChecks",
+  "Read/edit/run in workspace; approval for external edits or network":
+    "configOptions.descriptions.codexDefault",
+  "Edit any file and access the internet without approval":
+    "configOptions.descriptions.codexFullAccess",
+  "Read files only; approval required for edits, commands, or network":
+    "configOptions.descriptions.codexReadOnly",
+  "Runs Codex with no approval prompts and no command sandbox":
+    "configOptions.descriptions.codexBypass",
+  "Normal agent mode; prompts before running commands": "configOptions.descriptions.cursorDefault",
+  "Smart Auto: auto-runs safe tool calls and prompts for the rest":
+    "configOptions.descriptions.cursorAutoReview",
+  "Read-only planning; analyzes and proposes plans, no edits":
+    "configOptions.descriptions.cursorPlan",
+  "Q&A style; explains and answers questions (read-only)": "configOptions.descriptions.cursorAsk",
+  "Runs everything without prompts or safety checks": "configOptions.descriptions.cursorYolo",
+};
+
 // Claude-native reasoning-effort options for the new-session / scheduled-task
 // model+effort pickers. There is deliberately no hardcoded effort default: an
 // unselected picker omits `reasoning_effort`, so Claude Code falls back to its
@@ -90,17 +136,12 @@ export function DescribedSelect({
 }) {
   const { t } = useTranslation("models");
   const translatedLabel = (label: string) => {
-    const key = {
-      Low: "reasoning.low",
-      Medium: "reasoning.medium",
-      High: "reasoning.high",
-      xHigh: "reasoning.xhigh",
-      Max: "reasoning.max",
-      Default: "reasoning.default",
-      "No override": "reasoning.none",
-      "Smart Routing": "smartRouting",
-    }[label];
+    const key = OPTION_LABEL_KEYS[label];
     return key ? t(key, { defaultValue: label }) : label;
+  };
+  const translatedDescription = (description: string) => {
+    const key = OPTION_DESCRIPTION_KEYS[description];
+    return key ? t(key, { defaultValue: description }) : description;
   };
   const [previewed, setPreviewed] = useState<string | null>(null);
   const detail = options.find((o) => o.value === (previewed ?? value))?.description;
@@ -141,7 +182,7 @@ export function DescribedSelect({
           data-testid={`${testId}-detail`}
           className="min-h-8 px-2.5 pt-0.5 pb-1 text-xs leading-snug text-muted-foreground"
         >
-          {detail}
+          {detail ? translatedDescription(detail) : detail}
         </p>
       </SelectContent>
     </Select>

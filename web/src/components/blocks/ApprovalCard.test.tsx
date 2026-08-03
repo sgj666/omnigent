@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
+import { withTestLanguage } from "@/i18n/testHelpers";
 import { ApprovalCard } from "./ApprovalCard";
 
 afterEach(() => {
@@ -8,6 +9,28 @@ afterEach(() => {
 });
 
 describe("ApprovalCard — binary approve/reject", () => {
+  it("localizes the remember-scope tooltip and keeps its target intact", async () => {
+    await withTestLanguage("zh-CN", () => {
+      render(
+        <ApprovalCard
+          elicitationId="elic_zh"
+          message="访问此主机？"
+          phase="tool_call"
+          policyName="approve_web"
+          contentPreview=""
+          requestedSchema={{}}
+          status="pending"
+          response={null}
+          rememberScope={{ tool: "WebFetch", host: "github.com" }}
+        />,
+      );
+      expect(screen.getByRole("button", { name: /批准.*github.com/ })).toHaveAttribute(
+        "title",
+        "在本会话的剩余时间内不再询问 github.com",
+      );
+    });
+  });
+
   it("renders Approve and Reject buttons when requestedSchema has no enum", () => {
     // Policy-ASK and PermissionRequest cards arrive with an empty
     // schema (binary decision). The card should render the

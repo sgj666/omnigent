@@ -649,7 +649,12 @@ function GrantRow({
           : permission.level === 4
             ? t("permissions.owner", { defaultValue: "Owner" })
             : t("permissions.read", { defaultValue: "Read" });
-  const levelLabel = permission.can_approve ? `${baseLevelLabel} + approve` : baseLevelLabel;
+  const levelLabel = permission.can_approve
+    ? t("permissions.withApprove", {
+        level: baseLevelLabel,
+        defaultValue: `${baseLevelLabel} + approve`,
+      })
+    : baseLevelLabel;
 
   return (
     <div className="flex items-center gap-2 rounded-md px-2 py-0.5 hover:bg-muted/50">
@@ -674,7 +679,10 @@ function GrantRow({
         >
           <SelectTrigger
             className="h-8 w-28"
-            aria-label={`Permission level for ${permission.user_id}`}
+            aria-label={t("permissions.levelForUser", {
+              userId: permission.user_id,
+              defaultValue: `Permission level for ${permission.user_id}`,
+            })}
           >
             <SelectValue />
           </SelectTrigger>

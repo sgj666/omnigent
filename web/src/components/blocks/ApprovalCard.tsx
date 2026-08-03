@@ -286,8 +286,14 @@ export function ApprovalCard({
   // than letting the short button label imply a narrower scope.
   const rememberTitle = rememberScope
     ? rememberScope.host
-      ? `Won't ask again for ${rememberScope.host} for the rest of this session`
-      : `Won't ask again for any ${rememberScope.tool} call for the rest of this session`
+      ? t("approval.rememberHostTitle", {
+          host: rememberScope.host,
+          defaultValue: `Won't ask again for ${rememberScope.host} for the rest of this session`,
+        })
+      : t("approval.rememberToolTitle", {
+          tool: rememberScope.tool,
+          defaultValue: `Won't ask again for any ${rememberScope.tool} call for the rest of this session`,
+        })
     : undefined;
   const binaryButtons = (
     <div className="flex flex-wrap gap-2 pt-1">

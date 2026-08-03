@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   CodeBlock,
   CodeBlockActions,
@@ -36,10 +37,108 @@ import {
   formatToolTitle,
 } from "@/lib/toolTitle";
 import { useFileViewer } from "@/shell/FileViewerContext";
-import { useTranslation } from "react-i18next";
 
 const OUTPUT_PREVIEW_LINE_LIMIT = 80;
 const OUTPUT_PREVIEW_CHAR_LIMIT = 12_000;
+
+type ToolsTranslator = ReturnType<typeof useTranslation>["t"];
+
+const TOOL_TITLE_KEYS: Record<string, string> = {
+  Read: "toolTitles.read",
+  Write: "toolTitles.write",
+  Edit: "toolTitles.edit",
+  "Send to session:": "toolTitles.sendToSession",
+  "Start child session:": "toolTitles.startChildSession",
+  "Create session": "toolTitles.createSession",
+  "Create session:": "toolTitles.createSessionWithId",
+  "Get session history": "toolTitles.getSessionHistory",
+  "Get session history:": "toolTitles.getSessionHistoryWithId",
+  "Intelligent routing": "toolTitles.intelligentRouting",
+  "Intelligent routing:": "toolTitles.intelligentRoutingWithCount",
+  "Close child session:": "toolTitles.closeChildSession",
+  "List child sessions": "toolTitles.listChildSessions",
+  "Get session info": "toolTitles.getSessionInfo",
+  "Get session info:": "toolTitles.getSessionInfoWithId",
+  "Get agent": "toolTitles.getAgent",
+  "Get agent:": "toolTitles.getAgentWithId",
+  "Download agent": "toolTitles.downloadAgent",
+  "Download agent:": "toolTitles.downloadAgentWithId",
+  "List agents": "toolTitles.listAgents",
+  "Dispatch async": "toolTitles.dispatchAsync",
+  "Dispatch async:": "toolTitles.dispatchAsyncTool",
+  "Read inbox": "toolTitles.readInbox",
+  "List tasks": "toolTitles.listTasks",
+  "Cancel async": "toolTitles.cancelAsync",
+  "Cancel async:": "toolTitles.cancelAsyncWithId",
+  "Cancel task": "toolTitles.cancelTask",
+  "Cancel task:": "toolTitles.cancelTaskWithId",
+  "Set timer:": "toolTitles.setTimer",
+  "Cancel timer": "toolTitles.cancelTimer",
+  "Cancel timer:": "toolTitles.cancelTimerWithId",
+  "Launch terminal": "toolTitles.launchTerminal",
+  "Read terminal": "toolTitles.readTerminal",
+  "Close terminal": "toolTitles.closeTerminal",
+  "List terminals": "toolTitles.listTerminals",
+  "Search:": "toolTitles.search",
+  "Find files:": "toolTitles.findFiles",
+  "Web search:": "toolTitles.webSearch",
+  "Web fetch:": "toolTitles.webFetch",
+  "Update todos": "toolTitles.updateTodos",
+  "Run sub-agent": "toolTitles.runSubagent",
+  "Sub-agent:": "toolTitles.subagent",
+};
+
+function localizedToolTitle(title: ToolTitle, t: ToolsTranslator): ToolTitle {
+  let verb = title.verb;
+  let body = title.body;
+  if (verb !== null) {
+    const key = TOOL_TITLE_KEYS[verb];
+    if (key) verb = t(key, { defaultValue: verb });
+    else if (verb.startsWith("Send to ")) {
+      verb = `${t("toolTitles.sendTo", { defaultValue: "Send to" })} ${verb.slice("Send to ".length)}`;
+    }
+  }
+  const taskCount = /^(\d+) tasks?$/.exec(body);
+  if (taskCount) {
+    body = t("toolTitles.taskCount", {
+      count: Number(taskCount[1]),
+      defaultValue: `${taskCount[1]} task${taskCount[1] === "1" ? "" : "s"}`,
+    });
+  } else if (body.endsWith(" (repeat)")) {
+    body = t("toolTitles.repeatingDuration", {
+      duration: body.slice(0, -" (repeat)".length),
+      defaultValue: body,
+    });
+  }
+  return { verb, body };
+}
+
+function localizedToolRunLabel(label: string, t: ToolsTranslator): string {
+  const patterns: [RegExp, string][] = [
+    [/^Ran (\d+) shell commands?$/i, "runSummary.shell"],
+    [/^Listed (\d+) director(?:y|ies)$/i, "runSummary.list"],
+    [/^Read (\d+) files?$/i, "runSummary.read"],
+    [/^Edited (\d+) files?$/i, "runSummary.edit"],
+    [/^Ran (\d+) search(?:es)?$/i, "runSummary.search"],
+    [/^Called (\d+) tools?$/i, "runSummary.called"],
+    [/^called (\d+) other tools?$/i, "runSummary.other"],
+  ];
+  return label
+    .split(", ")
+    .map((phrase) => {
+      for (const [pattern, key] of patterns) {
+        const match = pattern.exec(phrase);
+        if (match) {
+          const translated = t(key, { count: Number(match[1]), defaultValue: phrase });
+          return /^[a-z]/.test(phrase)
+            ? `${translated.charAt(0).toLowerCase()}${translated.slice(1)}`
+            : translated;
+        }
+      }
+      return phrase;
+    })
+    .join(t("runSummary.separator", { defaultValue: ", " }));
+}
 
 /**
  * Tools whose `args.path` field is a workspace file path that the user
@@ -179,7 +278,10 @@ export function ToolCard({
   duration,
 }: ToolCardProps) {
   const { t } = useTranslation("tools");
-  const title = useMemo(() => formatToolTitle(name, args, argsSummary), [name, args, argsSummary]);
+  const title = useMemo(
+    () => localizedToolTitle(formatToolTitle(name, args, argsSummary), t),
+    [name, args, argsSummary, t],
+  );
   const inputJson = useMemo(() => JSON.stringify(args, null, 2), [args]);
   const formattedOutput = useMemo(
     () => (output === null ? null : prettyPrintIfJson(output)),
@@ -238,7 +340,8 @@ export function ToolCard({
  * recent ones has been peeled off.
  */
 export function ToolGroupSummary({ tools }: { tools: RenderItem[] }) {
-  const label = formatToolRunLabel(tools.map(toolRunCall));
+  const { t } = useTranslation("tools");
+  const label = localizedToolRunLabel(formatToolRunLabel(tools.map(toolRunCall)), t);
   return (
     // Named `group/tool-summary` so this collapsible only rotates its
     // OWN chevron (line 296 in `ToolTriggerRow` uses an unnamed
@@ -451,7 +554,7 @@ function OutputSection({ output }: { output: string }) {
             {isExpanded
               ? t("showingFullOutput", { defaultValue: "Showing full output" })
               : t("previewingOutput", { defaultValue: "Previewing output" })}{" "}
-            ({formatOutputStats(isExpanded ? preview : collapsedPreview)})
+            ({formatOutputStats(isExpanded ? preview : collapsedPreview, t)})
           </span>
           <Button
             className="w-fit"
@@ -482,8 +585,12 @@ function ToolPendingOutput({ duration }: { duration: number | undefined }) {
       <div className="flex items-center gap-2 text-muted-foreground text-sm">
         <Loader2Icon className="size-4 animate-spin text-info" />
         <span>
-          {t("waitingForOutput", { defaultValue: "Waiting for output" })}
-          {duration !== undefined ? ` for ${formatToolDuration(duration)}` : ""}
+          {duration === undefined
+            ? t("waitingForOutput", { defaultValue: "Waiting for output" })
+            : t("waitingForOutputDuration", {
+                duration: formatToolDuration(duration),
+                defaultValue: `Waiting for output for ${formatToolDuration(duration)}`,
+              })}
         </span>
       </div>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
@@ -597,23 +704,50 @@ function getNowSeconds(): number {
   return Date.now() / 1000;
 }
 
-function formatOutputStats(preview: OutputPreview): string {
+function formatOutputStats(preview: OutputPreview, t: ToolsTranslator): string {
   if (!preview.isTruncated) {
-    return `${formatCount(preview.lineCount, "line")} / ${formatCount(preview.charCount, "char")}`;
+    return t("outputStats.full", {
+      lines: localizedCount(preview.lineCount, "line", t),
+      chars: localizedCount(preview.charCount, "char", t),
+      defaultValue: `${formatCount(preview.lineCount, "line")} / ${formatCount(preview.charCount, "char")}`,
+    });
   }
 
   const hidden: string[] = [];
   if (preview.hiddenLineCount > 0) {
-    hidden.push(`${formatCount(preview.hiddenLineCount, "line")} hidden`);
+    hidden.push(
+      t("outputStats.hidden", {
+        count: localizedCount(preview.hiddenLineCount, "line", t),
+        defaultValue: `${formatCount(preview.hiddenLineCount, "line")} hidden`,
+      }),
+    );
   }
   if (preview.hiddenCharCount > 0) {
-    hidden.push(`${formatCount(preview.hiddenCharCount, "char")} hidden`);
+    hidden.push(
+      t("outputStats.hidden", {
+        count: localizedCount(preview.hiddenCharCount, "char", t),
+        defaultValue: `${formatCount(preview.hiddenCharCount, "char")} hidden`,
+      }),
+    );
   }
 
-  return `${formatCount(preview.shownLineCount, "line")} / ${formatCount(
-    preview.shownCharCount,
-    "char",
-  )} shown; ${hidden.join(", ")}`;
+  return t("outputStats.preview", {
+    lines: localizedCount(preview.shownLineCount, "line", t),
+    chars: localizedCount(preview.shownCharCount, "char", t),
+    hidden: hidden.join(t("outputStats.separator", { defaultValue: ", " })),
+    defaultValue: `${formatCount(preview.shownLineCount, "line")} / ${formatCount(
+      preview.shownCharCount,
+      "char",
+    )} shown; ${hidden.join(", ")}`,
+  });
+}
+
+function localizedCount(count: number, unit: "line" | "char", t: ToolsTranslator): string {
+  return t(`outputStats.${unit}`, {
+    count,
+    formattedCount: count.toLocaleString(),
+    defaultValue: formatCount(count, unit),
+  });
 }
 
 function formatCount(count: number, unit: string): string {

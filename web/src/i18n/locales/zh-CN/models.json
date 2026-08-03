@@ -19,5 +19,37 @@
   "harness": "智能体运行框架",
   "underlyingLlm": "底层大语言模型",
   "reasoningDepth": "推理深度与速度的权衡",
-  "autoPick": "按任务自动选择每轮模型"
+  "autoPick": "按任务自动选择每轮模型",
+  "configOptions": {
+    "labels": {
+      "auto": "自动",
+      "acceptEdits": "接受编辑",
+      "plan": "规划",
+      "dontAsk": "不再询问",
+      "bypassPermissions": "绕过权限",
+      "fullAccess": "完全访问",
+      "readOnly": "只读",
+      "bypassApprovalsSandbox": "绕过审批和沙箱",
+      "autoReview": "自动审查",
+      "ask": "问答",
+      "yolo": "全自动"
+    },
+    "descriptions": {
+      "claudeDefault": "编辑文件和运行命令前请求确认",
+      "claudeAuto": "自动运行；由分类器拦截高风险操作",
+      "claudeAcceptEdits": "自动应用文件编辑；运行命令仍需确认",
+      "claudePlan": "仅生成规划，不执行编辑",
+      "claudeDontAsk": "自动拒绝所有未预先批准的操作",
+      "noSafetyChecks": "全部运行；不请求确认且无安全检查",
+      "codexDefault": "在工作区中读取、编辑和运行；工作区外编辑或网络访问需审批",
+      "codexFullAccess": "可编辑任意文件并访问互联网，无需审批",
+      "codexReadOnly": "仅可读取文件；编辑、命令或网络访问均需审批",
+      "codexBypass": "运行 Codex 时不请求审批且不启用命令沙箱",
+      "cursorDefault": "标准智能体模式；运行命令前请求确认",
+      "cursorAutoReview": "智能自动：安全工具调用自动运行，其余操作请求确认",
+      "cursorPlan": "只读规划；分析并提出方案，不执行编辑",
+      "cursorAsk": "问答模式；解释并回答问题（只读）",
+      "cursorYolo": "全部运行，不请求确认且无安全检查"
+    }
+  }
 }
