@@ -22,6 +22,7 @@ from omnigent.integrations.lark.credentials import (
 )
 from omnigent.integrations.lark.device_flow import (
     FeishuDeviceFlowError,
+    FeishuPending,
     FeishuPersonalAgentDeviceFlow,
 )
 from omnigent.integrations.lark.surface import SurfaceResult
@@ -101,11 +102,13 @@ def create_feishu_router(
             registration = await device_flow.poll(session)
         except FeishuDeviceFlowError as exc:
             raise _flow_error(exc) from exc
-        if registration is None:
+        if registration is None or isinstance(registration, FeishuPending):
+            interval = registration.interval if isinstance(registration, FeishuPending) else None
             return {
                 "object": "feishu.installation_session",
                 "session": session,
                 "status": "pending",
+                **({"interval": interval} if interval is not None else {}),
             }
 
         credential = FeishuInstallationCredential(

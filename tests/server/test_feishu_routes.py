@@ -15,6 +15,7 @@ from omnigent.integrations.lark.credentials import (
 from omnigent.integrations.lark.device_flow import (
     FeishuDeviceFlowError,
     FeishuDeviceSession,
+    FeishuPending,
     FeishuRegistration,
 )
 from omnigent.server.routes.feishu import create_feishu_router
@@ -23,7 +24,7 @@ from omnigent.server.routes.feishu import create_feishu_router
 class FakeFlow:
     def __init__(
         self,
-        result: FeishuRegistration | None = None,
+        result: FeishuRegistration | FeishuPending | None = None,
         error: FeishuDeviceFlowError | None = None,
     ) -> None:
         self.result = result
@@ -34,7 +35,7 @@ class FakeFlow:
             raise self.error
         return FeishuDeviceSession("session-1", "https://qr.example/session-1", 3, 180)
 
-    async def poll(self, session: str) -> FeishuRegistration | None:
+    async def poll(self, session: str) -> FeishuRegistration | FeishuPending | None:
         assert session == "session-1"
         if self.error:
             raise self.error
@@ -93,6 +94,20 @@ def test_completed_poll_persists_only_ciphertext_and_never_returns_secret() -> N
     assert credential.app_secret_ciphertext != secret
     assert FeishuCredentialCipher(b"test-key").decrypt(credential.app_secret_ciphertext) == secret
     assert bot == {"open_id": "ou_bot"}
+
+
+def test_pending_poll_returns_the_provider_interval() -> None:
+    client = _client(FakeFlow(FeishuPending(interval=10)), [])
+
+    response = client.get("/feishu/installations/session-1")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "object": "feishu.installation_session",
+        "session": "session-1",
+        "status": "pending",
+        "interval": 10,
+    }
 
 
 def test_denied_and_network_errors_have_actionable_statuses() -> None:

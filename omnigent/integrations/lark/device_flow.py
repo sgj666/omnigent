@@ -17,9 +17,11 @@ import httpx
 
 _logger = logging.getLogger(__name__)
 
-_APPLICATIONS_PATH = "/open-apis/application/v6/applications"
+_REGISTRATION_BASE_URL = "https://accounts.feishu.cn"
+_REGISTRATION_PATH = "/oauth/v1/app/registration"
 _TENANT_TOKEN_PATH = "/open-apis/auth/v3/tenant_access_token/internal"
 _BOT_INFO_PATH = "/open-apis/bot/v3/info"
+_FORM_HEADERS = {"Content-Type": "application/x-www-form-urlencoded"}
 
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
@@ -57,6 +59,13 @@ class FeishuRegistration:
     app_secret: str
     installer_open_id: str
     bot: JsonObject
+
+
+@dataclass(frozen=True)
+class FeishuPending:
+    """Non-terminal registration state and the next minimum poll interval."""
+
+    interval: int
 
 
 def _coerce_json(value: object) -> JsonValue:
@@ -97,9 +106,12 @@ class FeishuPersonalAgentDeviceFlow:
         *,
         request: Request | None = None,
         api_base_url: str = "https://open.feishu.cn",
+        registration_base_url: str = _REGISTRATION_BASE_URL,
     ) -> None:
         self._base_url = api_base_url.rstrip("/")
+        self._registration_base_url = registration_base_url.rstrip("/")
         self._request = request or self._http_request
+        self._poll_intervals: dict[str, int] = {}
 
     async def _http_request(
         self,
@@ -110,14 +122,27 @@ class FeishuPersonalAgentDeviceFlow:
     ) -> JsonObject:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.request(method, url, json=json, headers=headers)
-                response.raise_for_status()
+                if headers and headers.get("Content-Type") == _FORM_HEADERS["Content-Type"]:
+                    response = await client.request(method, url, data=json, headers=headers)
+                else:
+                    response = await client.request(method, url, json=json, headers=headers)
                 payload = response.json()
+                registration_error = (
+                    url == f"{self._registration_base_url}{_REGISTRATION_PATH}"
+                    and isinstance(payload, dict)
+                    and _string(payload.get("error")) is not None
+                )
+                if response.is_error and not registration_error:
+                    response.raise_for_status()
         except httpx.TimeoutException as exc:
             raise FeishuDeviceFlowError(
                 "network", "Feishu did not respond in time", retryable=True
             ) from exc
-        except httpx.HTTPError as exc:
+        except httpx.HTTPStatusError as exc:
+            raise FeishuDeviceFlowError(
+                "provider", "Feishu rejected the registration request"
+            ) from exc
+        except httpx.RequestError as exc:
             raise FeishuDeviceFlowError(
                 "network", "Could not reach Feishu", retryable=True
             ) from exc
@@ -130,21 +155,23 @@ class FeishuPersonalAgentDeviceFlow:
 
     async def begin(self) -> FeishuDeviceSession:
         """Start a PersonalAgent registration and return its QR session."""
-        payload = await self._call(
+        payload = await self._request(
             "POST",
-            _APPLICATIONS_PATH,
+            f"{self._registration_base_url}{_REGISTRATION_PATH}",
             {
                 "action": "begin",
                 "archetype": "PersonalAgent",
                 "auth_method": "client_secret",
                 "request_user_info": "open_id",
             },
+            _FORM_HEADERS,
         )
-        data = _data(payload)
-        session = _string(data.get("session"))
-        verification_uri_complete = _string(data.get("verification_uri_complete"))
-        interval = data.get("interval")
-        expires_in = data.get("expires_in")
+        if _string(payload.get("error")) is not None:
+            raise FeishuDeviceFlowError("provider", "Feishu rejected the registration request")
+        session = _string(payload.get("device_code"))
+        verification_uri_complete = _string(payload.get("verification_uri_complete"))
+        interval = payload.get("interval")
+        expires_in = payload.get("expires_in", payload.get("expire_in"))
         if (
             session is None
             or verification_uri_complete is None
@@ -156,37 +183,51 @@ class FeishuPersonalAgentDeviceFlow:
             raise FeishuDeviceFlowError(
                 "protocol", "Feishu returned an incomplete registration session"
             )
+        self._poll_intervals[session] = interval
         return FeishuDeviceSession(session, verification_uri_complete, interval, expires_in)
 
-    async def poll(self, session: str) -> FeishuRegistration | None:
-        """Poll a session, returning ``None`` while Feishu still awaits QR approval.
+    async def poll(self, session: str) -> FeishuRegistration | FeishuPending:
+        """Poll a session, returning its cadence while Feishu awaits approval.
 
         Expired and denied sessions are terminal errors.  A successful result
         is enriched with Bot Info before returning, so callers persist one
         coherent installation record.
         """
-        payload = await self._call("GET", f"{_APPLICATIONS_PATH}/{session}", None)
-        data = _data(payload)
-        state = (_string(data.get("status")) or _string(data.get("state")) or "").lower()
-        if state in {"pending", "waiting", "processing"}:
-            return None
-        if state in {"denied", "rejected", "cancelled", "canceled"}:
+        payload = await self._request(
+            "POST",
+            f"{self._registration_base_url}{_REGISTRATION_PATH}",
+            {"action": "poll", "device_code": session},
+            _FORM_HEADERS,
+        )
+        error = (_string(payload.get("error")) or "").lower()
+        interval = self._poll_intervals.get(session, 5)
+        if error == "authorization_pending":
+            return FeishuPending(interval)
+        if error == "slow_down":
+            interval += 5
+            self._poll_intervals[session] = interval
+            return FeishuPending(interval)
+        if error == "access_denied":
+            self._poll_intervals.pop(session, None)
             raise FeishuDeviceFlowError("denied", "Feishu registration was denied")
-        if state in {"expired", "timeout", "timed_out"}:
+        if error == "expired_token":
+            self._poll_intervals.pop(session, None)
             raise FeishuDeviceFlowError("expired", "Feishu registration session expired")
-        if state not in {"success", "succeeded", "completed", "active"}:
-            raise FeishuDeviceFlowError(
-                "protocol", "Feishu returned an unknown registration state"
-            )
+        if error:
+            raise FeishuDeviceFlowError("provider", "Feishu rejected the registration request")
 
-        app_id = _string(data.get("app_id"))
-        app_secret = _string(data.get("app_secret"))
-        installer_open_id = _string(data.get("open_id"))
+        app_id = _string(payload.get("client_id"))
+        app_secret = _string(payload.get("client_secret"))
+        user_info = payload.get("user_info")
+        installer_open_id = (
+            _string(user_info.get("open_id")) if isinstance(user_info, dict) else None
+        )
         if app_id is None or app_secret is None or installer_open_id is None:
             raise FeishuDeviceFlowError(
-                "protocol", "Feishu completed registration without app credentials"
+                "protocol", "Feishu returned an incomplete registration result"
             )
         bot = await self.bot_info(app_id, app_secret)
+        self._poll_intervals.pop(session, None)
         return FeishuRegistration(app_id, app_secret, installer_open_id, bot)
 
     async def bot_info(self, app_id: str, app_secret: str) -> JsonObject:

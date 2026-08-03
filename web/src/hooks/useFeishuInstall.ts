@@ -11,18 +11,24 @@ export function useFeishuInstall() {
     mutationFn: beginFeishuInstall,
     onSuccess: (session) => {
       queryClient.setQueryData([...feishuInstallQueryKey, session.session], session);
-      void queryClient.invalidateQueries({ queryKey: feishuInstallQueryKey });
     },
   });
 }
 
 /** Poll an installation session. Disabled until a session id is available. */
-export function useFeishuInstallStatus(session: string | null, enabled = true) {
+export function useFeishuInstallStatus(session: FeishuInstallSession | null, enabled = true) {
+  const intervalMs = Math.max(session?.interval ?? 5, 1) * 1_000;
   return useQuery({
-    queryKey: session === null ? feishuInstallQueryKey : [...feishuInstallQueryKey, session],
-    queryFn: () => pollFeishuInstall(session as string),
+    queryKey:
+      session === null ? feishuInstallQueryKey : [...feishuInstallQueryKey, session.session],
+    queryFn: () => pollFeishuInstall((session as FeishuInstallSession).session),
     enabled: enabled && session !== null,
-    refetchInterval: (query) => (query.state.data?.status === "pending" ? 2_000 : false),
+    initialData: session ?? undefined,
+    staleTime: intervalMs,
+    refetchInterval: (query) => {
+      if (query.state.data?.status !== "pending") return false;
+      const interval = query.state.data.interval ?? session?.interval;
+      return typeof interval === "number" && interval > 0 ? interval * 1_000 : intervalMs;
+    },
   });
 }
-

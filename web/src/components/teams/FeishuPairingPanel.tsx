@@ -13,7 +13,7 @@ export function FeishuPairingPanel({ pairing, onChange }: FeishuPairingPanelProp
   const [session, setSession] = useState<FeishuInstallSession | null>(null);
   const notifiedSession = useRef<string | null>(null);
   const begin = useFeishuInstall();
-  const status = useFeishuInstallStatus(session?.session ?? null, session?.status === "pending");
+  const status = useFeishuInstallStatus(session, session?.status === "pending");
   const current = status.data ?? session;
 
   useEffect(() => {

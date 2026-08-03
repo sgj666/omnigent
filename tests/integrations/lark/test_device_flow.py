@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import httpx
 import pytest
 
 from omnigent.integrations.lark.device_flow import (
     FeishuDeviceFlowError,
+    FeishuPending,
     FeishuPersonalAgentDeviceFlow,
 )
 
@@ -34,34 +36,134 @@ async def test_begin_uses_personal_agent_client_secret_contract() -> None:
     fake = FakeFeishu(
         [
             {
-                "code": 0,
-                "data": {
-                    "session": "session-1",
-                    "verification_uri_complete": "https://qr.example/session-1",
-                    "interval": 3,
-                    "expires_in": 180,
-                },
+                "device_code": "device-code-1",
+                "verification_uri_complete": "https://qr.example/session-1",
+                "interval": 3,
+                "expires_in": 180,
             }
         ]
     )
-    flow = FeishuPersonalAgentDeviceFlow(request=fake, api_base_url="https://feishu.test")
+    flow = FeishuPersonalAgentDeviceFlow(request=fake)
 
     result = await flow.begin()
 
-    assert result.session == "session-1"
+    assert result.session == "device-code-1"
     assert fake.calls == [
         (
             "POST",
-            "https://feishu.test/open-apis/application/v6/applications",
+            "https://accounts.feishu.cn/oauth/v1/app/registration",
             {
                 "action": "begin",
                 "archetype": "PersonalAgent",
                 "auth_method": "client_secret",
                 "request_user_info": "open_id",
             },
-            None,
+            {"Content-Type": "application/x-www-form-urlencoded"},
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_begin_sends_form_data_instead_of_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    async def request(
+        _client: httpx.AsyncClient, method: str, url: str, **kwargs: Any
+    ) -> httpx.Response:
+        captured.update({"method": method, "url": url, **kwargs})
+        return httpx.Response(
+            200,
+            json={
+                "device_code": "device-code-1",
+                "verification_uri_complete": "https://qr.example/session-1",
+                "interval": 5,
+                "expires_in": 3600,
+            },
+            request=httpx.Request(method, url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", request)
+
+    await FeishuPersonalAgentDeviceFlow().begin()
+
+    assert captured["data"] == {
+        "action": "begin",
+        "archetype": "PersonalAgent",
+        "auth_method": "client_secret",
+        "request_user_info": "open_id",
+    }
+    assert "json" not in captured
+
+
+@pytest.mark.asyncio
+async def test_http_rejection_is_a_provider_error_not_a_network_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def request(
+        _client: httpx.AsyncClient, method: str, url: str, **_kwargs: Any
+    ) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error": "invalid_request"},
+            request=httpx.Request(method, url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", request)
+
+    with pytest.raises(FeishuDeviceFlowError) as exc_info:
+        await FeishuPersonalAgentDeviceFlow().begin()
+
+    assert exc_info.value.kind == "provider"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", ["authorization_pending", "slow_down"])
+async def test_http_400_pending_errors_reach_poll_state_machine(
+    monkeypatch: pytest.MonkeyPatch,
+    error: str,
+) -> None:
+    async def request(
+        _client: httpx.AsyncClient, method: str, url: str, **_kwargs: Any
+    ) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error": error},
+            request=httpx.Request(method, url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", request)
+
+    result = await FeishuPersonalAgentDeviceFlow().poll("device-code-1")
+
+    assert isinstance(result, FeishuPending)
+    assert result.interval == (10 if error == "slow_down" else 5)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "kind"),
+    [("access_denied", "denied"), ("expired_token", "expired")],
+)
+async def test_http_400_terminal_errors_reach_poll_state_machine(
+    monkeypatch: pytest.MonkeyPatch,
+    error: str,
+    kind: str,
+) -> None:
+    async def request(
+        _client: httpx.AsyncClient, method: str, url: str, **_kwargs: Any
+    ) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error": error},
+            request=httpx.Request(method, url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "request", request)
+
+    with pytest.raises(FeishuDeviceFlowError) as exc_info:
+        await FeishuPersonalAgentDeviceFlow().poll("device-code-1")
+
+    assert exc_info.value.kind == kind
 
 
 @pytest.mark.asyncio
@@ -69,29 +171,31 @@ async def test_poll_success_fetches_bot_info_before_returning_secret() -> None:
     fake = FakeFeishu(
         [
             {
-                "code": 0,
-                "data": {
-                    "status": "success",
-                    "app_id": "cli_123",
-                    "app_secret": "top-secret",
-                    "open_id": "ou_installer",
-                },
+                "client_id": "cli_123",
+                "client_secret": "top-secret",
+                "user_info": {"open_id": "ou_installer"},
             },
             {"code": 0, "tenant_access_token": "tenant-token"},
             {"code": 0, "data": {"bot": {"open_id": "ou_bot", "app_name": "Agent"}}},
         ]
     )
-    flow = FeishuPersonalAgentDeviceFlow(request=fake, api_base_url="https://feishu.test")
+    flow = FeishuPersonalAgentDeviceFlow(request=fake)
 
-    result = await flow.poll("session-1")
+    result = await flow.poll("device-code-1")
 
     assert result is not None
     assert result.app_id == "cli_123"
     assert result.installer_open_id == "ou_installer"
     assert result.bot == {"open_id": "ou_bot", "app_name": "Agent"}
+    assert fake.calls[0] == (
+        "POST",
+        "https://accounts.feishu.cn/oauth/v1/app/registration",
+        {"action": "poll", "device_code": "device-code-1"},
+        {"Content-Type": "application/x-www-form-urlencoded"},
+    )
     assert fake.calls[1] == (
         "POST",
-        "https://feishu.test/open-apis/auth/v3/tenant_access_token/internal",
+        "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
         {"app_id": "cli_123", "app_secret": "top-secret"},
         None,
     )
@@ -101,12 +205,10 @@ async def test_poll_success_fetches_bot_info_before_returning_secret() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("state", "kind"),
-    [("denied", "denied"), ("expired", "expired")],
+    [("access_denied", "denied"), ("expired_token", "expired")],
 )
 async def test_poll_reports_terminal_session_diagnostics(state: str, kind: str) -> None:
-    flow = FeishuPersonalAgentDeviceFlow(
-        request=FakeFeishu([{"code": 0, "data": {"status": state}}])
-    )
+    flow = FeishuPersonalAgentDeviceFlow(request=FakeFeishu([{"error": state}]))
 
     with pytest.raises(FeishuDeviceFlowError, match=kind) as exc_info:
         await flow.poll("session-1")
@@ -115,10 +217,30 @@ async def test_poll_reports_terminal_session_diagnostics(state: str, kind: str) 
 
 
 @pytest.mark.asyncio
-async def test_poll_rejects_a_response_without_an_explicit_state() -> None:
-    flow = FeishuPersonalAgentDeviceFlow(request=FakeFeishu([{"code": 0, "data": {}}]))
+async def test_slow_down_increases_subsequent_poll_interval() -> None:
+    flow = FeishuPersonalAgentDeviceFlow(
+        request=FakeFeishu(
+            [
+                {"error": "slow_down"},
+                {"error": "authorization_pending"},
+            ]
+        )
+    )
 
-    with pytest.raises(FeishuDeviceFlowError, match="registration state") as exc_info:
+    slowed = await flow.poll("device-code-1")
+    pending = await flow.poll("device-code-1")
+
+    assert isinstance(slowed, FeishuPending)
+    assert isinstance(pending, FeishuPending)
+    assert slowed.interval == 10
+    assert pending.interval == 10
+
+
+@pytest.mark.asyncio
+async def test_poll_rejects_a_response_without_credentials_or_status() -> None:
+    flow = FeishuPersonalAgentDeviceFlow(request=FakeFeishu([{}]))
+
+    with pytest.raises(FeishuDeviceFlowError, match="incomplete registration") as exc_info:
         await flow.poll("session-1")
 
     assert exc_info.value.kind == "protocol"
@@ -153,7 +275,7 @@ async def test_bot_info_requires_an_explicit_bot_with_open_id(
 @pytest.mark.asyncio
 async def test_provider_error_is_safe_and_does_not_echo_secret() -> None:
     flow = FeishuPersonalAgentDeviceFlow(
-        request=FakeFeishu([{"code": 999, "msg": "bad app_secret=sensitive"}])
+        request=FakeFeishu([{"error": "invalid_request", "error_description": "sensitive"}])
     )
 
     with pytest.raises(FeishuDeviceFlowError) as exc_info:
