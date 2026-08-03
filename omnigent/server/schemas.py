@@ -4435,6 +4435,16 @@ class CreateWorkspaceRequest(BaseModel):
     root_path: str = Field(min_length=1, max_length=2048)
     repositories: list[WorkspaceRepositoryRequest] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _require_unique_repositories(self) -> CreateWorkspaceRequest:
+        names = [repository.name for repository in self.repositories]
+        paths = [repository.path for repository in self.repositories]
+        if len(names) != len(set(names)):
+            raise ValueError("repository names must be unique")
+        if len(paths) != len(set(paths)):
+            raise ValueError("repository paths must be unique")
+        return self
+
 
 class SelectWorkspaceRequest(BaseModel):
     """Select a workspace as a thread's default, optionally for a concrete run."""

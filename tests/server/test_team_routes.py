@@ -156,3 +156,21 @@ async def test_invalid_repository_is_rejected_without_partial_workspace(
     )
     assert response.status_code == 422
     assert (await client.get("/v1/workspaces")).json()["data"] == []
+
+
+@pytest.mark.parametrize(
+    "repositories",
+    [
+        [{"name": "repo", "path": "/a"}, {"name": "repo", "path": "/b"}],
+        [{"name": "a", "path": "/repo"}, {"name": "b", "path": "/repo"}],
+    ],
+)
+async def test_duplicate_repositories_are_rejected_before_workspace_write(
+    client: httpx.AsyncClient, repositories: list[dict[str, str]]
+) -> None:
+    """Duplicate repository names or paths cannot partially create a workspace."""
+    response = await client.post(
+        "/v1/workspaces", json={"root_path": "/repo", "repositories": repositories}
+    )
+    assert response.status_code == 422
+    assert (await client.get("/v1/workspaces")).json()["data"] == []
