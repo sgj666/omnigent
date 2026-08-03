@@ -19,6 +19,7 @@ from omnigent.inner.codex_executor import (
     _build_initial_prompt,
     _codex_cli_version,
     _CodexAppServerSession,
+    _configured_codex_model,
     _databricks_codex_config_overrides,
     _dynamic_tool_result_payload,
     _goal_objective_from_content,
@@ -43,6 +44,15 @@ def _run(coro):
     finally:
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
+
+
+def test_configured_codex_model_active_profile_wins(tmp_path: Path) -> None:
+    """Codex's active profile model overrides its top-level model."""
+    (tmp_path / "config.toml").write_text(
+        'model = "gpt-5.6"\nprofile = "tokenhub"\n\n[profiles.tokenhub]\nmodel = "gpt-5.6-sol"\n'
+    )
+
+    assert _configured_codex_model(tmp_path) == "gpt-5.6-sol"
 
 
 @dataclass
@@ -386,27 +396,32 @@ class TestCodexExecutor(unittest.TestCase):
                 ]
             )
 
-            executor = CodexExecutor(
-                codex_path="/bin/echo",
-                app_session_factory=lambda **kwargs: fake_session,
-            )
-            events = [
-                e
-                async for e in executor.run_turn(
-                    [{"role": "user", "content": "calc", "session_id": "s1"}],
-                    [
-                        {
-                            "name": "calculate",
-                            "description": "Calculate",
-                            "parameters": {
-                                "type": "object",
-                                "properties": {"expression": {"type": "string"}},
-                            },
-                        }
-                    ],
-                    "Be helpful.",
-                )
-            ]
+            with tempfile.TemporaryDirectory() as tmp:
+                with patch(
+                    "omnigent.inner.codex_executor._codex_home_config_source_from_env",
+                    return_value=Path(tmp),
+                ):
+                    executor = CodexExecutor(
+                        codex_path="/bin/echo",
+                        app_session_factory=lambda **kwargs: fake_session,
+                    )
+                    events = [
+                        e
+                        async for e in executor.run_turn(
+                            [{"role": "user", "content": "calc", "session_id": "s1"}],
+                            [
+                                {
+                                    "name": "calculate",
+                                    "description": "Calculate",
+                                    "parameters": {
+                                        "type": "object",
+                                        "properties": {"expression": {"type": "string"}},
+                                    },
+                                }
+                            ],
+                            "Be helpful.",
+                        )
+                    ]
 
             self.assertIsInstance(events[0], TextChunk)
             self.assertIsInstance(events[1], ToolCallRequest)
@@ -415,6 +430,42 @@ class TestCodexExecutor(unittest.TestCase):
             self.assertEqual(fake_session.calls[0]["system_prompt"], "Be helpful.")
             self.assertEqual(fake_session.calls[0]["model"], "catalog-openai-openai-default")
             self.assertEqual(fake_session.calls[0]["tools"][0]["name"], "calculate")
+
+        _run(_t())
+
+    def test_run_turn_uses_codex_config_model_when_unpinned(self):
+        """An unpinned harness keeps the model selected by Codex config.
+
+        Custom providers may expose a provider-specific model name that
+        differs from Omnigent's official-OpenAI catalog default. Replacing
+        the configured model with that catalog default can make an otherwise
+        valid provider return 404 model-not-found.
+        """
+
+        async def _t():
+            fake_session = _FakeAppSession([[TurnComplete(response="done")]])
+            with tempfile.TemporaryDirectory() as tmp:
+                codex_home = Path(tmp)
+                (codex_home / "config.toml").write_text('model = "gpt-5.6-sol"\n')
+                with patch(
+                    "omnigent.inner.codex_executor._codex_home_config_source_from_env",
+                    return_value=codex_home,
+                ):
+                    executor = CodexExecutor(
+                        codex_path="/bin/echo",
+                        app_session_factory=lambda **kwargs: fake_session,
+                    )
+                    events = [
+                        event
+                        async for event in executor.run_turn(
+                            [{"role": "user", "content": "hi", "session_id": "s1"}],
+                            [],
+                            "",
+                        )
+                    ]
+
+            self.assertEqual(events[-1].response, "done")
+            self.assertEqual(fake_session.calls[0]["model"], "gpt-5.6-sol")
 
         _run(_t())
 

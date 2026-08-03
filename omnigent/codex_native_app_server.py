@@ -1715,7 +1715,11 @@ def _first_routable_codex_provider(
 
 
 def _resolve_subscription_launch(
-    entry: ProviderEntry, model: str | None, explicit: dict[str, object]
+    entry: ProviderEntry,
+    model: str | None,
+    explicit: dict[str, object],
+    *,
+    explicitly_selected: bool,
 ) -> NativeCodexLaunch:
     """Resolve a native-Codex launch when the Codex default is a ``subscription``.
 
@@ -1733,15 +1737,17 @@ def _resolve_subscription_launch(
     :param explicit: The explicit parsed config mapping (``providers:`` block),
         used for the fall-through search over other configured/detected
         providers.
+    :param explicitly_selected: Whether Omnigent config explicitly selected
+        this subscription. Auto-detected CLI login must preserve the provider
+        selected by the user's Codex config.
     :returns: The resolved :class:`NativeCodexLaunch`.
     """
     from omnigent.onboarding.ambient import codex_auth_has_credential
 
-    # Pin codex's built-in ``openai`` provider: the bridged config.toml may
-    # set a custom default ``model_provider`` (e.g. isaac's Databricks AI
-    # Gateway), which would silently hijack a Subscription selection. A
-    # no-op when the user's config sets no custom default.
-    subscription_overrides = ['model_provider="openai"']
+    # An explicit Subscription selection must not be hijacked by a custom
+    # config.toml default. An auto-detected CLI login is different: plain
+    # codex may use that login with its custom provider, so preserve its route.
+    subscription_overrides = ['model_provider="openai"'] if explicitly_selected else []
     # Resolve against the same CODEX_HOME the native server bridges from
     # (``_populate_codex_home_config``) so this "is Codex logged in?" check reads
     # the exact auth.json the launched Codex process will use.
@@ -1828,6 +1834,7 @@ def resolve_native_codex_launch(*, model: str | None) -> NativeCodexLaunch:
         ['model_provider="openai"'] if codex_config_provider_dismissed(explicit) else []
     )
     entry = default_provider_for_harness(explicit, "codex")
+    explicitly_selected = entry is not None
     if entry is None:
         # No explicit provider default: global auth wins over ambient
         # (parity with _resolve_provider_for_build).
@@ -1866,7 +1873,12 @@ def resolve_native_codex_launch(*, model: str | None) -> NativeCodexLaunch:
             ),
         )
     if entry.kind == SUBSCRIPTION_KIND:
-        return _resolve_subscription_launch(entry, model, explicit)
+        return _resolve_subscription_launch(
+            entry,
+            model,
+            explicit,
+            explicitly_selected=explicitly_selected,
+        )
 
     launch = _codex_provider_launch(entry, model)
     if launch is not None:

@@ -1141,6 +1141,43 @@ def test_codex_subscription_default_pins_builtin_openai(config_home: Path) -> No
     assert "HARNESS_CODEX_GATEWAY" not in env
 
 
+def test_codex_ambient_login_preserves_custom_config_provider(
+    config_home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An auto-detected Codex login keeps config.toml's model provider.
+
+    A local ``auth.json`` is ambient state, not an explicit Omnigent
+    Subscription selection. Pinning it to the built-in ``openai`` provider
+    would send the stored gateway key to api.openai.com instead of using the
+    custom provider selected by Codex's own config.toml.
+    """
+    monkeypatch.setenv("HOME", str(config_home))
+    for var in (
+        "OPENROUTER_API_KEY",
+        "OMNIGENT_OPENAI_API_KEY",
+        "OMNIGENT_OPENROUTER_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr("omnigent.onboarding.ambient._ollama_reachable", lambda: False)
+    codex_dir = config_home / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "auth.json").write_text(
+        '{"auth_mode":"apikey","OPENAI_API_KEY":"sk-codex-login"}'
+    )
+    (codex_dir / "config.toml").write_text(
+        'model_provider = "tokenhub"\n\n'
+        "[model_providers.tokenhub]\n"
+        'name = "TokenHub"\n'
+        'base_url = "https://tokenhub.example/codex/v1"\n'
+        'wire_api = "responses"\n'
+    )
+    spec = _make_spec(harness="codex")
+
+    env = _build_codex_spawn_env(spec, workdir=None)
+
+    assert "HARNESS_CODEX_MODEL_PROVIDER" not in env
+
+
 def test_openai_agents_cli_config_default_fails_loud(config_home: Path) -> None:
     """A cli-config default cannot drive the openai-agents-sdk harness.
 
