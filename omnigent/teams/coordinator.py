@@ -23,12 +23,16 @@ class CoordinatorLedger:
 
     def __init__(self, scheduler: DAGScheduler) -> None:
         self._scheduler = scheduler
+        self.failures: list[tuple[str, AttemptFailed]] = []
 
     def task(self, task_id: str) -> Task:
         return self._scheduler.tasks[task_id].task
 
     def tasks(self) -> tuple[Task, ...]:
         return tuple(spec.task for spec in self._scheduler.tasks.values())
+
+    def record_failure(self, run_id: str, failure: AttemptFailed) -> None:
+        self.failures.append((run_id, failure))
 
 
 @dataclass(frozen=True)
@@ -115,7 +119,7 @@ class Coordinator:
             )
             self._append_event(run_id, event)
             self._run_states[run_id] = RunState.running(run_id)
-        return self.scheduler.schedule(run_id)
+        return tuple(self.scheduler.schedule(run_id))
 
     def choose_profile(
         self, stage: str, required_capabilities: Iterable[str] = ()
@@ -196,7 +200,7 @@ class Coordinator:
         )
         self._append_event(run_id, event)
         self._refresh_run_status(run_id)
-        return self.scheduler.schedule(run_id)
+        return tuple(self.scheduler.schedule(run_id))
 
     def on_attempt_failed(
         self, run_id: str, task_id: str, attempt_id: str, **details: object
