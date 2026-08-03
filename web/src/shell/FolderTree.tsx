@@ -13,6 +13,7 @@ import { type ChangedSort, compareChangedFiles, type SortableFile } from "./Flat
 import { formatBytes, gitStatusLabel, gitStatusLetter } from "./fileStatusUtils";
 import { FileDownloadButton } from "./FileDownloadButton";
 import { useCursorTooltip } from "./useCursorTooltip";
+import { useTranslation } from "react-i18next";
 
 // VS Code–style indentation: folder chevron and file icon share the same x
 // at each depth. GUIDE_OFFSET centers the indent-guide line under the chevron.
@@ -226,6 +227,7 @@ export function FolderTree({
   /** Error from a failed search request. */
   searchError?: Error | null;
 }) {
+  const { t } = useTranslation("workspace");
   // Initialise from the module-level cache so expanded state survives
   // unmount/remount (e.g. opening the FileViewer and navigating back).
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => {
@@ -304,19 +306,21 @@ export function FolderTree({
   // When a search query is active, render a flat filtered list instead of the tree.
   if (searchQuery.trim().length > 0) {
     if (isSearching && !searchResults) {
-      return <p className="px-2 py-1 text-muted-foreground text-xs">Searching…</p>;
+      return <p className="px-2 py-1 text-muted-foreground text-xs">{t("searching")}</p>;
     }
     if (isSearchError) {
       return (
         <p className="px-2 py-1 text-destructive text-xs">
-          Search failed: {searchError instanceof Error ? searchError.message : "Unknown error"}
+          {t("searchFailed", {
+            message: searchError instanceof Error ? searchError.message : t("unknownError"),
+          })}
         </p>
       );
     }
     if (!searchResults || searchResults.length === 0) {
       return (
         <p className="px-2 py-1 text-muted-foreground text-xs">
-          No files match "{searchQuery.trim()}"
+          {t("noChangedMatch", { query: searchQuery.trim() })}
         </p>
       );
     }
@@ -329,13 +333,13 @@ export function FolderTree({
       const hiddenCount = searchResults.length;
       return (
         <p className="px-2 py-1 text-muted-foreground text-xs">
-          {hiddenCount} match{hiddenCount === 1 ? "" : "es"} in hidden directories.{" "}
+          {t("hiddenMatchCount", { count: hiddenCount })}{" "}
           <button
             type="button"
             className="cursor-pointer underline hover:text-foreground"
             onClick={() => onShowHidden?.()}
           >
-            Show hidden files
+            {t("showHidden")}
           </button>
         </p>
       );
@@ -358,7 +362,7 @@ export function FolderTree({
   }
 
   if (isLoading) {
-    return <p className="px-2 py-1 text-muted-foreground text-xs">Loading…</p>;
+    return <p className="px-2 py-1 text-muted-foreground text-xs">{t("loading")}</p>;
   }
   if (isError) {
     // Runner not connected. If it went offline after being up (host
@@ -366,7 +370,7 @@ export function FolderTree({
     // session just hasn't started, fall through to the empty state.
     if (error instanceof RunnerOfflineError) {
       if (runnerWentOffline) return <RunnerAsleepHint />;
-      return <p className="px-2 py-1 text-muted-foreground text-xs">No files in workspace</p>;
+      return <p className="px-2 py-1 text-muted-foreground text-xs">{t("noFiles")}</p>;
     }
     return (
       <p className="px-2 py-1 text-destructive text-xs">
@@ -375,17 +379,13 @@ export function FolderTree({
     );
   }
   if (!files || files.length === 0) {
-    return <p className="px-2 py-1 text-muted-foreground text-xs">No files in workspace</p>;
+    return <p className="px-2 py-1 text-muted-foreground text-xs">{t("noFiles")}</p>;
   }
 
   const tree = buildTree(files, sort);
   const visibleTree = showHidden ? tree : tree.filter((n) => !n.name.startsWith("."));
   if (visibleTree.length === 0) {
-    return (
-      <p className="px-2 py-1 text-muted-foreground text-xs">
-        All files are hidden — click the eye icon to reveal them.
-      </p>
-    );
+    return <p className="px-2 py-1 text-muted-foreground text-xs">{t("allFilesHidden")}</p>;
   }
   return (
     <TooltipProvider>

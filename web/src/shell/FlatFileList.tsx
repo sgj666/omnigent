@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { gitStatusLabel, gitStatusLetter } from "./fileStatusUtils";
 import { FileDownloadButton } from "./FileDownloadButton";
 import { useCursorTooltip } from "./useCursorTooltip";
+import { useTranslation } from "react-i18next";
 
 export type { ChangedSort } from "@/lib/changedSort";
 import type { ChangedSort } from "@/lib/changedSort";
@@ -72,6 +73,7 @@ function FileListItem({
   onFileSelect: (path: string) => void;
   conversationId: string | undefined;
 }) {
+  const { t } = useTranslation("workspace");
   const { handlers, tooltip } = useCursorTooltip(file.path);
   const slash = file.path.lastIndexOf("/");
   const dir = slash > 0 ? file.path.slice(0, slash) : "";
@@ -107,8 +109,8 @@ function FileListItem({
           <span
             className="shrink-0 font-mono text-[10px]"
             aria-label={[
-              file.lines_added !== null && `${file.lines_added} lines added`,
-              file.lines_removed !== null && `${file.lines_removed} removed`,
+              file.lines_added !== null && t("linesAdded", { count: file.lines_added }),
+              file.lines_removed !== null && t("linesRemoved", { count: file.lines_removed }),
             ]
               .filter(Boolean)
               .join(", ")}
@@ -181,8 +183,9 @@ export function FlatFileList({
    */
   runnerWentOffline?: boolean;
 }) {
+  const { t } = useTranslation("workspace");
   if (isLoading) {
-    return <p className="px-2 py-1 text-muted-foreground text-xs">Loading…</p>;
+    return <p className="px-2 py-1 text-muted-foreground text-xs">{t("loading")}</p>;
   }
   if (isError) {
     // Runner not connected. If it went offline after being up (host
@@ -191,7 +194,7 @@ export function FlatFileList({
     // state rather than alarm the user.
     if (error instanceof RunnerOfflineError) {
       if (runnerWentOffline) return <RunnerAsleepHint />;
-      return <p className="px-2 py-1 text-muted-foreground text-xs">No workspace changes yet</p>;
+      return <p className="px-2 py-1 text-muted-foreground text-xs">{t("noChanges")}</p>;
     }
     return (
       <p className="px-2 py-1 text-destructive text-xs">
@@ -200,7 +203,7 @@ export function FlatFileList({
     );
   }
   if (!files || files.length === 0) {
-    return <p className="px-2 py-1 text-muted-foreground text-xs">No workspace changes yet</p>;
+    return <p className="px-2 py-1 text-muted-foreground text-xs">{t("noChanges")}</p>;
   }
   const normalizedSearchQuery = normalizeSearchQuery(searchQuery);
   const visibleFiles = files.filter(
@@ -218,13 +221,13 @@ export function FlatFileList({
   if (visibleFiles.length === 0) {
     return (
       <p className="px-2 py-1 text-muted-foreground text-xs">
-        All changes are in hidden files.{" "}
+        {t("hiddenChanges")}{" "}
         <button
           type="button"
           className="cursor-pointer underline hover:text-foreground"
           onClick={onShowHidden}
         >
-          Click to show
+          {t("clickToShow")}
         </button>
       </p>
     );
@@ -232,7 +235,7 @@ export function FlatFileList({
   if (sorted.length === 0) {
     return (
       <p className="px-2 py-1 text-muted-foreground text-xs">
-        No changed files match "{searchQuery.trim()}"
+        {t("noChangedMatch", { query: searchQuery.trim() })}
       </p>
     );
   }
@@ -240,13 +243,13 @@ export function FlatFileList({
     <>
       {hiddenCount > 0 && (
         <p className="px-2 py-1 text-muted-foreground text-xs">
-          {hiddenCount} file{hiddenCount === 1 ? "" : "s"} hidden.{" "}
+          {t("hiddenFileCount", { count: hiddenCount })}{" "}
           <button
             type="button"
             className="cursor-pointer underline hover:text-foreground"
             onClick={onShowHidden}
           >
-            Click to show
+            {t("clickToShow")}
           </button>
         </p>
       )}
