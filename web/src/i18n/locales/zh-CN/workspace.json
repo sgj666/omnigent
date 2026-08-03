@@ -98,5 +98,5 @@
   "occupancyWarning_other": "有 {{count}} 个其他智能体正在此目录中工作。写入操作可能冲突 — 请命名 Git 分支以使用隔离副本。",
   "tooManyEntries": "条目过多，无法完整列出 — 请在上方输入路径直接跳转。",
   "noTerminalsAvailable": "没有可用的终端。",
-  "shellUnavailable": "Shell 终端不可用。"
+  "shellUnavailable": "终端不可用。"
 }
