@@ -2,9 +2,11 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { ChatPage } from "@/pages/ChatPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
+import { RunInspectorPage } from "@/pages/RunInspectorPage";
+import { TeamDetailPage } from "@/pages/TeamDetailPage";
+import { TeamsPage } from "@/pages/TeamsPage";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { AppShell } from "@/shell/AppShell";
-import { Link, useParams } from "@/lib/routing";
 
 // Lazy-load the accounts pages so the bundle a header / OIDC
 // deploy ships (where accounts is off) doesn't include them in the
@@ -27,23 +29,6 @@ const TasksPage = lazy(() => import("@/pages/TasksPage").then((m) => ({ default:
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 );
-
-/** Lightweight route targets kept until the Team Builder pages land. */
-function TeamRoutePlaceholder({ kind }: { kind: "teams" | "team" | "run" }) {
-  const { teamId, runId } = useParams<{ teamId: string; runId: string }>();
-  const title = kind === "teams" ? "Teams" : kind === "team" ? `Team ${teamId ?? ""}` : `Run ${runId ?? ""}`;
-  return (
-    <section className="mx-auto flex w-full max-w-3xl flex-col gap-3 p-6 pt-20">
-      <h1 className="text-xl font-semibold">{title}</h1>
-      <p className="text-sm text-muted-foreground">Team workspace is coming soon.</p>
-      {kind !== "teams" && (
-        <Link className="text-sm text-primary hover:underline" to="/teams">
-          Back to Teams
-        </Link>
-      )}
-    </section>
-  );
-}
 
 interface AppProps {
   /**
@@ -139,12 +124,10 @@ function App({ basename }: AppProps = {}) {
           <Route path={`${prefix}/c/:conversationId`} element={<ChatPage />} />
           <Route path={`${prefix}/inbox`} element={<InboxPage />} />
           <Route path={`${prefix}/tasks`} element={<TasksPage />} />
-          <Route path={`${prefix}/teams`} element={<TeamRoutePlaceholder kind="teams" />} />
-          <Route
-            path={`${prefix}/teams/:teamId`}
-            element={<TeamRoutePlaceholder kind="team" />}
-          />
-          <Route path={`${prefix}/runs/:runId`} element={<TeamRoutePlaceholder kind="run" />} />
+          <Route path={`${prefix}/teams`} element={<TeamsPage />} />
+          <Route path={`${prefix}/teams/new`} element={<TeamDetailPage />} />
+          <Route path={`${prefix}/teams/:teamId`} element={<TeamDetailPage />} />
+          <Route path={`${prefix}/runs/:runId`} element={<RunInspectorPage />} />
           {/* Settings renders into the chat outlet so the conversations
               sidebar stays put — entering settings only swaps the card's
               content (the section nav) and the main area. The active section

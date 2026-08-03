@@ -22,7 +22,7 @@ describe("TeamDetailPage", () => {
   it("edits coordinator, workers, workspace and pairing", () => {
     renderPage();
     expect(screen.getByText("Team Builder")).toBeVisible();
-    expect(screen.getByText("Coordinator")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Coordinator" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "连接飞书" }));
     expect(screen.getByText("Agent Pairing")).toBeVisible();
   });
