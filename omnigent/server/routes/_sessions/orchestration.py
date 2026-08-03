@@ -5489,6 +5489,7 @@ async def _create_session_from_existing_agent(
     # existing_worktree must never be force-removed on failure — it is
     # the user's, not an Omnigent orphan.
     created_worktree_path: str | None = None
+    created_worktree_lease: WorktreeLease | None = None
     if body.git is not None:
         if body.git.existing_worktree:
             # Starting in a pre-existing worktree: no worktree is created, but
@@ -5514,6 +5515,7 @@ async def _create_session_from_existing_agent(
             canonical_workspace = created_worktree.worktree_path
             git_branch = created_worktree.branch
             created_worktree_path = created_worktree.worktree_path
+            created_worktree_lease = created_worktree.lease
 
     # Native-terminal pass-through args.
     #
@@ -5592,6 +5594,7 @@ async def _create_session_from_existing_agent(
                 delete_branch=True,
                 request=request,
                 reason="create-rollback",
+                lease=created_worktree_lease,
             )
         raise
 

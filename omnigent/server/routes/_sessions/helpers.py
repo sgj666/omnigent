@@ -7180,6 +7180,7 @@ async def _create_session_worktree(
         WorktreeProxyError,
         acquire_attempt_worktree_leases,
         create_worktree_on_host,
+        heartbeat_attempt_worktree_leases,
     )
     from omnigent.workspaces.manifest import WorkspaceRepository
 
@@ -7216,6 +7217,7 @@ async def _create_session_worktree(
                 branch_names={"session-repository": git.branch_name},
             )
             lease = leases[0]
+            heartbeat_attempt_worktree_leases((lease,), owner_id=lease_owner_id)
             return CreatedWorktree(
                 worktree_path=lease.worktree_path,
                 branch=lease.branch,

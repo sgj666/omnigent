@@ -304,6 +304,7 @@ async def test_session_worktree_helpers_use_lease_lifecycle_for_attempt_context(
         heartbeat_at=1_000.0,
     )
     acquired: dict[str, object] = {}
+    heartbeated: dict[str, object] = {}
     released: dict[str, object] = {}
 
     async def acquire(**kwargs: object) -> tuple[WorktreeLease, ...]:
@@ -313,7 +314,12 @@ async def test_session_worktree_helpers_use_lease_lifecycle_for_attempt_context(
     async def release(**kwargs: object) -> None:
         released.update(kwargs)
 
+    def heartbeat(leases: object, *, owner_id: str) -> None:
+        heartbeated["leases"] = leases
+        heartbeated["owner_id"] = owner_id
+
     monkeypatch.setattr(_host_worktree, "acquire_attempt_worktree_leases", acquire)
+    monkeypatch.setattr(_host_worktree, "heartbeat_attempt_worktree_leases", heartbeat)
     monkeypatch.setattr(_host_worktree, "release_attempt_worktree_leases", release)
     registry = SimpleNamespace(get=lambda host_id: _Host())
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(host_registry=registry)))
@@ -339,6 +345,7 @@ async def test_session_worktree_helpers_use_lease_lifecycle_for_attempt_context(
     assert acquired["attempt_id"] == "attempt-1"
     assert acquired["owner_id"] == "runner-1"
     assert acquired["branch_names"] == {"session-repository": "feature/task"}
+    assert heartbeated == {"leases": (lease,), "owner_id": "runner-1"}
     assert released["leases"] == (lease,)
     assert released["owner_id"] == "runner-1"
 
@@ -368,10 +375,10 @@ def test_session_create_request_validates_optional_attempt_context() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lease_maintenance_calls_recovery_and_active_heartbeat(
+async def test_lease_maintenance_recovers_without_blind_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The production maintenance loop invokes both lifecycle operations."""
+    """The maintenance loop recovers; live owners heartbeat explicitly."""
     from omnigent.server.routes._host_worktree import maintain_attempt_worktree_leases
 
     stop = asyncio.Event()
@@ -392,12 +399,9 @@ async def test_lease_maintenance_calls_recovery_and_active_heartbeat(
     class _Manager:
         records = (lease,)
 
-        def heartbeat_active(self, *, host_id: str | None = None) -> None:
-            heartbeated.append(host_id)
-            stop.set()
-
     async def recover(**kwargs: object) -> tuple[WorktreeLease, ...]:
         recovered.append(str(kwargs["host_conn"].host_id))
+        stop.set()
         return ()
 
     monkeypatch.setattr(_host_worktree, "_attempt_worktree_lease_manager", _Manager())
@@ -407,4 +411,4 @@ async def test_lease_maintenance_calls_recovery_and_active_heartbeat(
     await maintain_attempt_worktree_leases(registry, stop, interval_s=60)
 
     assert recovered == ["host-1"]
-    assert heartbeated == ["host-1"]
+    assert heartbeated == []

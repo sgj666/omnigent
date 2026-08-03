@@ -383,7 +383,6 @@ async def maintain_attempt_worktree_leases(
                     host_id,
                     exc_info=True,
                 )
-            manager.heartbeat_active(host_id=host_id)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
         except TimeoutError:
