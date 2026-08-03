@@ -216,7 +216,7 @@ class DAGScheduler:
         for profile in self.profiles.values():
             if set(spec.required_capabilities).issubset(profile.capabilities):
                 return profile
-        return next(iter(self.profiles.values()), None)
+        return None
 
     def _capacity_available(self, profile_id: str) -> bool:
         active = self.active_attempts()

@@ -52,6 +52,17 @@ def test_independent_tasks_run_in_parallel_and_respect_team_limit() -> None:
     assert len(attempts) == 2
 
 
+def test_task_waits_when_no_profile_has_required_capability() -> None:
+    coordinator = _coordinator()
+    coordinator.add_task(
+        Task("task-1", "run-1", "implementation"),
+        required_capabilities=("security",),
+    )
+
+    assert coordinator.start_run("run-1") == ()
+    assert coordinator.task("task-1").status is TaskStatus.PENDING
+
+
 def test_failure_retries_then_hard_blocks_with_diagnostics() -> None:
     coordinator = _coordinator()
     coordinator.add_task(Task("task-1", "run-1", "implementation"), max_retries=1)

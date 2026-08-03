@@ -121,12 +121,15 @@ class Coordinator:
     ) -> AgentProfile | None:
         """Choose a profile for a stage, allowing one issue to change profiles."""
 
+        required = set(required_capabilities)
         selected = self.stage_profiles.get(stage)
         if isinstance(selected, AgentProfile):
-            return selected
+            return selected if required.issubset(selected.capabilities) else None
         if isinstance(selected, str):
-            return self.profiles.get(selected)
-        required = set(required_capabilities)
+            profile = self.profiles.get(selected)
+            if profile is not None and required.issubset(profile.capabilities):
+                return profile
+            return None
         candidates = tuple(
             profile
             for profile in self.profiles.values()
@@ -156,7 +159,7 @@ class Coordinator:
                 if backend is not None:
                     return backend
             return candidates[0]
-        return next(iter(self.profiles.values()), None)
+        return None
 
     def on_worker_completed(
         self, run_id: str, task_id: str, attempt_id: str
