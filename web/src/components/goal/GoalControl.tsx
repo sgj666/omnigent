@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { TargetIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -30,9 +31,10 @@ type GoalControlProps = ManagedGoalControlProps | CommandGoalControlProps;
 
 /** Toolbar button plus dialog for a goal-capable session. */
 export function GoalControl(props: GoalControlProps) {
+  const { t } = useTranslation("chat");
   const { conversationId, readOnly, backendLabel } = props;
   const [open, setOpen] = useState(false);
-  const goalName = backendLabel ? `${backendLabel} goal` : "goal";
+  const goalName = backendLabel ? t("goalBackendName", { backend: backendLabel }) : t("goal");
   const commandMode = props.mode === "command";
   const goal = commandMode ? null : props.goal;
 
@@ -55,18 +57,26 @@ export function GoalControl(props: GoalControlProps) {
             disabled={!conversationId || (commandMode && readOnly)}
             aria-pressed={commandMode ? undefined : goal != null}
             aria-label={
-              goal ? `View ${goalName}` : commandMode ? `Start ${goalName}` : `Set ${goalName}`
+              goal
+                ? t("goalView", { name: goalName })
+                : commandMode
+                  ? t("goalStart", { name: goalName })
+                  : t("goalSet", { name: goalName })
             }
             data-testid="goal-toggle"
             data-active={goal ? "true" : undefined}
             onClick={() => setOpen(true)}
           >
             <TargetIcon className="size-3.5" />
-            <span>Goal</span>
+            <span>{t("goal")}</span>
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          {goal ? `View ${goalName}` : commandMode ? `Start ${goalName}` : `Set ${goalName}`}
+          {goal
+            ? t("goalView", { name: goalName })
+            : commandMode
+              ? t("goalStart", { name: goalName })
+              : t("goalSet", { name: goalName })}
         </TooltipContent>
       </Tooltip>
       {commandMode ? (
@@ -93,13 +103,17 @@ export function GoalControl(props: GoalControlProps) {
 
 /** Compact status-line indicator for the current goal. */
 export function GoalStatusPill({ goal }: { goal: Goal }) {
+  const { t } = useTranslation("chat");
+  const status = t(`goalStatuses.${goal.status}`, {
+    defaultValue: formatGoalStatus(goal.status),
+  });
   return (
     <span
       data-testid="composer-goal-mode"
       className="inline-flex items-center gap-1 text-xs font-medium text-foreground"
     >
       <TargetIcon className="size-3.5 shrink-0" />
-      <span>Goal {formatGoalStatus(goal.status)}</span>
+      <span>{t("goalStatus", { status })}</span>
     </span>
   );
 }

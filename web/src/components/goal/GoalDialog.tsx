@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { CheckIcon, Loader2Icon, PauseCircleIcon, PlayCircleIcon, TargetIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,11 +24,20 @@ import {
   canPauseGoal,
   canResumeGoal,
   formatGoalStatus,
-  formatGoalUsage,
   goalModeDraftForGoal,
   isGoalUserMode,
   type GoalModeDraft,
 } from "./goalUtils";
+
+function formatGoalUsageLabel(goal: Goal, t: ReturnType<typeof useTranslation>["t"]): string {
+  const used = goal.tokensUsed.toLocaleString();
+  const tokenLabel =
+    goal.tokenBudget == null
+      ? t("goalTokens", { used })
+      : t("goalTokenUsage", { used, limit: goal.tokenBudget.toLocaleString() });
+  const minutes = Math.floor(goal.timeUsedSeconds / 60);
+  return minutes <= 0 ? tokenLabel : t("goalUsageWithTime", { usage: tokenLabel, minutes });
+}
 
 export interface GoalDialogProps {
   open: boolean;
@@ -52,18 +62,19 @@ interface GoalSummaryProps {
  * @returns Current-goal summary element.
  */
 function GoalSummary({ loading, goal }: GoalSummaryProps) {
+  const { t } = useTranslation("chat");
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2Icon className="size-4 animate-spin" />
-        <span>Loading goal</span>
+        <span>{t("goalLoading")}</span>
       </div>
     );
   }
   if (!goal) {
     return (
       <p data-testid="goal-empty" className="text-sm text-muted-foreground">
-        No goal set.
+        {t("goalEmpty")}
       </p>
     );
   }
@@ -73,8 +84,10 @@ function GoalSummary({ loading, goal }: GoalSummaryProps) {
       className="space-y-1 rounded-lg border border-border bg-muted/30 p-3"
     >
       <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="font-medium text-foreground">{formatGoalStatus(goal.status)}</span>
-        <span className="shrink-0 text-muted-foreground">{formatGoalUsage(goal)}</span>
+        <span className="font-medium text-foreground">
+          {t("goalStatuses." + goal.status, { defaultValue: formatGoalStatus(goal.status) })}
+        </span>
+        <span className="shrink-0 text-muted-foreground">{formatGoalUsageLabel(goal, t)}</span>
       </div>
       <p className="text-sm leading-5 whitespace-pre-wrap">{goal.objective}</p>
     </div>
@@ -122,6 +135,7 @@ function GoalEditor({
   onTokenBudgetChange,
   onModeChange,
 }: GoalEditorProps) {
+  const { t } = useTranslation("chat");
   const showKeepCurrentMode = goal != null && !isGoalUserMode(goal.status);
   const modeButtonClass = (selected: boolean) =>
     cn(
@@ -136,7 +150,7 @@ function GoalEditor({
     <>
       <div className="space-y-1.5">
         <label className="text-xs font-medium text-muted-foreground" htmlFor="goal-objective">
-          Objective
+          {t("goalObjective")}
         </label>
         <Textarea
           id="goal-objective"
@@ -150,10 +164,10 @@ function GoalEditor({
       </div>
 
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">Mode</label>
+        <label className="text-xs font-medium text-muted-foreground">{t("goalMode")}</label>
         <div
           role="radiogroup"
-          aria-label="Goal mode"
+          aria-label={t("goalMode")}
           className="flex w-full gap-1 rounded-lg border border-border bg-muted/30 p-1"
           data-testid="goal-mode"
         >
@@ -168,7 +182,7 @@ function GoalEditor({
               data-testid="goal-mode-keep"
             >
               <CheckIcon className="size-3.5" />
-              <span>Keep current</span>
+              <span>{t("goalKeepCurrent")}</span>
             </button>
           )}
           <button
@@ -181,7 +195,7 @@ function GoalEditor({
             data-testid="goal-mode-active"
           >
             <PlayCircleIcon className="size-3.5" />
-            <span>Active</span>
+            <span>{t("goalActive")}</span>
           </button>
           <button
             type="button"
@@ -193,14 +207,14 @@ function GoalEditor({
             data-testid="goal-mode-paused"
           >
             <PauseCircleIcon className="size-3.5" />
-            <span>Paused</span>
+            <span>{t("goalPaused")}</span>
           </button>
         </div>
       </div>
 
       <div className="space-y-1.5">
         <label className="text-xs font-medium text-muted-foreground" htmlFor="goal-token-budget">
-          Token budget
+          {t("goalTokenBudget")}
         </label>
         <Input
           id="goal-token-budget"
@@ -211,7 +225,7 @@ function GoalEditor({
           value={tokenBudget}
           onChange={(event) => onTokenBudgetChange(event.currentTarget.value)}
           disabled={readOnly || busy}
-          placeholder="Optional"
+          placeholder={t("goalOptional")}
           data-testid="goal-token-budget"
         />
       </div>
@@ -312,6 +326,7 @@ function GoalActions({
   onPause,
   onResume,
 }: GoalActionsProps) {
+  const { t } = useTranslation("chat");
   const showPause = canPauseGoal(goal);
   const showResume = canResumeGoal(goal);
   return (
@@ -324,7 +339,7 @@ function GoalActions({
         loading={clearing}
         data-testid="goal-clear"
       >
-        Clear
+        {t("goalClear")}
       </Button>
       {showPause && (
         <Button
@@ -336,7 +351,7 @@ function GoalActions({
           data-testid="goal-pause"
         >
           <PauseCircleIcon className="size-3.5" />
-          Pause
+          {t("goalPause")}
         </Button>
       )}
       {showResume && (
@@ -349,7 +364,7 @@ function GoalActions({
           data-testid="goal-resume"
         >
           <PlayCircleIcon className="size-3.5" />
-          Resume
+          {t("goalResume")}
         </Button>
       )}
       <Button
@@ -359,7 +374,7 @@ function GoalActions({
         loading={saving}
         data-testid="goal-save"
       >
-        {hasGoal ? "Update goal" : "Set goal"}
+        {hasGoal ? t("goalUpdate") : t("goalSet")}
       </Button>
     </DialogFooter>
   );
@@ -377,6 +392,7 @@ function useGoalDialogState({
   goal,
   onGoalChange,
 }: Pick<GoalDialogProps, "open" | "conversationId" | "goal" | "onGoalChange">): GoalDialogState {
+  const { t } = useTranslation("chat");
   const [objective, setObjective] = useState(goal?.objective ?? "");
   const [tokenBudget, setTokenBudget] = useState(goal?.tokenBudget?.toString() ?? "");
   const [modeDraft, setModeDraftState] = useState<GoalModeDraft>(goalModeDraftForGoal(goal));
@@ -397,11 +413,11 @@ function useGoalDialogState({
       setTokenBudget(response.goal?.tokenBudget?.toString() ?? "");
       setModeDraftState(goalModeDraftForGoal(response.goal));
     } catch (err) {
-      setError(goalError("Could not read goal", err));
+      setError(goalError(t("goalReadFailed"), err));
     } finally {
       setLoading(false);
     }
-  }, [conversationId, onGoalChange]);
+  }, [conversationId, onGoalChange, t]);
 
   useEffect(() => {
     if (!open) return;
@@ -432,14 +448,20 @@ function useGoalDialogState({
     if (!conversationId) return;
     const trimmedObjective = objective.trim();
     if (!trimmedObjective) {
-      setError("Goal objective cannot be empty.");
+      setError(t("goalObjectiveRequired"));
       return;
     }
     let parsedBudget: number | null;
     try {
       parsedBudget = parseGoalBudget(tokenBudget);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(
+        err instanceof Error && err.message === "Token budget must be a positive whole number."
+          ? t("goalTokenBudgetInvalid")
+          : err instanceof Error
+            ? err.message
+            : String(err),
+      );
       return;
     }
     setSaving(true);
@@ -455,7 +477,7 @@ function useGoalDialogState({
       setTokenBudget(response.goal?.tokenBudget?.toString() ?? tokenBudget.trim());
       setModeDraftState(goalModeDraftForGoal(response.goal));
     } catch (err) {
-      setError(goalError("Could not set goal", err));
+      setError(goalError(t("goalSetFailed"), err));
     } finally {
       setSaving(false);
     }
@@ -472,7 +494,7 @@ function useGoalDialogState({
       setTokenBudget("");
       setModeDraftState("active");
     } catch (err) {
-      setError(goalError("Could not clear goal", err));
+      setError(goalError(t("goalClearFailed"), err));
     } finally {
       setClearing(false);
     }
@@ -490,7 +512,7 @@ function useGoalDialogState({
       setModeDraftState(goalModeDraftForGoal(response.goal));
     } catch (err) {
       const action = status === "paused" ? "pause" : "resume";
-      setError(goalError(`Could not ${action} goal`, err));
+      setError(goalError(t(action === "pause" ? "goalPauseFailed" : "goalResumeFailed"), err));
     } finally {
       setStatusUpdating(null);
     }
@@ -535,6 +557,7 @@ export function GoalDialog({
   goal,
   onGoalChange,
 }: GoalDialogProps) {
+  const { t } = useTranslation("chat");
   const state = useGoalDialogState({
     open,
     conversationId,
@@ -550,7 +573,7 @@ export function GoalDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <TargetIcon className="size-4" />
-            <span>Goal</span>
+            <span>{t("goal")}</span>
           </DialogTitle>
         </DialogHeader>
 

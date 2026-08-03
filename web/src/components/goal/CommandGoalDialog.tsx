@@ -1,4 +1,5 @@
 import { type FormEvent, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { TargetIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,6 +28,7 @@ export function CommandGoalDialog({
   onStartGoal,
   backendLabel = "The agent",
 }: CommandGoalDialogProps) {
+  const { t } = useTranslation("chat");
   const [condition, setCondition] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -41,7 +43,7 @@ export function CommandGoalDialog({
     event.preventDefault();
     const trimmed = condition.trim();
     if (!trimmed) {
-      setError("Goal condition cannot be empty.");
+      setError(t("goalConditionRequired"));
       return;
     }
     onStartGoal(trimmed);
@@ -55,17 +57,16 @@ export function CommandGoalDialog({
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <TargetIcon className="size-4" />
-              <span>Goal</span>
+              <span>{t("goal")}</span>
             </DialogTitle>
             <DialogDescription>
-              {backendLabel} keeps working until this condition is met. Progress and completion
-              appear in the conversation.
+              {t("goalCommandDescription", { backend: backendLabel })}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground" htmlFor="goal-condition">
-              Completion condition
+              {t("goalCompletionCondition")}
             </label>
             <Textarea
               id="goal-condition"
@@ -77,7 +78,7 @@ export function CommandGoalDialog({
               disabled={readOnly}
               maxLength={4000}
               className="min-h-28 resize-y"
-              placeholder="All tests pass and the implementation is complete"
+              placeholder={t("goalConditionPlaceholder")}
               data-testid="goal-condition"
             />
             {error && <p className="text-sm text-destructive">{error}</p>}
@@ -85,7 +86,7 @@ export function CommandGoalDialog({
 
           <DialogFooter>
             <Button type="submit" disabled={readOnly} data-testid="goal-start">
-              Start goal
+              {t("goalStartAction")}
             </Button>
           </DialogFooter>
         </form>
