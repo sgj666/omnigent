@@ -175,7 +175,15 @@ class LarkAdapter:
                     self._validate_message_signature(payload, raw_body)
                 if not self._claim(f"event:{event.event_id}"):
                     prior = self._seen_events.get(event.event_id)
-                    return AdapterResult(prior.result if prior else None, duplicate=True)
+                    return AdapterResult(
+                        prior.result if prior else None,
+                        duplicate=True,
+                        diagnostic=(
+                            prior.diagnostic
+                            if prior is not None and prior.diagnostic
+                            else "duplicate: event already claimed"
+                        ),
+                    )
                 result = self.router.route_message(event)
             else:
                 raw = payload if isinstance(payload, Mapping) else {}
@@ -188,9 +196,21 @@ class LarkAdapter:
                 if nonce_key in self._seen_actions or not self._claim(
                     f"action:{event.action_id}:{event.nonce}"
                 ):
-                    prior = self._seen_actions[nonce_key]
+                    # A durable idempotency store can remember a claim made by
+                    # an earlier process while this process has no in-memory
+                    # result to replay.  Never index the local cache here: the
+                    # provider callback still needs a stable duplicate
+                    # diagnostic instead of turning a successful claim guard
+                    # into a 500 response.
+                    prior = self._seen_actions.get(nonce_key)
                     response = AdapterResult(
-                        prior.result, duplicate=True, diagnostic=prior.diagnostic
+                        prior.result if prior is not None else None,
+                        duplicate=True,
+                        diagnostic=(
+                            prior.diagnostic
+                            if prior is not None and prior.diagnostic
+                            else "duplicate: action already claimed"
+                        ),
                     )
                     self._seen_events[event_id] = response
                     return response

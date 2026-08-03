@@ -44,6 +44,26 @@ class WorkspaceRegistry:
             return self.load(workspace_root)
         return self.scan(workspace_root)
 
+    def validate(
+        self, root: Path | str, repositories: tuple[WorkspaceRepository, ...] = ()
+    ) -> WorkspaceManifest:
+        """Validate an API-supplied root and repository set.
+
+        API callers may submit an explicit repository list rather than a
+        manifest file.  Keep that validation in the registry so the route
+        cannot accidentally accept absolute paths, symlink escapes, files, or
+        non-Git directories.  With no explicit entries, ``resolve`` still
+        performs root validation and discovers first-level Git repositories.
+        """
+        workspace_root = self._workspace_root(root)
+        if not repositories:
+            return self.resolve(workspace_root)
+        validated = self._validate_repository_paths(workspace_root, repositories)
+        return WorkspaceManifest(
+            root=workspace_root,
+            repositories=tuple(sorted(validated, key=lambda repository: repository.id)),
+        )
+
     @staticmethod
     def _workspace_root(root: Path | str) -> Path:
         workspace_root = Path(root).resolve()

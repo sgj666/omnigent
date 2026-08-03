@@ -73,10 +73,16 @@ async def test_team_requires_exactly_one_coordinator(client: httpx.AsyncClient) 
 
 
 async def test_workspace_selection_copies_thread_default_and_never_rewrites_running_run(
-    client: httpx.AsyncClient,
+    client: httpx.AsyncClient, tmp_path: object,
 ) -> None:
-    first = (await client.post("/v1/workspaces", json={"root_path": "/repo/a"})).json()
-    second = (await client.post("/v1/workspaces", json={"root_path": "/repo/b"})).json()
+    from pathlib import Path
+
+    first_root = Path(str(tmp_path)) / "a"
+    second_root = Path(str(tmp_path)) / "b"
+    first_root.mkdir()
+    second_root.mkdir()
+    first = (await client.post("/v1/workspaces", json={"root_path": str(first_root)})).json()
+    second = (await client.post("/v1/workspaces", json={"root_path": str(second_root)})).json()
     selected = await client.post(
         f"/v1/workspaces/{first['id']}/select", json={"thread_id": "thread-1"}
     )
@@ -132,8 +138,16 @@ async def test_queued_run_workspace_switch_survives_store_restart(tmp_path: obje
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as sql_client:
-        first = (await sql_client.post("/v1/workspaces", json={"root_path": "/a"})).json()
-        second = (await sql_client.post("/v1/workspaces", json={"root_path": "/b"})).json()
+        first_root = Path(str(tmp_path)) / "a"
+        second_root = Path(str(tmp_path)) / "b"
+        first_root.mkdir()
+        second_root.mkdir()
+        first = (
+            await sql_client.post("/v1/workspaces", json={"root_path": str(first_root)})
+        ).json()
+        second = (
+            await sql_client.post("/v1/workspaces", json={"root_path": str(second_root)})
+        ).json()
         await sql_client.post(f"/v1/workspaces/{first['id']}/select", json={"thread_id": "thread"})
         run = store.create_run(team_id="2" * 32, thread_id="thread", source="test")
         response = await sql_client.post(

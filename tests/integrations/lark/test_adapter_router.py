@@ -63,6 +63,34 @@ def test_card_action_is_idempotent_by_action_and_nonce() -> None:
     assert coordinator.retry_count == 1
 
 
+def test_durable_action_claim_from_another_process_returns_duplicate_diagnostic() -> None:
+    """A durable claim does not imply this process has a cached response."""
+
+    class AlreadyClaimed:
+        def claim(self, _key: str, *, ttl: int) -> bool:
+            assert ttl > 0
+            return False
+
+    adapter, coordinator = _adapter()
+    adapter.deduper = AlreadyClaimed()
+
+    result = adapter.receive(
+        {
+            "header": {"event_type": "card.action.trigger", "event_id": "new-process"},
+            "event": {
+                "chat_id": "c",
+                "operator": {"open_id": "u"},
+                "action": {"action_id": "retry", "nonce": "persisted", "value": {}},
+            },
+        }
+    )
+
+    assert result.result is None
+    assert result.duplicate is True
+    assert result.diagnostic == "duplicate: action already claimed"
+    assert coordinator.retry_count == 0
+
+
 def test_unknown_thread_and_unauthorized_action_are_diagnostic() -> None:
     adapter, _ = _adapter()
     unknown = adapter.receive(

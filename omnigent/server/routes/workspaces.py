@@ -13,19 +13,33 @@ from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.routes.teams import TeamMemoryStore
 from omnigent.server.schemas import CreateWorkspaceRequest, SelectWorkspaceRequest
+from omnigent.workspaces.manifest import WorkspaceManifestError, WorkspaceRepository
+from omnigent.workspaces.registry import WorkspaceRegistry
 
 
 def create_workspaces_router(
     store: TeamMemoryStore,
     *,
     auth_provider: AuthProvider | None = None,
+    registry: WorkspaceRegistry | None = None,
 ) -> APIRouter:
     """Build the workspace-bundle API backed by the shared team store."""
     router = APIRouter()
+    workspace_registry = registry or WorkspaceRegistry()
 
     @router.post("/workspaces")
     async def create_workspace(request: Request, body: CreateWorkspaceRequest) -> dict[str, Any]:
         require_user(request, auth_provider)
+        repositories = tuple(
+            WorkspaceRepository(id=repository.name, path=repository.path)
+            for repository in body.repositories
+        )
+        try:
+            workspace_registry.validate(body.root_path, repositories)
+        except WorkspaceManifestError as exc:
+            # Reject before allocating an id or touching the store.  This
+            # keeps invalid paths from becoming durable workspace records.
+            raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
         workspace_id = uuid4().hex
         workspace = {
             "id": workspace_id,

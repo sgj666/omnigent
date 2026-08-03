@@ -9,11 +9,12 @@ authenticated ciphertext.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Mapping
 from typing import Any, Protocol
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from omnigent.integrations.lark.credentials import (
     FeishuCredentialCipher,
@@ -55,6 +56,8 @@ def create_feishu_router(
     device_flow: FeishuPersonalAgentDeviceFlow,
     credential_cipher: FeishuCredentialCipher,
     save_installation: FeishuInstallationSaver,
+    *,
+    lark_adapter: Any | None = None,
 ) -> APIRouter:
     """Build routes for a QR-based Feishu PersonalAgent installation.
 
@@ -126,5 +129,58 @@ def create_feishu_router(
                 }
             )
         return response
+
+    # Team Builder clients use a team-scoped install URL.  Keep the original
+    # provider-neutral endpoints above for existing callers, while these
+    # aliases make the documented ``/teams/{id}/feishu/install/*`` contract
+    # reachable from the application router.  Installation persistence is
+    # intentionally unchanged; the team id is routing context only.
+    @router.post("/teams/{team_id}/feishu/install/begin")
+    async def begin_team_installation(team_id: str) -> dict[str, Any]:
+        del team_id
+        return await begin_installation()
+
+    @router.get("/teams/{team_id}/feishu/install/{session}/status")
+    async def poll_team_installation(team_id: str, session: str) -> dict[str, Any]:
+        del team_id
+        return await poll_installation(session)
+
+    async def _receive_inbound(
+        payload: Mapping[str, Any], headers: Mapping[str, str] | None, raw: bytes | None
+    ) -> dict[str, Any]:
+        if lark_adapter is None:
+            raise HTTPException(status_code=503, detail="Lark inbound adapter is not configured")
+        result = lark_adapter.receive(payload, headers=headers, raw=raw)
+        response: dict[str, Any] = {
+            "object": "feishu.inbound",
+            "status": "duplicate" if result.duplicate else "accepted",
+            "duplicate": result.duplicate,
+        }
+        if result.diagnostic:
+            response["diagnostic"] = result.diagnostic
+        if result.result is not None:
+            response["result"] = result.result
+        return response
+
+    @router.post("/teams/{team_id}/feishu/webhook")
+    async def receive_team_webhook(
+        team_id: str, request: Request
+    ) -> dict[str, Any]:
+        del team_id
+        raw_body = await request.body()
+        try:
+            payload = json.loads(raw_body)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="invalid Feishu webhook JSON") from exc
+        if not isinstance(payload, Mapping):
+            raise HTTPException(status_code=400, detail="Feishu webhook must be a JSON object")
+        return await _receive_inbound(payload, request.headers, raw_body)
+
+    # Provider callbacks that do not carry a team path can still be routed by
+    # the adapter's chat/thread binding.  This is useful for Feishu's public
+    # event URL and keeps deployment wiring to one endpoint.
+    @router.post("/feishu/webhook")
+    async def receive_webhook(request: Request) -> dict[str, Any]:
+        return await receive_team_webhook("", request)
 
     return router

@@ -63,6 +63,7 @@ from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
 from omnigent.server.routes.dictation import create_dictation_router
+from omnigent.server.routes.feishu import create_feishu_router
 from omnigent.server.routes.harnesses import create_harnesses_router
 from omnigent.server.routes.imports import create_imports_router
 from omnigent.server.routes.policy_registry import create_policy_registry_router
@@ -1994,6 +1995,38 @@ def create_app(
         create_teams_router(team_store, auth_provider=auth_provider),
         prefix="/v1",
         tags=["teams"],
+    )
+    # Feishu setup and inbound callbacks share the application lifecycle with
+    # the optional Lark adapter.  Integrations can inject their own device
+    # flow, cipher, and persistence seam as attributes; API-only deployments
+    # still expose the routes and fail closed at request time when no adapter
+    # is configured.
+    from omnigent.integrations.lark.credentials import FeishuCredentialCipher
+    from omnigent.integrations.lark.device_flow import FeishuPersonalAgentDeviceFlow
+
+    _feishu_device_flow = getattr(lark_adapter, "device_flow", None)
+    if _feishu_device_flow is None:
+        _feishu_device_flow = FeishuPersonalAgentDeviceFlow()
+    _feishu_cipher = getattr(lark_adapter, "credential_cipher", None)
+    if _feishu_cipher is None:
+        _feishu_key = os.environ.get("OMNIGENT_FEISHU_CREDENTIAL_KEY") or "omnigent-feishu"
+        _feishu_cipher = FeishuCredentialCipher(_feishu_key)
+
+    def _save_feishu_installation(credential: Any, *, bot: Any) -> Any:
+        saver = getattr(lark_adapter, "save_installation", None)
+        if callable(saver):
+            return saver(credential, bot=bot)
+        return None
+
+    app.include_router(
+        create_feishu_router(
+            _feishu_device_flow,
+            _feishu_cipher,
+            _save_feishu_installation,
+            lark_adapter=lark_adapter,
+        ),
+        prefix="/v1",
+        tags=["feishu"],
     )
     app.include_router(
         create_workspaces_router(team_store, auth_provider=auth_provider),
