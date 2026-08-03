@@ -341,7 +341,7 @@ export function InboxPage() {
           const comment = item.comment;
           // Single-user mode stores no author; mirror CommentsPanel's
           // "You" fallback (the only human in that mode is the viewer).
-          const author = comment.created_by ?? "You";
+          const author = comment.created_by ?? t("comments.you");
           const sessionTitle = conversationDisplayLabel(item.row);
           return (
             <div

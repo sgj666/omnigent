@@ -59,7 +59,7 @@ export function TasksPage() {
   // Prefill for the manual create dialog when opened from a "Suggestions" chip.
   // Null → the normal manual path (empty fields). Cleared on dialog close so a
   // stale prefill never leaks into a subsequent plain "New task" open.
-  const [prefill, setPrefill] = useState<ScheduledTaskSuggestion["prefill"] | null>(null);
+  const [prefill, setPrefill] = useState<{ name: string; prompt: string } | null>(null);
 
   function openManual() {
     setPrefill(null);
@@ -68,7 +68,7 @@ export function TasksPage() {
   }
 
   function openFromSuggestion(s: ScheduledTaskSuggestion) {
-    setPrefill(s.prefill);
+    setPrefill({ name: t(s.prefill.nameKey), prompt: t(s.prefill.promptKey) });
     setEditingTask(null);
     setManualOpen(true);
   }
@@ -324,7 +324,7 @@ function SuggestionsSection({
               className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-normal transition-colors hover:bg-muted hover:text-foreground"
             >
               <Icon className={cn("size-4 shrink-0", s.iconClassName)} />
-              <span className="truncate">{s.title}</span>
+              <span className="truncate">{t(s.titleKey)}</span>
             </button>
           );
         })}

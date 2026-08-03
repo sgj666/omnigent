@@ -16,6 +16,23 @@
   "noYet": "还没有自动化任务",
   "emptyDescription": "创建任务，让智能体会话按周期自动运行。",
   "suggestions": "建议",
+  "suggestionItems": {
+    "followUpMonitor": {
+      "title": "跟进监控",
+      "name": "跟进监控",
+      "prompt": "每个工作日早晨检查近期的邮件和日历活动。总结所有需要我关注的事项，并列出今天需要我处理的后续行动。"
+    },
+    "prSweep": {
+      "title": "PR 巡检",
+      "name": "PR 巡检",
+      "prompt": "列出等待评审的开放 Pull Request。标记长期未更新、需要提醒跟进的 PR，并总结每个 PR 的下一步行动。"
+    },
+    "newsDigest": {
+      "title": "新闻摘要",
+      "name": "新闻摘要",
+      "prompt": "总结过去一天的重要新闻。保持简洁，按主题归类相关内容，并标记值得进一步阅读的事项。"
+    }
+  },
   "nextRun": "下次运行 {{value}}",
   "actionsFor": "{{name}} 的操作",
   "runNow": "立即运行",
@@ -54,6 +71,14 @@
   "workspaceHint": "默认为主机的主目录。选择目录可固定工作区。",
   "pickHostFirst": "固定工作区前请先选择主机。",
   "unsupportedSchedule": "此计划暂无法在当前表单中编辑。",
+  "scheduleValidation": {
+    "validMinute": "请输入 0 到 59 之间的有效分钟数。",
+    "validTime": "请输入有效时间。",
+    "weekdayRequired": "请至少选择一个工作日。",
+    "intervalMinimum": "间隔必须是大于等于 1 的整数。",
+    "hourlyInterval": "每小时任务的运行间隔不能少于 1 小时（间隔 ≥ 1）。",
+    "monthDayRequired": "请至少选择一个月内的日期。"
+  },
   "cancel": "取消",
   "saveChanges": "保存更改",
   "createTask": "创建任务",

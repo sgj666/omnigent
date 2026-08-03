@@ -113,7 +113,7 @@ export function SharingPage() {
         </div>
 
         {isLoading || current === undefined ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <p className="text-sm text-muted-foreground">{t("sharing.loading")}</p>
         ) : (
           <>
             {!editable && (

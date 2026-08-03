@@ -21,6 +21,7 @@ import * as conversationsHook from "@/hooks/useConversations";
 import * as commentInboxHook from "@/hooks/useCommentInbox";
 import * as sessionsApi from "@/lib/sessionsApi";
 import type { CommentInbox } from "@/hooks/useCommentInbox";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 // Minimal ApprovalCard stub: renders the message and an Accept button that
 // forwards to the page's submit handler. The real card's form/preview UX is
@@ -326,6 +327,34 @@ describe("InboxPage approval items", () => {
 });
 
 describe("InboxPage comments and errors", () => {
+  it("uses the localized viewer name when a comment has no author", async () => {
+    vi.mocked(commentInboxHook.useCommentInbox).mockReturnValue(
+      commentInboxStub({
+        items: [
+          {
+            row: conversation({ id: "sess_1", pending_elicitations_count: 0 }),
+            comment: {
+              id: "cm_you",
+              path: "README.md",
+              body: "A note from the viewer.",
+              created_by: null,
+              created_at: 1_700_000_000,
+              updated_at: 1_700_000_000_000,
+              status: "draft",
+            } as CommentInbox["items"][number]["comment"],
+          },
+        ],
+      }),
+    );
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      renderPage();
+      expect((await screen.findAllByText("你")).length).toBeGreaterThanOrEqual(1);
+    } finally {
+      await restore();
+    }
+  });
+
   it("renders unseen file comments with author, path, and body", async () => {
     // WHY: the comment side of the inbox renders each unseen comment with its
     // author pill, file path, and body, and counts it in the header summary.

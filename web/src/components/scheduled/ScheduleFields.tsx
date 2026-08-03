@@ -79,6 +79,7 @@ export function ScheduleFields({
   const showWeekdays = model.preset === "weekly";
 
   const error = validateSchedule(model);
+  const localizedError = error === null ? null : translateScheduleError(error, t);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const hourColumnRef = useRef<HTMLDivElement | null>(null);
   const minuteColumnRef = useRef<HTMLDivElement | null>(null);
@@ -232,7 +233,7 @@ export function ScheduleFields({
               data-testid="schedule-minute"
               placeholder="0"
               className="text-sm"
-              aria-invalid={error ? true : undefined}
+              aria-invalid={localizedError ? true : undefined}
               onChange={(e) => handleTimeTextChange(e.target.value)}
               onBlur={canonicalizeTimeText}
             />
@@ -247,7 +248,7 @@ export function ScheduleFields({
                     data-testid="schedule-time"
                     placeholder="5:00 PM"
                     className="pr-8 text-sm"
-                    aria-invalid={error ? true : undefined}
+                    aria-invalid={localizedError ? true : undefined}
                     onFocus={() => handleTimePickerOpenChange(true)}
                     onChange={(e) => handleTimeTextChange(e.target.value)}
                     onBlur={canonicalizeTimeText}
@@ -354,13 +355,30 @@ export function ScheduleFields({
 
       {/* describeSchedule/buildRRule stay in the lib for list rows and possible
           future previews; only the inline validation error renders here now. */}
-      {error && (
+      {localizedError && (
         <p className="text-xs text-destructive" data-testid="schedule-error">
-          {error}
+          {localizedError}
         </p>
       )}
     </div>
   );
+}
+
+/** Keep the schedule builder's detailed validation messages while translating
+ * their stable categories in the active UI language. Unknown messages are
+ * returned unchanged so future validation details are never discarded. */
+function translateScheduleError(error: string, t: (key: string) => string): string {
+  const keyByError: Record<string, string> = {
+    "Enter a valid minute from 0 to 59.": "scheduleValidation.validMinute",
+    "Enter a valid time.": "scheduleValidation.validTime",
+    "Pick at least one day of the week.": "scheduleValidation.weekdayRequired",
+    "Interval must be a whole number of at least 1.": "scheduleValidation.intervalMinimum",
+    "Hourly tasks must run at most once per hour (interval ≥ 1).":
+      "scheduleValidation.hourlyInterval",
+    "Pick at least one day of the month.": "scheduleValidation.monthDayRequired",
+  };
+  const key = keyByError[error];
+  return key === undefined ? error : t(key);
 }
 
 function pad(n: number): string {

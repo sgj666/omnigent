@@ -11,6 +11,7 @@ import { SharingPage } from "./SharingPage";
 import * as identity from "@/lib/identity";
 import * as sharingHook from "@/hooks/useSharing";
 import type { SharingState } from "@/hooks/useSharing";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 const serverInfoMocks = vi.hoisted(() => ({
   accountsEnabled: true,
@@ -75,6 +76,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("SharingPage", () => {
+  it("localizes the sharing-state loading copy", async () => {
+    setSharingState(undefined, true);
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      render(<SharingPage />);
+      expect(screen.getByText("正在加载…")).toBeInTheDocument();
+    } finally {
+      await restore();
+    }
+  });
+
   it("shows all four tiers with the current one selected (admin)", async () => {
     setSharingState(state({ sharing_mode: "read_only" }));
 
