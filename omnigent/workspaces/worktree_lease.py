@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import time
 from collections.abc import Callable, Iterable
-from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -24,6 +23,7 @@ class LeaseStatus(StrEnum):
 
     ACTIVE = "active"
     EXPIRED = "expired"
+    RECOVERY_REQUIRED = "recovery_required"
     RELEASED = "released"
 
 
@@ -147,7 +147,10 @@ class WorktreeLeaseManager:
                         )
                     )
             except Exception:
-                await self._remove_created(host_registry, host_conn, created)
+                failed_cleanup = await self._remove_created(host_registry, host_conn, created)
+                for lease in failed_cleanup:
+                    lease.status = LeaseStatus.RECOVERY_REQUIRED
+                self._records.extend(failed_cleanup)
                 raise
             self._records.extend(created)
             return tuple(created)
@@ -183,16 +186,29 @@ class WorktreeLeaseManager:
     ) -> tuple[WorktreeLease, ...]:
         """Reclaim active leases whose owner stopped heartbeating."""
         now = self._clock()
-        expired = tuple(
+        candidates = tuple(
             lease
             for lease in self._records
             if lease.host_id == host_conn.host_id
-            and lease.status is LeaseStatus.ACTIVE
-            and now - lease.heartbeat_at >= self._ttl_s
+            and lease.status in (LeaseStatus.ACTIVE, LeaseStatus.RECOVERY_REQUIRED)
         )
-        for lease in expired:
-            lease.status = LeaseStatus.EXPIRED
-        await self._release(host_registry, host_conn, expired)
+        locks = self._lease_locks(candidates)
+        for lock in locks:
+            await lock.acquire()
+        try:
+            expired = tuple(
+                lease
+                for lease in candidates
+                if lease.status is LeaseStatus.RECOVERY_REQUIRED
+                or (lease.status is LeaseStatus.ACTIVE and now - lease.heartbeat_at >= self._ttl_s)
+            )
+            for lease in expired:
+                if lease.status is LeaseStatus.ACTIVE:
+                    lease.status = LeaseStatus.EXPIRED
+            await self._release_locked(host_registry, host_conn, expired)
+        finally:
+            for lock in reversed(locks):
+                lock.release()
         return expired
 
     async def _release(
@@ -208,36 +224,48 @@ class WorktreeLeaseManager:
         if len(host_ids) != 1:
             raise WorktreeLeaseError("leases from multiple hosts must be released separately")
         self._require_host(next(iter(host_ids)), host_conn)
-        locks = [
-            self._locks.setdefault((lease.host_id, lease.repo_path), asyncio.Lock())
-            for lease in sorted(active, key=lambda item: (item.host_id, item.repo_path))
-        ]
+        locks = self._lease_locks(active)
         for lock in locks:
             await lock.acquire()
         try:
-            for lease in reversed(active):
-                await remove_worktree_on_host(
-                    host_registry=host_registry,
-                    host_conn=host_conn,
-                    worktree_path=lease.worktree_path,
-                    branch=lease.branch,
-                    delete_branch=True,
-                )
-                lease.status = LeaseStatus.RELEASED
+            await self._release_locked(host_registry, host_conn, active)
         finally:
             for lock in reversed(locks):
                 lock.release()
+
+    def _lease_locks(self, records: Iterable[WorktreeLease]) -> list[asyncio.Lock]:
+        return [
+            self._locks.setdefault((lease.host_id, lease.repo_path), asyncio.Lock())
+            for lease in sorted(records, key=lambda item: (item.host_id, item.repo_path))
+        ]
+
+    async def _release_locked(
+        self,
+        host_registry: HostRegistry,
+        host_conn: HostConnection,
+        records: Iterable[WorktreeLease],
+    ) -> None:
+        for lease in reversed(tuple(records)):
+            await remove_worktree_on_host(
+                host_registry=host_registry,
+                host_conn=host_conn,
+                worktree_path=lease.worktree_path,
+                branch=lease.branch,
+                delete_branch=True,
+            )
+            lease.status = LeaseStatus.RELEASED
 
     async def _remove_created(
         self,
         host_registry: HostRegistry,
         host_conn: HostConnection,
         created: list[WorktreeLease],
-    ) -> None:
+    ) -> list[WorktreeLease]:
+        failed: list[WorktreeLease] = []
         for lease in reversed(created):
             # The originating create failure remains the useful error; a later
             # recovery can clean up a host worktree that resisted this removal.
-            with suppress(Exception):
+            try:
                 await remove_worktree_on_host(
                     host_registry=host_registry,
                     host_conn=host_conn,
@@ -245,6 +273,9 @@ class WorktreeLeaseManager:
                     branch=lease.branch,
                     delete_branch=True,
                 )
+            except Exception:  # noqa: BLE001 - rollback must preserve orphaned leases
+                failed.append(lease)
+        return failed
 
     def _attempt_leases(
         self,

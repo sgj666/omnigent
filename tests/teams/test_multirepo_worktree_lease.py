@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from omnigent.server.routes import _host_worktree
 from omnigent.workspaces.manifest import WorkspaceRepository
 from omnigent.workspaces.worktree_lease import (
     LeaseOwnershipError,
@@ -136,3 +137,105 @@ async def test_multi_repo_lease_releases_only_for_its_owner_and_recovers_expired
         host_registry=object(), host_conn=_Host(), leases=leases, owner_id="runner-1"
     )
     assert len(removed) == len(leases)
+
+
+def test_host_worktree_exposes_production_lease_manager_factory() -> None:
+    """Session/scheduler code has one shared lifecycle service seam."""
+    first = _host_worktree.get_attempt_worktree_lease_manager()
+    second = _host_worktree.get_attempt_worktree_lease_manager()
+
+    assert first is second
+    assert isinstance(first, WorktreeLeaseManager)
+
+
+@pytest.mark.asyncio
+async def test_failed_rollback_retains_unremoved_worktree_for_recovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A cleanup failure remains visible instead of becoming an orphan."""
+    removed_attempts = 0
+    created_attempts = 0
+
+    async def create(**kwargs: object) -> _Created:
+        nonlocal created_attempts
+        created_attempts += 1
+        if created_attempts == 2:
+            raise RuntimeError("second repository failed")
+        return _Created(worktree_path="/leases/first", branch="first")
+
+    async def remove(**kwargs: object) -> None:
+        nonlocal removed_attempts
+        removed_attempts += 1
+        if removed_attempts == 1:
+            raise RuntimeError("host unavailable during rollback")
+
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.create_worktree_on_host", create)
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.remove_worktree_on_host", remove)
+    manager = WorktreeLeaseManager(ttl_s=60)
+    repositories = (
+        WorkspaceRepository(id="api", path="api"),
+        WorkspaceRepository(id="web", path="web"),
+    )
+
+    with pytest.raises(RuntimeError, match="second repository failed"):
+        await manager.acquire(
+            host_id="host-1",
+            host_registry=object(),
+            host_conn=_Host(),
+            workspace_root=tmp_path,
+            repositories=repositories,
+            attempt_id="attempt-rollback",
+            owner_id="runner-1",
+        )
+
+    assert len(manager.records) == 1
+    assert manager.records[0].status.value == "recovery_required"
+    await manager.recover_expired(host_registry=object(), host_conn=_Host())
+    assert manager.records[0].status is LeaseStatus.RELEASED
+
+
+@pytest.mark.asyncio
+async def test_expiry_recovery_does_not_remove_lease_released_while_waiting_for_repo_lock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Expiry transition is serialized with an in-flight owner release."""
+    remove_started = asyncio.Event()
+    allow_remove = asyncio.Event()
+
+    async def create(**kwargs: object) -> _Created:
+        return _Created(worktree_path="/leases/api", branch="attempt-branch")
+
+    async def remove(**kwargs: object) -> None:
+        remove_started.set()
+        await allow_remove.wait()
+
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.create_worktree_on_host", create)
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.remove_worktree_on_host", remove)
+    now = 1_000.0
+    manager = WorktreeLeaseManager(ttl_s=10, clock=lambda: now)
+    leases = await manager.acquire(
+        host_id="host-1",
+        host_registry=object(),
+        host_conn=_Host(),
+        workspace_root=tmp_path,
+        repositories=(WorkspaceRepository(id="api", path="api"),),
+        attempt_id="attempt-race",
+        owner_id="runner-1",
+    )
+    now += 11
+
+    release_task = asyncio.create_task(
+        manager.release(
+            host_registry=object(), host_conn=_Host(), leases=leases, owner_id="runner-1"
+        )
+    )
+    await remove_started.wait()
+    recovery_task = asyncio.create_task(
+        manager.recover_expired(host_registry=object(), host_conn=_Host())
+    )
+    await asyncio.sleep(0)
+    allow_remove.set()
+
+    await release_task
+    assert await recovery_task == ()
+    assert leases[0].status is LeaseStatus.RELEASED

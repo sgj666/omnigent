@@ -12,7 +12,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from omnigent.host.frames import (
     HostCreateWorktreeFrame,
@@ -21,12 +24,18 @@ from omnigent.host.frames import (
     encode_host_frame,
 )
 from omnigent.server.host_registry import HostConnection, HostRegistry
+from omnigent.workspaces.manifest import WorkspaceRepository
 
 _logger = logging.getLogger(__name__)
 
 # Above the host's own git timeout (120 s) so the host's specific error
 # surfaces instead of a generic server-side timeout.
 _WORKTREE_TIMEOUT_S: float = 150.0
+
+if TYPE_CHECKING:
+    from omnigent.workspaces.worktree_lease import WorktreeLease, WorktreeLeaseManager
+
+_attempt_worktree_lease_manager: WorktreeLeaseManager | None = None
 
 
 class WorktreeProxyError(Exception):
@@ -275,3 +284,70 @@ async def list_worktrees_on_host(
     if not isinstance(worktrees, list):
         raise WorktreeProxyError("host returned an incomplete worktree list")
     return worktrees
+
+
+def get_attempt_worktree_lease_manager() -> WorktreeLeaseManager:
+    """Return the process-wide attempt lease service used by production routes.
+
+    The import is intentionally lazy: the lease service delegates Git I/O to
+    this module's host proxies, so importing it at module load time would form
+    a cycle.
+    """
+    global _attempt_worktree_lease_manager
+    if _attempt_worktree_lease_manager is None:
+        from omnigent.workspaces.worktree_lease import WorktreeLeaseManager
+
+        _attempt_worktree_lease_manager = WorktreeLeaseManager()
+    return _attempt_worktree_lease_manager
+
+
+async def acquire_attempt_worktree_leases(
+    *,
+    host_id: str,
+    host_registry: HostRegistry,
+    host_conn: HostConnection,
+    workspace_root: Path | str,
+    repositories: Iterable[WorkspaceRepository],
+    attempt_id: str,
+    owner_id: str,
+) -> tuple[WorktreeLease, ...]:
+    """Production lifecycle seam for scheduler/session attempt startup."""
+    return await get_attempt_worktree_lease_manager().acquire(
+        host_id=host_id,
+        host_registry=host_registry,
+        host_conn=host_conn,
+        workspace_root=workspace_root,
+        repositories=repositories,
+        attempt_id=attempt_id,
+        owner_id=owner_id,
+    )
+
+
+def heartbeat_attempt_worktree_leases(leases: Iterable[WorktreeLease], *, owner_id: str) -> None:
+    """Production lifecycle seam for attempt heartbeat updates."""
+    get_attempt_worktree_lease_manager().heartbeat(leases, owner_id=owner_id)
+
+
+async def release_attempt_worktree_leases(
+    *,
+    host_registry: HostRegistry,
+    host_conn: HostConnection,
+    leases: Iterable[WorktreeLease],
+    owner_id: str,
+) -> None:
+    """Production lifecycle seam for scheduler/session attempt teardown."""
+    await get_attempt_worktree_lease_manager().release(
+        host_registry=host_registry,
+        host_conn=host_conn,
+        leases=leases,
+        owner_id=owner_id,
+    )
+
+
+async def recover_expired_attempt_worktree_leases(
+    *, host_registry: HostRegistry, host_conn: HostConnection
+) -> tuple[WorktreeLease, ...]:
+    """Production lifecycle seam for stale-attempt recovery workers."""
+    return await get_attempt_worktree_lease_manager().recover_expired(
+        host_registry=host_registry, host_conn=host_conn
+    )
