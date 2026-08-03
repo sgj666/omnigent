@@ -7,6 +7,24 @@
     "reasoningEffort": "推理强度",
     "token": "Token"
   },
+  "approval": {
+    "loading": "正在加载审批请求…",
+    "resolved": "审批请求已处理",
+    "resolvedDescription": "此审批请求已不再等待处理，可能已完成、超时或被取消。",
+    "error": "错误",
+    "approved": "已批准",
+    "rejected": "已拒绝",
+    "closePage": "你可以关闭此页面。",
+    "required": "需要审批",
+    "cannotApprove": "只有会话所有者或受委托的审批人可以批准，但你仍然可以拒绝。",
+    "approve": "批准",
+    "reject": "拒绝",
+    "missingIds": "缺少会话 ID 或请求 ID",
+    "serverError": "服务器错误：{{status}}",
+    "loadFailed": "加载失败：{{error}}",
+    "resolveFailed": "处理失败：{{status}}",
+    "networkError": "网络错误：{{error}}"
+  },
   "shell": {
     "conversations": "会话",
     "archivedToastPrefix": "归档会话位于",
@@ -142,5 +160,72 @@
     "removeFromProjectLabel": "从项目中移除",
     "deleteCount": "删除 {{count}} 项",
     "exitSelectionMode": "退出选择模式"
+  },
+  "inbox": {
+    "title": "收件箱",
+    "waiting": "等待处理",
+    "approval_one": "1 项审批",
+    "approval_other": "{{count}} 项审批",
+    "comment_one": "1 条评论",
+    "comment_other": "{{count}} 条评论",
+    "loadError": "无法从 {{count}} 个{{sessionLabel}}加载收件箱项目。",
+    "session_one": "会话",
+    "session_other": "会话",
+    "retry": "重试",
+    "loading": "正在加载收件箱…",
+    "emptyTitle": "暂无待处理事项",
+    "emptyDescription": "当智能体需要你的输入，或有人在文件上发表评论时，相关事项会显示在这里。",
+    "openSession": "打开会话",
+    "openFile": "打开文件",
+    "commentedOn": "评论了",
+    "checkingRemaining": "正在检查其余会话…"
+  },
+  "comments": {
+    "title": "评论",
+    "addressAll": "全部处理",
+    "open": "未处理",
+    "addressed": "已处理",
+    "readOnly": "你对当前会话拥有只读权限。",
+    "selection": "选中内容：",
+    "addPlaceholder": "添加评论…",
+    "add": "添加评论",
+    "noneOpen": "没有未处理的评论。",
+    "noneAddressed": "没有已处理的评论。",
+    "save": "保存",
+    "cancel": "取消",
+    "showLess": "收起",
+    "showMore": "展开",
+    "edit": "编辑",
+    "delete": "删除",
+    "copyLink": "复制评论链接",
+    "you": "你",
+    "today": "今天",
+    "yesterday": "昨天"
+  },
+  "sharing": {
+    "title": "会话共享",
+    "loading": "正在加载…",
+    "noPermission": "你没有管理会话共享的权限。",
+    "description": "控制此服务器上的用户是否可以与他人共享会话。设置对整个服务器生效并立即应用。更改只影响新的共享；已有授权（包括已公开的会话）在撤销前仍然有效。",
+    "managedMode": "共享模式由当前部署管理，无法在此更改。",
+    "modeLabel": "会话共享模式",
+    "publicAccess": "公开访问",
+    "publicDescription": "允许任何拥有链接的人访问会话（公开只读）。关闭后，共享对话框中的“公开访问”开关会隐藏，新的公开授权也会被拒绝；已公开共享的会话在撤销前仍保持公开。",
+    "managedPublic": "由当前部署管理，无法在此更改。",
+    "tiers": {
+      "on": {
+        "label": "开启",
+        "description": "拥有管理权限的用户可以按任意级别（读取、编辑或管理）共享会话，也可以切换公开访问或工作区只读。"
+      },
+      "read_only": {
+        "label": "仅限读取",
+        "description": "新的共享最多只能授予读取（查看）权限，编辑和管理授权会被拒绝。"
+      },
+      "restricted_read_only": {
+        "label": "仅限读取（受限）",
+        "description": "仅限读取；工作目录为主目录或文件系统根目录的会话完全禁止共享，包括读取权限。"
+      },
+      "off": { "label": "关闭", "description": "已禁用共享，无法创建新的授权，共享控件也会隐藏。" }
+    }
   }
 }

@@ -111,6 +111,47 @@ export function formatNextRunAt(
   return `in ${pluralize(days, "day")}`;
 }
 
+/** Localize the compact schedule/next-run summaries shown in the task list. */
+export function localizeScheduleSummary(value: string, language: string): string {
+  if (!language.startsWith("zh")) return value;
+  return value
+    .replace(/^Weekdays at /, "工作日 ")
+    .replace(/^Weekends at /, "周末 ")
+    .replace(/^Every day at /, "每天 ")
+    .replace(/^Hourly at :([0-9]+)/, "每小时在第 $1 分钟运行")
+    .replace(/^Hourly$/, "每小时")
+    .replace(/^Every ([0-9]+) hours at :([0-9]+)/, "每 $1 小时在第 $2 分钟运行")
+    .replace(/^Every ([0-9]+) days at /, "每 $1 天 ")
+    .replace(/^Every ([0-9]+) weeks on /, "每 $1 周，在 ")
+    .replace(/^Every ([0-9]+) weeks at /, "每 $1 周 ")
+    .replace(/^Every ([0-9]+) months on the /, "每 $1 个月，第 ")
+    .replace(/^Every ([0-9]+) years in /, "每 $1 年，在 ")
+    .replace(/^Weekly on /, "每周在 ")
+    .replace(/^Weekly at /, "每周 ")
+    .replace(/^Weekly$/, "每周")
+    .replace(/^Monthly on the /, "每月第 ")
+    .replace(/^Monthly at /, "每月 ")
+    .replace(/^Yearly in /, "每年在 ")
+    .replace(/^Yearly at /, "每年 ")
+    .replace(/ at /g, " ")
+    .replace(/ on /g, "，")
+    .replace(/ in /g, "，")
+    .replace(/ and /g, "和")
+    .replace(/, and /g, "、")
+    .replace(/, /g, "、")
+    .replace(/\b(Monday|Mon)\b/g, "周一")
+    .replace(/\b(Tuesday|Tue)\b/g, "周二")
+    .replace(/\b(Wednesday|Wed)\b/g, "周三")
+    .replace(/\b(Thursday|Thu)\b/g, "周四")
+    .replace(/\b(Friday|Fri)\b/g, "周五")
+    .replace(/\b(Saturday|Sat)\b/g, "周六")
+    .replace(/\b(Sunday|Sun)\b/g, "周日")
+    .replace(/\bsoon\b/g, "即将运行")
+    .replace(/\bin ([0-9]+) mins?\b/g, "约 $1 分钟后")
+    .replace(/\bin ([0-9]+) hours?\b/g, "约 $1 小时后")
+    .replace(/\bin ([0-9]+) days?\b/g, "约 $1 天后");
+}
+
 /** `1 min` / `8 mins` — singular noun only when the count is exactly 1. */
 function pluralize(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;

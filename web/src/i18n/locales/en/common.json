@@ -7,6 +7,24 @@
     "reasoningEffort": "Reasoning effort",
     "token": "Token"
   },
+  "approval": {
+    "loading": "Loading elicitation…",
+    "resolved": "Elicitation resolved",
+    "resolvedDescription": "This approval request is no longer pending. It may have been resolved, timed out, or cancelled.",
+    "error": "Error",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "closePage": "You can close this page.",
+    "required": "Approval required",
+    "cannotApprove": "Only the session owner or a delegated approver can approve. You can still reject.",
+    "approve": "Approve",
+    "reject": "Reject",
+    "missingIds": "Missing session or elicitation ID",
+    "serverError": "Server error: {{status}}",
+    "loadFailed": "Failed to load: {{error}}",
+    "resolveFailed": "Resolve failed: {{status}}",
+    "networkError": "Network error: {{error}}"
+  },
   "shell": {
     "conversations": "Conversations",
     "archivedToastPrefix": "View archived sessions in",
@@ -142,5 +160,75 @@
     "removeFromProjectLabel": "Remove from",
     "deleteCount": "Delete {{count}}",
     "exitSelectionMode": "Exit selection mode"
+  },
+  "inbox": {
+    "title": "Inbox",
+    "waiting": "waiting",
+    "approval_one": "1 approval",
+    "approval_other": "{{count}} approvals",
+    "comment_one": "1 comment",
+    "comment_other": "{{count}} comments",
+    "loadError": "Couldn’t load inbox items from {{count}} {{sessionLabel}}.",
+    "session_one": "session",
+    "session_other": "sessions",
+    "retry": "Retry",
+    "loading": "Loading inbox…",
+    "emptyTitle": "Nothing waiting on you",
+    "emptyDescription": "When an agent needs your input or someone comments on a file, it will show up here.",
+    "openSession": "Open session",
+    "openFile": "Open file",
+    "commentedOn": "commented on",
+    "checkingRemaining": "Checking remaining sessions…"
+  },
+  "comments": {
+    "title": "Comments",
+    "addressAll": "Address All",
+    "open": "Open",
+    "addressed": "Addressed",
+    "readOnly": "You have read-only access to this session.",
+    "selection": "Selection: ",
+    "addPlaceholder": "Add a comment…",
+    "add": "Add Comment",
+    "noneOpen": "No open comments.",
+    "noneAddressed": "No addressed comments.",
+    "save": "Save",
+    "cancel": "Cancel",
+    "showLess": "Show less",
+    "showMore": "Show more",
+    "edit": "Edit",
+    "delete": "Delete",
+    "copyLink": "Copy link to comment",
+    "you": "You",
+    "today": "Today",
+    "yesterday": "Yesterday"
+  },
+  "sharing": {
+    "title": "Session sharing",
+    "loading": "Loading...",
+    "noPermission": "You don't have permission to manage session sharing.",
+    "description": "Control whether users on this server can share sessions with others. Applies server-wide and takes effect immediately. Changes affect only new shares — existing grants (including already-public sessions) keep working until revoked.",
+    "managedMode": "The sharing mode is managed by this deployment and can't be changed here.",
+    "modeLabel": "Session sharing mode",
+    "publicAccess": "Public access",
+    "publicDescription": "Allow sharing a session with anyone who has the link (public read access). When off, the Share dialog's \"Public access\" toggle is hidden and new public grants are rejected; sessions already shared publicly stay public until revoked.",
+    "managedPublic": "Managed by this deployment and can't be changed here.",
+    "tiers": {
+      "on": {
+        "label": "On",
+        "description": "Anyone with manage access can share a session at any level (read, edit, or manage) and toggle public / workspace read."
+      },
+      "read_only": {
+        "label": "Read only",
+        "description": "New shares are capped at read (view) access. Edit and manage grants are rejected."
+      },
+      "restricted_read_only": {
+        "label": "Read only (restricted)",
+        "description": "Read-only, and sessions whose working directory is a home directory or the filesystem root cannot be shared at all — not even read."
+      },
+      "off": {
+        "label": "Off",
+        "description": "Sharing is disabled. No new grants can be created and the Share control is hidden."
+      }
+    }
   }
 }

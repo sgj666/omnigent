@@ -31,6 +31,7 @@ import {
 } from "@/components/HarnessConfigControls";
 import { CLAUDE_NATIVE_MODELS } from "@/lib/claudeNativeModels";
 import { useHostModelOptions } from "@/hooks/useHosts";
+import { useTranslation } from "react-i18next";
 
 export function ModelEffortFields({
   model,
@@ -52,6 +53,7 @@ export function ModelEffortFields({
    * open dropdown from dismissing the whole modal. */
   onSelectOpenChange?: (open: boolean) => void;
 }) {
+  const { t } = useTranslation("tasks");
   // When a host is pinned, use its live-resolved model options (mirrors the
   // interactive dialog on a connected host). With no host pinned — the common
   // case, since scheduled tasks resolve a host at fire time — fall back to the
@@ -69,7 +71,7 @@ export function ModelEffortFields({
   return (
     <div className="grid gap-3 sm:grid-cols-2 sm:gap-6" data-testid="task-model-effort-row">
       <div className="flex w-full min-w-0 flex-col gap-1.5" data-testid="task-model-control">
-        <Label htmlFor="task-model">Model</Label>
+        <Label htmlFor="task-model">{t("model")}</Label>
         <Select
           value={model === "" ? MODEL_SELECT_DEFAULT : model}
           onValueChange={(v) => onModelChange(v === MODEL_SELECT_DEFAULT ? "" : v)}
@@ -79,7 +81,7 @@ export function ModelEffortFields({
             <SelectValue />
           </SelectTrigger>
           <SelectContent position="popper" align="start">
-            <SelectItem value={MODEL_SELECT_DEFAULT}>Default</SelectItem>
+            <SelectItem value={MODEL_SELECT_DEFAULT}>{t("default")}</SelectItem>
             {modelOptions.map((m) => (
               <SelectItem key={m.id} value={m.id}>
                 {m.label}
@@ -90,7 +92,7 @@ export function ModelEffortFields({
       </div>
 
       <div className="flex w-full min-w-0 flex-col gap-1.5" data-testid="task-effort-control">
-        <Label htmlFor="task-effort">Effort</Label>
+        <Label htmlFor="task-effort">{t("effort")}</Label>
         <Select
           value={effort === "" ? EFFORT_SELECT_NONE : effort}
           onValueChange={(v) => onEffortChange(v === EFFORT_SELECT_NONE ? "" : v)}
@@ -100,7 +102,7 @@ export function ModelEffortFields({
             <SelectValue />
           </SelectTrigger>
           <SelectContent position="popper" align="start">
-            <SelectItem value={EFFORT_SELECT_NONE}>Default</SelectItem>
+            <SelectItem value={EFFORT_SELECT_NONE}>{t("default")}</SelectItem>
             {CLAUDE_NATIVE_EFFORTS.map((e) => (
               <SelectItem key={e.value} value={e.value}>
                 {e.label}

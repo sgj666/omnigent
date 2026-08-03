@@ -31,7 +31,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { describeSchedule, formatNextRunAt } from "@/lib/scheduleText";
+import { useTranslation } from "react-i18next";
+import { describeSchedule, formatNextRunAt, localizeScheduleSummary } from "@/lib/scheduleText";
 import type { ScheduledTask } from "@/lib/scheduledTasksApi";
 
 export function ScheduledTaskRow({
@@ -55,14 +56,26 @@ export function ScheduledTaskRow({
   onDelete: (task: ScheduledTask) => void;
   busy: boolean;
 }) {
+  const { t, i18n } = useTranslation("tasks");
   const [menuOpen, setMenuOpen] = useState(false);
   const paused = task.state === "paused";
   // Subtitle: the schedule summary, plus the SERVER's next-run time when armed
   // (active tasks only — a paused task has null nextRunAt). We only format the
   // delta from the server value against the ticking `now`; we never recompute
   // WHICH instant is next on the client.
-  const scheduleSummary = useMemo(() => describeSchedule(task.rrule), [task.rrule]);
-  const nextRun = useMemo(() => formatNextRunAt(task.nextRunAt, now), [task.nextRunAt, now]);
+  const scheduleSummary = useMemo(
+    () =>
+      localizeScheduleSummary(describeSchedule(task.rrule), i18n.resolvedLanguage ?? i18n.language),
+    [task.rrule, i18n.language, i18n.resolvedLanguage],
+  );
+  const nextRun = useMemo(
+    () =>
+      localizeScheduleSummary(
+        formatNextRunAt(task.nextRunAt, now) ?? "",
+        i18n.resolvedLanguage ?? i18n.language,
+      ),
+    [task.nextRunAt, now, i18n.language, i18n.resolvedLanguage],
+  );
 
   return (
     <div
@@ -90,7 +103,7 @@ export function ScheduledTaskRow({
               data-testid="task-paused-pill"
               className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
             >
-              Paused
+              {t("paused")}
             </span>
           )}
         </span>
@@ -102,7 +115,7 @@ export function ScheduledTaskRow({
           {nextRun && (
             <>
               {" · "}
-              <span data-testid="task-next-run">Next run {nextRun}</span>
+              <span data-testid="task-next-run">{t("nextRun", { value: nextRun })}</span>
             </>
           )}
         </span>
@@ -118,7 +131,7 @@ export function ScheduledTaskRow({
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label={`Actions for ${task.name}`}
+            aria-label={t("actionsFor", { name: task.name })}
             data-testid="task-row-menu"
             disabled={busy}
             className={cn(
@@ -133,22 +146,22 @@ export function ScheduledTaskRow({
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => onRunNow(task)} data-testid="task-run-now">
             <ZapIcon className="size-4" />
-            Run now
+            {t("runNow")}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => onEdit(task)} data-testid="task-edit">
             <PencilIcon className="size-4" />
-            Edit
+            {t("edit")}
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => onPauseToggle(task)} data-testid="task-pause-toggle">
             {paused ? (
               <>
                 <PlayIcon className="size-4" />
-                Resume
+                {t("resume")}
               </>
             ) : (
               <>
                 <PauseIcon className="size-4" />
-                Pause
+                {t("pause")}
               </>
             )}
           </DropdownMenuItem>
@@ -158,7 +171,7 @@ export function ScheduledTaskRow({
             data-testid="task-delete"
           >
             <Trash2Icon className="size-4" />
-            Delete
+            {t("delete")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

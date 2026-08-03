@@ -17,6 +17,7 @@ import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { getCurrentIsAdmin, resolveIdentity } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 import { useSetSharing, useSharing } from "@/hooks/useSharing";
+import { useTranslation } from "react-i18next";
 
 /** The four tiers, most-permissive first, with human-readable copy. */
 const TIERS: { id: SharingMode; label: string; description: string }[] = [
@@ -47,6 +48,7 @@ const TIERS: { id: SharingMode; label: string; description: string }[] = [
 ];
 
 export function SharingPage() {
+  const { t } = useTranslation("common");
   const info = useServerInfo();
   // Plain header/single-user mode: no auth endpoints exist. The nav + route
   // already hide Sharing here; this stays as a fallback for a direct hit.
@@ -71,7 +73,7 @@ export function SharingPage() {
   if (!isSingleUser && meIsAdmin === null) {
     return (
       <div className="flex min-h-full items-center justify-center text-sm text-muted-foreground">
-        Loading...
+        {t("sharing.loading")}
       </div>
     );
   }
@@ -79,10 +81,8 @@ export function SharingPage() {
   if (!isSingleUser && meIsAdmin === false) {
     return (
       <PageScroll contentClassName="px-8" extraBottom="2.5rem">
-        <h1 className="mb-2 text-2xl font-semibold">Session sharing</h1>
-        <p className="text-sm text-muted-foreground">
-          You don't have permission to manage session sharing.
-        </p>
+        <h1 className="mb-2 text-2xl font-semibold">{t("sharing.title")}</h1>
+        <p className="text-sm text-muted-foreground">{t("sharing.noPermission")}</p>
       </PageScroll>
     );
   }
@@ -108,12 +108,8 @@ export function SharingPage() {
     <PageScroll contentClassName="px-8" extraBottom="2.5rem">
       <div>
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold">Session sharing</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Control whether users on this server can share sessions with others. Applies server-wide
-            and takes effect immediately. Changes affect only new shares — existing grants
-            (including already-public sessions) keep working until revoked.
-          </p>
+          <h1 className="text-2xl font-semibold">{t("sharing.title")}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t("sharing.description")}</p>
         </div>
 
         {isLoading || current === undefined ? (
@@ -122,13 +118,13 @@ export function SharingPage() {
           <>
             {!editable && (
               <p className="mb-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                The sharing mode is managed by this deployment and can't be changed here.
+                {t("sharing.managedMode")}
               </p>
             )}
             <fieldset
               className="space-y-2"
               disabled={!editable || setMode.isPending}
-              aria-label="Session sharing mode"
+              aria-label={t("sharing.modeLabel")}
             >
               {TIERS.map((tier) => {
                 const selected = tier.id === current;
@@ -151,9 +147,11 @@ export function SharingPage() {
                       className="mt-1 size-4 accent-primary"
                     />
                     <span className="flex-1">
-                      <span className="block text-sm font-medium">{tier.label}</span>
+                      <span className="block text-sm font-medium">
+                        {t(`sharing.tiers.${tier.id}.label`, tier.label)}
+                      </span>
                       <span className="mt-0.5 block text-xs text-muted-foreground">
-                        {tier.description}
+                        {t(`sharing.tiers.${tier.id}.description`, tier.description)}
                       </span>
                     </span>
                   </label>
@@ -164,23 +162,19 @@ export function SharingPage() {
             {/* Public access — a separate switch from the tiers above. */}
             <div className="mt-6 flex items-center justify-between rounded-lg border px-4 py-3">
               <div className="pr-4">
-                <p className="text-sm font-medium">Public access</p>
+                <p className="text-sm font-medium">{t("sharing.publicAccess")}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Allow sharing a session with anyone who has the link (public read access). When
-                  off, the Share dialog's "Public access" toggle is hidden and new public grants are
-                  rejected; sessions already shared publicly stay public until revoked.
+                  {t("sharing.publicDescription")}
                 </p>
                 {!publicEditable && (
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Managed by this deployment and can't be changed here.
-                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{t("sharing.managedPublic")}</p>
                 )}
               </div>
               <Switch
                 checked={publicEnabled}
                 onCheckedChange={togglePublic}
                 disabled={!publicEditable || setMode.isPending}
-                aria-label="Public access"
+                aria-label={t("sharing.publicAccess")}
               />
             </div>
             {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
