@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { resources, namespaceKeys } from "./resources";
 
+type StringEntry = [key: string, value: string];
+
 function interpolationVariables(value: unknown): string[] {
   if (typeof value !== "string") return [];
   return [...value.matchAll(/{{\s*([^}\s]+)\s*}}/g)].map((match) => match[1]);
 }
 
-function flattenStrings(value: unknown, path: string[] = []): Array<[string, string]> {
+function flattenStrings(value: unknown, path: string[] = []): StringEntry[] {
   if (typeof value === "string") return [[path.join("."), value]];
   if (!value || typeof value !== "object") return [];
   return Object.entries(value).flatMap(([key, child]) => flattenStrings(child, [...path, key]));

@@ -1,4 +1,4 @@
-import i18next from "i18next";
+import { createInstance } from "i18next";
 import { initReactI18next } from "react-i18next";
 import {
   readLanguagePreference,
@@ -16,6 +16,8 @@ type NativeLanguageSync = (
 
 let languagePreference = readStoredLanguagePreference();
 let nativeLanguageSync: NativeLanguageSync | undefined;
+let languageChangeGeneration = 0;
+let managedDocumentTitle: string | undefined;
 
 function getBrowserLanguages(): readonly string[] {
   if (typeof navigator === "undefined") return [];
@@ -44,10 +46,14 @@ function writeStoredLanguagePreference(preference: LanguagePreference): void {
 function synchronizeDocument(): void {
   if (typeof document === "undefined") return;
   document.documentElement.lang = i18n.resolvedLanguage ?? "en";
-  document.title = i18n.t("documentTitle", { ns: "common" });
+  const translatedTitle = i18n.t("documentTitle", { ns: "common" });
+  if (!document.title || document.title === managedDocumentTitle) {
+    document.title = translatedTitle;
+    managedDocumentTitle = translatedTitle;
+  }
 }
 
-export const i18n = i18next.createInstance();
+export const i18n = createInstance();
 
 void i18n.use(initReactI18next).init({
   resources,
@@ -66,6 +72,10 @@ synchronizeDocument();
 /** Registers the optional native-shell synchronization callback. */
 export function registerNativeLanguageSync(callback: NativeLanguageSync | undefined): void {
   nativeLanguageSync = callback;
+  if (callback) {
+    const effectiveLanguage = resolveLanguage(languagePreference, getBrowserLanguages());
+    void synchronizeNative(languagePreference, effectiveLanguage);
+  }
 }
 
 async function synchronizeNative(
@@ -81,9 +91,11 @@ async function synchronizeNative(
 
 export async function setUiLanguagePreference(next: LanguagePreference): Promise<void> {
   languagePreference = next;
+  const generation = ++languageChangeGeneration;
   writeStoredLanguagePreference(next);
   const effectiveLanguage = resolveLanguage(next, getBrowserLanguages());
   await i18n.changeLanguage(effectiveLanguage);
+  if (generation !== languageChangeGeneration) return;
   synchronizeDocument();
   await synchronizeNative(next, effectiveLanguage);
 }
@@ -91,8 +103,10 @@ export async function setUiLanguagePreference(next: LanguagePreference): Promise
 if (typeof window !== "undefined") {
   window.addEventListener("languagechange", () => {
     if (languagePreference !== "system") return;
+    const generation = ++languageChangeGeneration;
     const effectiveLanguage = resolveLanguage("system", getBrowserLanguages());
     void i18n.changeLanguage(effectiveLanguage).then(async () => {
+      if (generation !== languageChangeGeneration || languagePreference !== "system") return;
       synchronizeDocument();
       await synchronizeNative("system", effectiveLanguage);
     });

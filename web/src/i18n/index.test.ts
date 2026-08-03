@@ -18,6 +18,13 @@ describe("i18n runtime", () => {
     expect(document.title).toBe("Omnigent");
   });
 
+  it("preserves a dynamic title owned by the chat page", async () => {
+    document.title = "Active conversation";
+    await setUiLanguagePreference("zh-CN");
+    expect(document.documentElement.lang).toBe("zh-CN");
+    expect(document.title).toBe("Active conversation");
+  });
+
   it("resolves system language changes while system preference is selected", async () => {
     const originalLanguages = navigator.languages;
     const nativeSync = vi.fn();
@@ -34,7 +41,9 @@ describe("i18n runtime", () => {
         value: ["zh-CN"],
       });
       window.dispatchEvent(new Event("languagechange"));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
       expect(i18n.resolvedLanguage).toBe("zh-CN");
       expect(nativeSync).toHaveBeenCalledWith("system", "zh-CN");
     } finally {
@@ -52,6 +61,13 @@ describe("i18n runtime", () => {
     expect(nativeSync).toHaveBeenCalledWith("zh-CN", "zh-CN");
   });
 
+  it("immediately synchronizes a native callback registered after initialization", async () => {
+    await setUiLanguagePreference("zh-CN");
+    const nativeSync = vi.fn();
+    registerNativeLanguageSync(nativeSync);
+    expect(nativeSync).toHaveBeenCalledWith("zh-CN", "zh-CN");
+  });
+
   it("ignores browser language changes while a manual preference is selected", async () => {
     const originalLanguages = navigator.languages;
     try {
@@ -61,7 +77,9 @@ describe("i18n runtime", () => {
         value: ["zh-CN"],
       });
       window.dispatchEvent(new Event("languagechange"));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
       expect(i18n.resolvedLanguage).toBe("en");
     } finally {
       Object.defineProperty(navigator, "languages", {
