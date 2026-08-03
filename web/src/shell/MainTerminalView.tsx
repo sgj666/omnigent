@@ -54,7 +54,7 @@ export function MainTerminalView({
   readOnly = false,
   onSurfaceElement,
 }: MainTerminalViewProps) {
-  const { t } = useTranslation("workspace");
+  const { t: translate } = useTranslation("workspace");
   const { terminals } = useTerminals(conversationId);
   const terminalFirstCtx = useTerminalFirst();
   // The agent's own terminal (SDK REPL / native vendor pane) — the
@@ -134,7 +134,7 @@ export function MainTerminalView({
       <div className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card p-3 shadow-sm">
         {terminals.length === 0 ? (
           <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
-            {t("noTerminalsAvailable")}
+            {translate("noTerminalsAvailable")}
           </div>
         ) : (
           <>
@@ -152,7 +152,7 @@ export function MainTerminalView({
                 <span className="flex-1" />
                 <button
                   type="button"
-                  aria-label={t("closeShell")}
+                  aria-label={translate("closeShell")}
                   onClick={() => terminalFirstCtx?.setView("chat")}
                   className="cursor-pointer rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
                 >

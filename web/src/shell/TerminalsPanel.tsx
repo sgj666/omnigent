@@ -74,7 +74,7 @@ export function TerminalsPanel({
   fluid = false,
   readOnly = false,
 }: TerminalsPanelProps) {
-  const { t } = useTranslation("workspace");
+  const { t: translate } = useTranslation("workspace");
   const [expanded, setExpanded] = useState(false);
   const ref = useRef<HTMLElement>(null);
   const {
@@ -175,7 +175,7 @@ export function TerminalsPanel({
       )}
 
       <header className="flex shrink-0 items-center justify-between border-border border-b px-4 py-2">
-        <h2 className="font-medium text-sm">{t("shells")}</h2>
+        <h2 className="font-medium text-sm">{translate("shells")}</h2>
         <div className="flex items-center gap-1">
           {/* Renders only when the agent's spec declares terminals. */}
           <NewTerminalButton
@@ -186,7 +186,7 @@ export function TerminalsPanel({
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-label={t("close")}
+            aria-label={translate("close")}
             onClick={onClose}
           >
             <XIcon className="size-4" />
