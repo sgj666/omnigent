@@ -97,5 +97,6 @@
   "occupancyWarning": "{{count}} other agent is working in this directory. Write operations may conflict — name a git branch to work in an isolated copy.",
   "occupancyWarning_other": "{{count}} other agents are working in this directory. Write operations may conflict — name a git branch to work in an isolated copy.",
   "tooManyEntries": "Too many entries to list fully — type a path above to jump directly.",
-  "noTerminalsAvailable": "No terminals available."
+  "noTerminalsAvailable": "No terminals available.",
+  "shellUnavailable": "Shell not available."
 }

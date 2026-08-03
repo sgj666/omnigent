@@ -411,13 +411,14 @@ function RailTerminalView({
   terminalKey: string;
   readOnly: boolean;
 }) {
+  const { t: translate } = useTranslation("workspace");
   const { terminals } = useTerminals(conversationId);
   const { setTerminalConnectionState, markTerminalActive } = useTerminalStatuses(terminals);
   const terminal = terminals.find((t) => terminalTabKey(t) === terminalKey) ?? null;
   if (!terminal) {
     return (
       <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
-        Shell not available.
+        {translate("shellUnavailable")}
       </div>
     );
   }

@@ -360,6 +360,23 @@ describe("WorkspacePanel shell tabs", () => {
     expect(screen.queryByTestId("file-viewer-stub")).toBeNull();
   });
 
+  it("localizes the unavailable shell state", async () => {
+    const restoreLanguage = await setTestLanguage("zh-CN");
+    try {
+      useTerminalsMock.mockReturnValue({ terminals: [], isLoading: false, error: null });
+      renderWorkspace({
+        showShellsTab: true,
+        openTerminals: [termKey],
+        selectedTerminalKey: termKey,
+      });
+
+      expect(screen.getByText("Shell 终端不可用。")).toBeInTheDocument();
+    } finally {
+      cleanup();
+      await restoreLanguage();
+    }
+  });
+
   it("activates a shell via openTerminalTab when its tab body is clicked", () => {
     useTerminalsMock.mockReturnValue({ terminals: [term], isLoading: false, error: null });
     const { openTerminalTab } = renderWorkspace({
