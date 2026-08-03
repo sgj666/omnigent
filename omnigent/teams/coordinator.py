@@ -80,6 +80,7 @@ class Coordinator:
         self._wake_keys: set[tuple[str, str]] = set()
         self._wake_counts: dict[str, int] = {}
         self.failure_events: list[AttemptFailed] = []
+        self._failure_by_attempt: dict[tuple[str, str, str], AttemptFailed] = {}
 
     def add_task(
         self,
@@ -205,16 +206,21 @@ class Coordinator:
     def on_attempt_failed(
         self, run_id: str, task_id: str, attempt_id: str, **details: object
     ) -> AttemptFailed:
-        state = self._run_states.get(run_id)
-        if state is None or state.status is not RunStatus.RUNNING:
-            raise ValueError(f"run {run_id!r} is not running")
         spec = self.scheduler.tasks.get(task_id)
         attempt = self.scheduler.attempts.get(attempt_id)
         if spec is None or spec.task.run_id != run_id:
             raise ValueError("task does not belong to run")
         if attempt is None or attempt.task_id != task_id:
             raise ValueError("attempt does not belong to task")
+        failure_key = (run_id, task_id, attempt_id)
+        prior_failure = self._failure_by_attempt.get(failure_key)
+        if prior_failure is not None:
+            return prior_failure
+        state = self._run_states.get(run_id)
+        if state is None or state.status is not RunStatus.RUNNING:
+            raise ValueError(f"run {run_id!r} is not running")
         failure = self.scheduler.fail(task_id, attempt_id, **details)  # type: ignore[arg-type]
+        self._failure_by_attempt[failure_key] = failure
         self.failure_events.append(failure)
         self._record_failure(run_id, failure)
         if failure.hard_block:

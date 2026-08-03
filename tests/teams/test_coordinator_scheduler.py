@@ -156,6 +156,12 @@ def test_failure_is_recorded_in_injected_ledger() -> None:
     )
     assert len(ledger.failures) == 1
     assert ledger.failures[0][1].failure_code == "EXIT"  # type: ignore[union-attr]
+    repeated = coordinator.on_attempt_failed(
+        "run-1", "task-1", attempt.id, failure_code="EXIT", exit_code=1
+    )
+    assert repeated == ledger.failures[0][1]
+    assert len(coordinator.failure_events) == 1
+    assert len(ledger.failures) == 1
 
 
 def test_inbox_can_buffer_before_coordinator_is_attached() -> None:
