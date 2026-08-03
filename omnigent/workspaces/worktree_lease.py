@@ -171,6 +171,18 @@ class WorktreeLeaseManager:
         for lease in records:
             lease.heartbeat_at = now
 
+    def heartbeat_active(self, *, host_id: str | None = None) -> tuple[WorktreeLease, ...]:
+        """Refresh active leases for a trusted process maintenance loop."""
+        now = self._clock()
+        active = tuple(
+            lease
+            for lease in self._records
+            if lease.status is LeaseStatus.ACTIVE and (host_id is None or lease.host_id == host_id)
+        )
+        for lease in active:
+            lease.heartbeat_at = now
+        return active
+
     async def release(
         self,
         *,

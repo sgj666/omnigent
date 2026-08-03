@@ -5508,6 +5508,8 @@ async def _create_session_from_existing_agent(
                 source_repo=canonical_workspace,
                 git=body.git,
                 request=request,
+                attempt_id=body.attempt_id,
+                lease_owner_id=body.lease_owner_id,
             )
             canonical_workspace = created_worktree.worktree_path
             git_branch = created_worktree.branch

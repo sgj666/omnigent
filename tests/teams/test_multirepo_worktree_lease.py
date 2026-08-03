@@ -14,7 +14,7 @@ from omnigent.server.routes._sessions.helpers import (
     _create_session_worktree,
     _remove_session_worktree_best_effort,
 )
-from omnigent.server.schemas import SessionGitOptions
+from omnigent.server.schemas import SessionCreateRequest, SessionGitOptions
 from omnigent.workspaces.manifest import WorkspaceRepository
 from omnigent.workspaces.worktree_lease import (
     LeaseOwnershipError,
@@ -341,3 +341,70 @@ async def test_session_worktree_helpers_use_lease_lifecycle_for_attempt_context(
     assert acquired["branch_names"] == {"session-repository": "feature/task"}
     assert released["leases"] == (lease,)
     assert released["owner_id"] == "runner-1"
+
+
+def test_session_create_request_validates_optional_attempt_context() -> None:
+    """Attempt context is accepted only as a complete pair with Git mode."""
+    body = SessionCreateRequest(
+        agent_id="agent-1",
+        host_id="host-1",
+        workspace="/repos/api",
+        git=SessionGitOptions(branch_name="feature/task"),
+        attempt_id="attempt-1",
+        lease_owner_id="runner-1",
+    )
+
+    assert body.attempt_id == "attempt-1"
+    assert body.lease_owner_id == "runner-1"
+
+    with pytest.raises(ValueError, match="must be provided together"):
+        SessionCreateRequest(
+            agent_id="agent-1",
+            host_id="host-1",
+            workspace="/repos/api",
+            git=SessionGitOptions(branch_name="feature/task"),
+            attempt_id="attempt-1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_lease_maintenance_calls_recovery_and_active_heartbeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production maintenance loop invokes both lifecycle operations."""
+    from omnigent.server.routes._host_worktree import maintain_attempt_worktree_leases
+
+    stop = asyncio.Event()
+    lease = WorktreeLease(
+        host_id="host-1",
+        repository_id="api",
+        repo_path="/repos/api",
+        attempt_id="attempt-1",
+        worktree_path="/leases/api",
+        branch="feature/task",
+        owner="runner-1",
+        status=LeaseStatus.ACTIVE,
+        heartbeat_at=1_000.0,
+    )
+    recovered: list[str] = []
+    heartbeated: list[str | None] = []
+
+    class _Manager:
+        records = (lease,)
+
+        def heartbeat_active(self, *, host_id: str | None = None) -> None:
+            heartbeated.append(host_id)
+            stop.set()
+
+    async def recover(**kwargs: object) -> tuple[WorktreeLease, ...]:
+        recovered.append(str(kwargs["host_conn"].host_id))
+        return ()
+
+    monkeypatch.setattr(_host_worktree, "_attempt_worktree_lease_manager", _Manager())
+    monkeypatch.setattr(_host_worktree, "recover_expired_attempt_worktree_leases", recover)
+    registry = SimpleNamespace(get=lambda host_id: _Host())
+
+    await maintain_attempt_worktree_leases(registry, stop, interval_s=60)
+
+    assert recovered == ["host-1"]
+    assert heartbeated == ["host-1"]

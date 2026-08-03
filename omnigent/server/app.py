@@ -1066,6 +1066,15 @@ def create_app(
                 otel_publisher=server_metrics_otel,
             )
         )
+        from omnigent.server.routes._host_worktree import (
+            maintain_attempt_worktree_leases,
+        )
+
+        lease_maintenance_stop = asyncio.Event()
+        lease_maintenance_task = asyncio.create_task(
+            maintain_attempt_worktree_leases(host_registry, lease_maintenance_stop),
+            name="attempt-worktree-lease-maintenance",
+        )
         # Runner ``runner_last_seen`` is refreshed per-tunnel from each
         # runner tunnel's ping loop (``runner_tunnel._ping_loop``), inside
         # that handler's ``workspace_scope`` — not from a lifespan sweep,
@@ -1135,6 +1144,10 @@ def create_app(
             metrics_publish_task.cancel()
             with suppress(asyncio.CancelledError):
                 await metrics_publish_task
+            lease_maintenance_stop.set()
+            lease_maintenance_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await lease_maintenance_task
             # Stop in-flight background managed-sandbox launches so a
             # slow provision doesn't outlive the ASGI shutdown (the
             # sandbox itself, if already provisioned, is reaped by the

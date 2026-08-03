@@ -354,3 +354,37 @@ async def recover_expired_attempt_worktree_leases(
     return await get_attempt_worktree_lease_manager().recover_expired(
         host_registry=host_registry, host_conn=host_conn
     )
+
+
+async def maintain_attempt_worktree_leases(
+    host_registry: HostRegistry,
+    stop_event: asyncio.Event,
+    *,
+    interval_s: float = 30.0,
+) -> None:
+    """Heartbeat active leases and recover stale leases until shutdown."""
+    from omnigent.workspaces.worktree_lease import WorktreeLeaseError
+
+    while not stop_event.is_set():
+        manager = get_attempt_worktree_lease_manager()
+        host_ids = sorted({lease.host_id for lease in manager.records})
+        for host_id in host_ids:
+            host_conn = host_registry.get(host_id)
+            if host_conn is None:
+                continue
+            try:
+                await recover_expired_attempt_worktree_leases(
+                    host_registry=host_registry,
+                    host_conn=host_conn,
+                )
+            except (WorktreeLeaseError, WorktreeProxyError):
+                _logger.warning(
+                    "Attempt worktree lease recovery failed for host %s",
+                    host_id,
+                    exc_info=True,
+                )
+            manager.heartbeat_active(host_id=host_id)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
+        except TimeoutError:
+            continue

@@ -1290,6 +1290,11 @@ class SessionCreateRequest(BaseModel):
         source repository directory. Requires ``host_id``. ``None``
         starts the runner directly in ``workspace``. See
         designs/SESSION_GIT_WORKTREE.md.
+    :param attempt_id: Optional attempt identifier for an isolated worktree
+        lease. Must be supplied with ``lease_owner_id`` and ``git``; omitted
+        for ordinary long-lived sessions.
+    :param lease_owner_id: Optional owner identifier for an attempt worktree
+        lease. Must be supplied with ``attempt_id`` and ``git``.
     :param terminal_launch_args: Optional pass-through CLI args for a
         native terminal wrapper (claude / codex), e.g.
         ``["--permission-mode", "bypassPermissions"]`` (the web UI's
@@ -1345,6 +1350,8 @@ class SessionCreateRequest(BaseModel):
     host_id: str | None = None
     workspace: str | None = None
     git: SessionGitOptions | None = None
+    attempt_id: str | None = None
+    lease_owner_id: str | None = None
     terminal_launch_args: list[str] | None = None
     model_override: str | None = None
     reasoning_effort: str | None = None
@@ -1366,6 +1373,15 @@ class SessionCreateRequest(BaseModel):
         """
         if self.git is not None and self.host_id is None:
             raise ValueError("git worktree creation requires host_id")
+        return self
+
+    @model_validator(mode="after")
+    def _check_attempt_lease_context(self) -> SessionCreateRequest:
+        """Require complete attempt lease context on Git worktree creates."""
+        if (self.attempt_id is None) != (self.lease_owner_id is None):
+            raise ValueError("attempt_id and lease_owner_id must be provided together")
+        if (self.attempt_id is not None or self.lease_owner_id is not None) and self.git is None:
+            raise ValueError("attempt lease context requires git worktree options")
         return self
 
     @model_validator(mode="after")
