@@ -121,8 +121,6 @@
     "projectSearchPlaceholder": "Search projects",
     "noProjects": "No projects yet.",
     "selectedCount": "{{count}} selected",
-    "archiveSelected": "Archive selected",
-    "unarchiveSelected": "Unarchive selected",
     "bulkActionsFailed": "Some actions failed. Retry or dismiss.",
     "deleteSessionsQuestion": "Delete {{count}} session(s)?",
     "deleteSessionsDescription": "This will permanently delete the selected sessions and all their history. This cannot be undone.",
