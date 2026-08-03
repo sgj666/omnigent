@@ -4418,13 +4418,22 @@ class UpdateTeamRequest(BaseModel):
         return self
 
 
+class WorkspaceRepositoryRequest(BaseModel):
+    """One named repository within a workspace bundle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=256)
+    path: str = Field(min_length=1, max_length=2048)
+
+
 class CreateWorkspaceRequest(BaseModel):
     """Payload for a run workspace bundle."""
 
     model_config = ConfigDict(extra="forbid")
 
     root_path: str = Field(min_length=1, max_length=2048)
-    repositories: list[dict[str, str]] = Field(default_factory=list)
+    repositories: list[WorkspaceRepositoryRequest] = Field(default_factory=list)
 
 
 class SelectWorkspaceRequest(BaseModel):

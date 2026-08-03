@@ -31,7 +31,7 @@ def create_workspaces_router(
             "id": workspace_id,
             "object": "workspace",
             "root_path": body.root_path,
-            "repositories": body.repositories,
+            "repositories": [repository.model_dump() for repository in body.repositories],
         }
         store.workspaces[workspace_id] = workspace
         persist_workspace = getattr(store, "persist_workspace", None)
@@ -53,14 +53,7 @@ def create_workspaces_router(
         if workspace is None:
             raise OmnigentError("Workspace not found", code=ErrorCode.NOT_FOUND)
         if body.run_id is not None:
-            run = store.runs.get(body.run_id)
-            if run is None:
-                raise OmnigentError("Run not found", code=ErrorCode.NOT_FOUND)
-            if run["status"] == "running" and run["workspace_id"] != workspace_id:
-                raise OmnigentError(
-                    "Workspace is immutable while a run is running", code=ErrorCode.CONFLICT
-                )
-            run["workspace_id"] = workspace_id
+            store.select_run_workspace(body.run_id, workspace_id)
         select_thread_workspace = getattr(store, "select_thread_workspace", None)
         if select_thread_workspace is None:
             store.thread_workspaces[body.thread_id] = workspace_id

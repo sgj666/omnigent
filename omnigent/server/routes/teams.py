@@ -92,6 +92,16 @@ class TeamMemoryStore:
         self.runs[run_id] = run
         return run
 
+    def select_run_workspace(self, run_id: str, workspace_id: str) -> None:
+        run = self.runs.get(run_id)
+        if run is None:
+            raise OmnigentError("Run not found", code=ErrorCode.NOT_FOUND)
+        if run["status"] == "running" and run["workspace_id"] != workspace_id:
+            raise OmnigentError(
+                "Workspace is immutable while a run is running", code=ErrorCode.CONFLICT
+            )
+        run["workspace_id"] = workspace_id
+
 
 class SqlAlchemyTeamWorkspaceStore(TeamMemoryStore):
     """SQLAlchemy-backed default store for the team and workspace API.
@@ -305,6 +315,20 @@ class SqlAlchemyTeamWorkspaceStore(TeamMemoryStore):
                 )
             )
         return run
+
+    def select_run_workspace(self, run_id: str, workspace_id: str) -> None:
+        """Validate and persist a run workspace switch before updating the cache."""
+        with self._session() as session:
+            row = session.get(SqlRun, (current_workspace_id(), run_id))
+            if row is None:
+                raise OmnigentError("Run not found", code=ErrorCode.NOT_FOUND)
+            if row.status == "running" and row.workspace_bundle_id != workspace_id:
+                raise OmnigentError(
+                    "Workspace is immutable while a run is running", code=ErrorCode.CONFLICT
+                )
+            row.workspace_bundle_id = workspace_id
+            session.flush()
+        self.runs[run_id]["workspace_id"] = workspace_id
 
     def select_thread_workspace(self, thread_id: str, workspace_id: str) -> None:
         self.thread_workspaces[thread_id] = workspace_id

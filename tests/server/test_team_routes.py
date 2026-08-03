@@ -113,3 +113,46 @@ def test_sql_store_restores_workspace_selection_after_restart(tmp_path: object) 
     restored = SqlAlchemyTeamWorkspaceStore(database)
     assert restored.thread_workspaces == {"thread-1": workspace["id"]}
     assert restored.workspaces[workspace["id"]]["root_path"] == "/repo"
+
+
+async def test_queued_run_workspace_switch_survives_store_restart(tmp_path: object) -> None:
+    """Selecting B for a queued run updates both SQL and the live cache."""
+    from pathlib import Path
+
+    from fastapi import FastAPI
+
+    from omnigent.db.db_models import OmnigentBase
+    from omnigent.db.utils import get_or_create_engine
+
+    database = f"sqlite:///{Path(str(tmp_path)) / 'queued-run.db'}"
+    OmnigentBase.metadata.create_all(get_or_create_engine(database))
+    store = SqlAlchemyTeamWorkspaceStore(database)
+    app = FastAPI()
+    app.include_router(create_workspaces_router(store), prefix="/v1")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as sql_client:
+        first = (await sql_client.post("/v1/workspaces", json={"root_path": "/a"})).json()
+        second = (await sql_client.post("/v1/workspaces", json={"root_path": "/b"})).json()
+        await sql_client.post(f"/v1/workspaces/{first['id']}/select", json={"thread_id": "thread"})
+        run = store.create_run(team_id="2" * 32, thread_id="thread", source="test")
+        response = await sql_client.post(
+            f"/v1/workspaces/{second['id']}/select",
+            json={"thread_id": "thread", "run_id": run["id"]},
+        )
+
+    assert response.status_code == 200
+    assert store.runs[run["id"]]["workspace_id"] == second["id"]
+    restored = SqlAlchemyTeamWorkspaceStore(database)
+    assert restored.runs[run["id"]]["workspace_id"] == second["id"]
+
+
+async def test_invalid_repository_is_rejected_without_partial_workspace(
+    client: httpx.AsyncClient,
+) -> None:
+    """Repository validation happens before a workspace reaches the store."""
+    response = await client.post(
+        "/v1/workspaces", json={"root_path": "/repo", "repositories": [{}]}
+    )
+    assert response.status_code == 422
+    assert (await client.get("/v1/workspaces")).json()["data"] == []
