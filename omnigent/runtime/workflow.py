@@ -515,6 +515,7 @@ def configure_agent_harness_with_provider(
     entry: ProviderEntry,
     *,
     harness_type: AgentHarnessType,
+    explicitly_selected: bool = True,
 ) -> None:
     """Inject per-harness model, URL, and auth from a generic provider.
 
@@ -531,9 +532,9 @@ def configure_agent_harness_with_provider(
       emit the ``HARNESS_*_GATEWAY_*`` env vars (see
       :func:`_apply_provider_family`).
     - ``subscription`` — the native/CLI harness carries its own login; no
-      gateway vars. For codex, pin the built-in ``openai`` provider
-      (``HARNESS_CODEX_MODEL_PROVIDER``) so a custom default in the user's
-      ``~/.codex/config.toml`` cannot shadow the subscription.
+      gateway vars. For an explicitly selected codex subscription, pin the
+      built-in ``openai`` provider (``HARNESS_CODEX_MODEL_PROVIDER``) so a
+      custom default in the user's ``~/.codex/config.toml`` cannot shadow it.
     - ``cli-config`` — pin the entry's ``model_provider``
       (``HARNESS_CODEX_MODEL_PROVIDER``); the provider table + credential
       come from the user's ``~/.codex/config.toml``, which the executor
@@ -548,6 +549,9 @@ def configure_agent_harness_with_provider(
     :param env: Mutable spawn-env dict, modified in place.
     :param entry: The resolved provider entry to apply.
     :param harness_type: Canonical harness type, e.g. ``"claude-sdk"``.
+    :param explicitly_selected: Whether the provider was chosen through
+        ``ProviderAuth`` or an explicit per-harness default rather than
+        automatically resolved from available credentials.
     :raises OmnigentError: If an inline-family provider lacks the family
         the harness requires, no model can be resolved for it, or the harness
         is ``antigravity`` (which is Gemini-native and has no gateway path).
@@ -589,7 +593,7 @@ def configure_agent_harness_with_provider(
         # endpoint. (Chunk 1b routes only the inline-family + databricks
         # kinds; subscription routing — toggling the CLI's logged-in model
         # — is a later chunk.)
-        if harness_type == "codex":
+        if harness_type == "codex" and explicitly_selected:
             # The codex executor symlinks the user's ~/.codex/config.toml
             # into the per-session CODEX_HOME, so a custom default
             # ``model_provider`` there (e.g. isaac's Databricks AI Gateway)
@@ -1318,7 +1322,15 @@ def _build_codex_spawn_env(
     # unchanged.
     provider = _resolve_provider_for_build(spec, harness_type="codex", for_launch=True)
     if provider is not None:
-        configure_agent_harness_with_provider(env, provider, harness_type="codex")
+        explicit_default = default_provider_for_harness(load_config(), "codex")
+        configure_agent_harness_with_provider(
+            env,
+            provider,
+            harness_type="codex",
+            explicitly_selected=(
+                isinstance(spec.executor.auth, ProviderAuth) or explicit_default is not None
+            ),
+        )
     elif codex_config_provider_dismissed(load_config()):
         # No credential resolved. If the user Removed codex's custom
         # ~/.codex/config.toml provider (dismissed), pin the built-in ``openai``

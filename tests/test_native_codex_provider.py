@@ -193,6 +193,38 @@ def test_resolve_native_codex_launch_subscription_logged_in_uses_cli_login(
     assert launch.profile is None
 
 
+def test_resolve_native_codex_launch_detected_login_preserves_custom_provider(
+    _isolated: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An auto-detected Codex login keeps the CLI's custom provider route.
+
+    A custom provider can use the API key stored in ``auth.json`` without
+    carrying self-contained auth in its own provider table. Plain ``codex``
+    therefore routes through that provider, while ambient detection sees the
+    stored key as a Codex login. The native launch must not pin the built-in
+    OpenAI provider merely because the login was auto-detected; doing so sends
+    the custom provider's key to api.openai.com and returns 401.
+    """
+    monkeypatch.setattr("omnigent.onboarding.ambient._ollama_reachable", lambda: False)
+    _write_codex_login(_isolated, logged_in=True)
+    (_isolated / ".codex" / "config.toml").write_text(
+        """
+model_provider = "tokenhub"
+
+[model_providers.tokenhub]
+name = "TokenHub"
+base_url = "https://tokenhub.example/codex/v1"
+wire_api = "responses"
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    launch = resolve_native_codex_launch(model=None)
+
+    assert launch.config_overrides == []
+    assert launch.profile is None
+
+
 def test_resolve_native_codex_launch_subscription_ignores_private_inherited_home(
     _isolated: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

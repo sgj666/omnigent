@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, TypeAlias
 
+import tomllib
+
 from omnigent import model_catalog
 from omnigent._platform import resolve_cli_binary
 from omnigent.inner.agent_env import clean_agent_env, declared_passthrough
@@ -102,8 +104,11 @@ _STDERR_CHUNK_LIMIT = 65536
 _STREAM_READ_CHUNK_SIZE = 65536
 # Files symlinked from the real CODEX_HOME into the per-session temp home.
 # Symlinks (not copies) so credential refreshes in the real home propagate
-# to running sessions without any action from Omnigent.
-_CODEX_HOME_SYMLINK_FILES = ("auth.json",)
+# to running sessions without any action from Omnigent. ``.env`` carries
+# user codex environment settings (e.g. HTTP_PROXY/HTTPS_PROXY); codex only
+# reads ``$CODEX_HOME/.env``, so omitting it silently strips the user's
+# proxy inside the private home and makes provider calls fail.
+_CODEX_HOME_SYMLINK_FILES = ("auth.json", ".env")
 _CODEX_HOME_GLOBAL_INSTRUCTION_FILES = ("AGENTS.md", "AGENTS.override.md", "hooks.json")
 
 # Files copied (not symlinked) from the real CODEX_HOME into the per-session
@@ -674,6 +679,30 @@ def _codex_home_config_source_from_env() -> Path:
         Path(os.environ.get("CODEX_HOME") or str(home_codex_home)),
         home_codex_home,
     )
+
+
+def _configured_codex_model(codex_home: Path) -> str | None:
+    """Return the effective model selected by a Codex config, if any.
+
+    Codex merges the active profile over top-level config. Mirror that
+    precedence so an unpinned Omnigent harness uses the same model as the
+    CLI whose provider/auth config it bridges.
+
+    :param codex_home: Source Codex home containing ``config.toml``.
+    :returns: The configured model, or ``None`` when missing or unreadable.
+    """
+    try:
+        config = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError):
+        return None
+    model: object = config.get("model")
+    profile_name = config.get("profile")
+    profiles = config.get("profiles")
+    if isinstance(profile_name, str) and isinstance(profiles, dict):
+        profile = profiles.get(profile_name)
+        if isinstance(profile, dict) and isinstance(profile.get("model"), str):
+            model = profile["model"]
+    return model.strip() if isinstance(model, str) and model.strip() else None
 
 
 def _populate_codex_home_config(
@@ -2286,6 +2315,7 @@ class CodexExecutor(Executor):
         self._model_override = model
         self._gateway = gateway
         self._databricks_profile = databricks_profile
+        self._model_provider_override = model_provider_override
         self._gateway_host = gateway_host.rstrip("/") if gateway_host else None
         self._base_url_override = base_url_override
         self._gateway_auth_command = gateway_auth_command
@@ -2520,6 +2550,11 @@ class CodexExecutor(Executor):
         # cfg.model (per-request /model override) wins over the spec default.
         # An unresolved default comes from the active provider catalog.
         model = cfg.model or self._model_override
+        if model is None and not self._gateway and self._model_provider_override != "openai":
+            model = await run_sync_on_thread(
+                _configured_codex_model,
+                _codex_home_config_source_from_env(),
+            )
         if model is None:
             provider_name = "databricks" if self._gateway_uses_databricks_profile else "openai"
             resolution = await run_sync_on_thread(
