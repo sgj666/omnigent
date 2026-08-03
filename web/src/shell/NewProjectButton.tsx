@@ -63,9 +63,7 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
         <DialogContent onClick={(e) => e.stopPropagation()}>
           <DialogHeader>
             <DialogTitle>{t("shell.newProject")}</DialogTitle>
-            <DialogDescription>
-              Create an empty project, then file sessions into it from a session's menu.
-            </DialogDescription>
+            <DialogDescription>{t("shell.newProjectDescription")}</DialogDescription>
           </DialogHeader>
           <input
             autoFocus
@@ -82,7 +80,9 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
           />
           {createProject.isError && (
             <p className="text-sm text-destructive" role="alert">
-              {(createProject.error as Error).message}
+              {t("shell.projectCreateFailed", {
+                message: (createProject.error as Error).message,
+              })}
             </p>
           )}
           <DialogFooter className="border-t-0 bg-transparent">
