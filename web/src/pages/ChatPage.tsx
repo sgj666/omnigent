@@ -4013,6 +4013,8 @@ export function subAgentComposerLabel(
  *   ``"check-account-eligibility"`` (from ``subAgentComposerLabel``).
  */
 function SubagentComposerTray({ label }: { label: string }) {
+  const { t } = useTranslation("chat");
+
   return (
     <div
       data-testid="composer-subagent-tray"
@@ -4024,7 +4026,7 @@ function SubagentComposerTray({ label }: { label: string }) {
       <BotIcon className="size-3.5 shrink-0" aria-hidden="true" />
       {/* truncate so a long sub-agent name never wraps the tray to two rows */}
       <span className="min-w-0 truncate">
-        Chatting with sub-agent <strong className="font-semibold">{label}</strong>
+        {t("chattingWithSubAgent")} <strong className="font-semibold">{label}</strong>
       </span>
     </div>
   );

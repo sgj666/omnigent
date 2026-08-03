@@ -1632,7 +1632,7 @@ describe("Composer sub-agent tray", () => {
     // The name proves the passed label reaches the rendered tray, not just
     // that some tray exists.
     expect(screen.getByText("check-account-eligibility")).toBeTruthy();
-    expect(screen.getByText(/Chatting with sub-agent/)).toBeTruthy();
+    expect(screen.getByText("Chatting with sub-agent")).toBeTruthy();
   });
 });
 

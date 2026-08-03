@@ -67,6 +67,7 @@
   "plan": "Plan",
   "closedSubAgent": "This sub-agent session is closed",
   "readOnlySubAgent": "Claude Code sub-agents are read-only",
+  "chattingWithSubAgent": "Chatting with sub-agent",
   "contextModel": "Model: {{model}}",
   "contextModelOverride": "Model: {{model}} (override)",
   "contextUsage": "{{used}} / {{limit}} tokens ({{percent}}%)",

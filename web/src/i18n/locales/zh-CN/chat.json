@@ -67,6 +67,7 @@
   "plan": "规划",
   "closedSubAgent": "此子智能体会话已关闭",
   "readOnlySubAgent": "Claude Code 子智能体为只读",
+  "chattingWithSubAgent": "正在与子智能体对话",
   "contextModel": "模型：{{model}}",
   "contextModelOverride": "模型：{{model}}（覆盖）",
   "contextUsage": "{{used}} / {{limit}} Token（{{percent}}%）",
