@@ -230,5 +230,10 @@
         "description": "Sharing is disabled. No new grants can be created and the Share control is hidden."
       }
     }
+  },
+  "notFound": {
+    "title": "Page not found",
+    "description": "The URL you followed doesn't match any route in this app.",
+    "backHome": "Back to home"
   }
 }

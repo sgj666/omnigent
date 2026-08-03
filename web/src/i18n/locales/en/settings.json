@@ -102,7 +102,13 @@
       "nord": "Nord"
     },
     "contrastAria": "Theme contrast",
-    "translucentAria": "Translucent sidebars"
+    "translucentAria": "Translucent sidebars",
+    "colorPicker": {
+      "saturationBrightness": "{{label}} saturation and brightness",
+      "hue": "{{label}} hue",
+      "hexValue": "{{label}} hex value",
+      "randomize": "Randomize {{label}}"
+    }
   },
   "git": {
     "title": "Git",

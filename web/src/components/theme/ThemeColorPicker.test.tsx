@@ -1,8 +1,37 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { withTestLanguage } from "@/i18n/testHelpers";
 import { ThemeColorPicker } from "./ThemeColorPicker";
 
 describe("ThemeColorPicker", () => {
+  it("localizes color control accessibility labels", async () => {
+    await withTestLanguage("zh-CN", () => {
+      render(
+        <ThemeColorPicker
+          label="强调色"
+          value="#0969da"
+          testId="theme-accent"
+          onChange={vi.fn()}
+        />,
+      );
+
+      fireEvent.click(screen.getByTestId("theme-accent-trigger"));
+      expect(screen.getByTestId("theme-accent-spectrum")).toHaveAttribute(
+        "aria-label",
+        "强调色饱和度和明度",
+      );
+      expect(screen.getByTestId("theme-accent-hue")).toHaveAttribute("aria-label", "强调色色相");
+      expect(screen.getByTestId("theme-accent-input")).toHaveAttribute(
+        "aria-label",
+        "强调色十六进制颜色值",
+      );
+      expect(screen.getByRole("button", { name: "随机生成强调色" })).toHaveAttribute(
+        "title",
+        "随机生成强调色",
+      );
+    });
+  });
+
   it("opens a custom spectrum popover and commits a valid hex value", () => {
     const onChange = vi.fn();
     render(

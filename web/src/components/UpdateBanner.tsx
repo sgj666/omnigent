@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { type UpdateStatus, updateBridge } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 function statusVersion(status: UpdateStatus | null): string | null {
   return status?.info?.version ?? null;
@@ -24,6 +25,7 @@ function formatPercent(percent: number | undefined): number {
  * web/src/update-overlay.tsx + the shell's update overlay window.
  */
 export function UpdateBanner({ variant = "floating" }: { variant?: "floating" | "bare" } = {}) {
+  const { t } = useTranslation("updates");
   const bridge = updateBridge();
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [skippedVersion, setSkippedVersion] = useState<string | null | "loading">("loading");
@@ -127,7 +129,7 @@ export function UpdateBanner({ variant = "floating" }: { variant?: "floating" | 
   return (
     <div
       role={isError ? "status" : "region"}
-      aria-label="Desktop update"
+      aria-label={t("banner.ariaLabel")}
       className={cn(
         "rounded-xl border border-border bg-background p-3.5 text-sm shadow-lg",
         // `floating`: pin bottom-right for the in-page web build. `bare`: fill
@@ -152,36 +154,36 @@ export function UpdateBanner({ variant = "floating" }: { variant?: "floating" | 
         <div className="min-w-0 flex-1">
           {visibleStatus.state === "available" && (
             <p className="font-medium text-foreground">
-              Omnigent {visibleStatus.info?.version ?? "update"} is available
+              {t("banner.available", {
+                version: visibleStatus.info?.version ?? t("banner.update"),
+              })}
             </p>
           )}
           {visibleStatus.state === "downloading" && (
             <>
-              <p className="font-medium text-foreground">
-                Downloading Omnigent update… {progress}%
-              </p>
+              <p className="font-medium text-foreground">{t("banner.downloading", { progress })}</p>
               <Progress
                 value={progress}
                 className="mt-2 h-1.5"
-                aria-label="Update download progress"
+                aria-label={t("banner.downloadProgress")}
               />
             </>
           )}
           {visibleStatus.state === "downloaded" && (
             <>
               <p className="font-medium text-foreground">
-                Omnigent {visibleStatus.info?.version ?? "update"} is ready to install
+                {t("banner.ready", { version: visibleStatus.info?.version ?? t("banner.update") })}
               </p>
               {autoInstall && (
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Installs automatically on next quit.
+                  {t("banner.autoInstallOnQuit")}
                 </p>
               )}
             </>
           )}
           {isError && (
             <>
-              <p className="font-medium text-foreground">Update check failed</p>
+              <p className="font-medium text-foreground">{t("banner.checkFailed")}</p>
               {visibleStatus.lastError && (
                 <p className="mt-0.5 line-clamp-3 text-xs text-muted-foreground">
                   {visibleStatus.lastError}
@@ -193,7 +195,7 @@ export function UpdateBanner({ variant = "floating" }: { variant?: "floating" | 
           {releaseNotes && visibleStatus.state !== "downloading" && (
             <details className="mt-1.5 text-xs text-muted-foreground">
               <summary className="cursor-pointer select-none text-foreground hover:underline">
-                Release notes
+                {t("banner.releaseNotes")}
               </summary>
               <div className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap">{releaseNotes}</div>
             </details>
@@ -206,7 +208,7 @@ export function UpdateBanner({ variant = "floating" }: { variant?: "floating" | 
                 onClick={() => void onDownload()}
                 loading={busyAction === "download"}
               >
-                Update now
+                {t("banner.updateNow")}
               </Button>
               <Button
                 variant="outline"
@@ -215,7 +217,7 @@ export function UpdateBanner({ variant = "floating" }: { variant?: "floating" | 
                 loading={busyAction === "skip"}
                 disabled={!version}
               >
-                Skip this version
+                {t("banner.skipVersion")}
               </Button>
             </div>
           )}
@@ -223,7 +225,7 @@ export function UpdateBanner({ variant = "floating" }: { variant?: "floating" | 
           {visibleStatus.state === "downloaded" && (
             <div className="mt-3 flex items-center gap-2">
               <Button size="sm" onClick={() => void onInstall()} loading={busyAction === "install"}>
-                Restart to update
+                {t("banner.restartToUpdate")}
               </Button>
             </div>
           )}
@@ -236,7 +238,7 @@ export function UpdateBanner({ variant = "floating" }: { variant?: "floating" | 
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label="Dismiss"
+            aria-label={t("banner.dismiss")}
             className="-mt-1 -mr-1 shrink-0"
             onClick={() => setHiddenVersion(isError ? "error-security" : (version ?? null))}
           >

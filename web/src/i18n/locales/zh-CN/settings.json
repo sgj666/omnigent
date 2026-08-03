@@ -102,7 +102,13 @@
       "nord": "Nord"
     },
     "contrastAria": "主题对比度",
-    "translucentAria": "半透明侧栏"
+    "translucentAria": "半透明侧栏",
+    "colorPicker": {
+      "saturationBrightness": "{{label}}饱和度和明度",
+      "hue": "{{label}}色相",
+      "hexValue": "{{label}}十六进制颜色值",
+      "randomize": "随机生成{{label}}"
+    }
   },
   "git": {
     "title": "Git",

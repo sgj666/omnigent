@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type PointerEvent } from "react";
 import { DicesIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { isHexColor } from "@/lib/customTheme";
 import { cn } from "@/lib/utils";
@@ -78,6 +79,7 @@ export function ThemeColorPicker({
   testId: string;
   onChange: (value: string) => void;
 }) {
+  const { t } = useTranslation("settings");
   const [open, setOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [draft, setDraft] = useState(value.toUpperCase());
@@ -147,7 +149,7 @@ export function ThemeColorPicker({
           <div className="px-2.5 pb-2.5">
             <div
               tabIndex={0}
-              aria-label={`${label} saturation and brightness`}
+              aria-label={t("appearance.colorPicker.saturationBrightness", { label })}
               data-testid={`${testId}-spectrum`}
               onPointerDown={(event) => {
                 event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -199,7 +201,7 @@ export function ThemeColorPicker({
               min="0"
               max="360"
               value={Math.round(color.hue)}
-              aria-label={`${label} hue`}
+              aria-label={t("appearance.colorPicker.hue", { label })}
               data-testid={`${testId}-hue`}
               onChange={(event) =>
                 updateColor({ ...color, hue: Number.parseInt(event.target.value, 10) })
@@ -215,7 +217,7 @@ export function ThemeColorPicker({
               <input
                 type="text"
                 value={draft}
-                aria-label={`${label} hex value`}
+                aria-label={t("appearance.colorPicker.hexValue", { label })}
                 data-testid={`${testId}-input`}
                 maxLength={7}
                 spellCheck={false}
@@ -225,8 +227,8 @@ export function ThemeColorPicker({
               />
               <button
                 type="button"
-                aria-label={`Randomize ${label.toLowerCase()}`}
-                title={`Randomize ${label.toLowerCase()}`}
+                aria-label={t("appearance.colorPicker.randomize", { label: label.toLowerCase() })}
+                title={t("appearance.colorPicker.randomize", { label: label.toLowerCase() })}
                 data-testid={`${testId}-randomize`}
                 onClick={() => onChange(randomColor())}
                 className="group/randomize flex size-9 shrink-0 items-center justify-center rounded-xl border bg-background text-muted-foreground outline-none transition-[background-color,border-color,color,transform] hover:border-primary/40 hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring/40 active:scale-95"
