@@ -217,7 +217,11 @@ class DAGScheduler:
             return None
         if self.profile_selector is not None:
             profile = self.profile_selector(spec.stage, spec.required_capabilities)
-            if profile is not None and required.issubset(profile.capabilities):
+            if (
+                profile is not None
+                and profile.id in self.profiles
+                and required.issubset(profile.capabilities)
+            ):
                 return profile
             return None
         for profile in self.profiles.values():
