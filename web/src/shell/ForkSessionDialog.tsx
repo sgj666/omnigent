@@ -699,13 +699,12 @@ export function ForkSessionForm({
           >
             <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
             <span>
-              {conflictingSessions.length === 1
-                ? t("forkDialog.oneOtherAgent")
-                : t("forkDialog.manyOtherAgents", { count: conflictingSessions.length })}{" "}
-              working in this directory, so writes may conflict. Name a{" "}
-              {usingSourceWorktree ? t("forkDialog.differentGitBranch") : t("forkDialog.gitBranch")}{" "}
-              {t("forkDialog.underAdvanced")}
-              to work in an isolated copy.
+              {t("forkDialog.conflictHint", {
+                count: conflictingSessions.length,
+                branch: usingSourceWorktree
+                  ? t("forkDialog.differentGitBranch")
+                  : t("forkDialog.gitBranch"),
+              })}
             </span>
           </p>
         )}
