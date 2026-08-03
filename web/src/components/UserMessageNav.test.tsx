@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { UserMessageNav } from "./UserMessageNav";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 function renderNav(props: Partial<React.ComponentProps<typeof UserMessageNav>>) {
   const merged = {
@@ -28,6 +29,17 @@ function renderNav(props: Partial<React.ComponentProps<typeof UserMessageNav>>) 
 afterEach(cleanup);
 
 describe("UserMessageNav", () => {
+  it("localizes navigation labels in Simplified Chinese", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      renderNav({});
+      expect(screen.getByLabelText("上一条用户消息")).toBeEnabled();
+      expect(screen.getByLabelText("下一条用户消息")).toBeEnabled();
+    } finally {
+      await restore();
+    }
+  });
+
   it("renders nothing when hidden", () => {
     renderNav({ hidden: true });
     expect(screen.queryByLabelText("Previous user message")).toBeNull();

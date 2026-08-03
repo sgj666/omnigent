@@ -79,6 +79,8 @@
   "contextUsageUnavailable": "No usage data yet — send a message first.",
   "contextItems": "Items in context: {{count}}",
   "unknownError": "Unknown error",
+  "errorLabel": "Error",
+  "compacted": "Conversation compacted",
   "unknownCommand": "Unknown command: {{command}}. Available: {{available}}",
   "commandCompactUnsupported": "/compact is not supported for this agent type",
   "commandCompactFailed": "Compact failed: {{error}}",
@@ -88,5 +90,10 @@
   "commandModelDefault": "agent default",
   "commandModelFailed": "Failed to set model: {{error}}",
   "planModeEnterFailed": "Could not enter Plan mode: {{error}}",
-  "planModeExitFailed": "Could not exit Plan mode: {{error}}"
+  "planModeExitFailed": "Could not exit Plan mode: {{error}}",
+  "reasoning": {
+    "thinking": "Thinking...",
+    "thoughtForSeconds": "Thought for {{duration}} seconds",
+    "thoughtForAFewSeconds": "Thought for a few seconds"
+  }
 }

@@ -232,5 +232,37 @@
     "title": "页面未找到",
     "description": "你访问的网址与应用中的任何路由都不匹配。",
     "backHome": "返回主页"
+  },
+  "navigation": {
+    "previousUserMessage": "上一条用户消息",
+    "nextUserMessage": "下一条用户消息",
+    "previousMessageShortcut": "上一条消息（⌘⌥↑）",
+    "nextMessageShortcut": "下一条消息（⌘⌥↓）",
+    "previousBranch": "上一分支会话",
+    "nextBranch": "下一分支会话"
+  },
+  "host": {
+    "online": "在线",
+    "offline": "离线",
+    "unknown": "状态未知",
+    "offlineReconnect": "主机已离线 — 点击重新连接",
+    "title": "主机 {{label}}，{{status}}"
+  },
+  "sessionState": {
+    "approvalWaiting_one": "有 1 个审批请求待处理",
+    "approvalWaiting_other": "有 {{count}} 个审批请求待处理",
+    "needsResponse": "需要响应",
+    "running": "会话运行中",
+    "starting": "会话启动中",
+    "newMessages": "新消息"
+  },
+  "code": {
+    "copy": "复制代码",
+    "toggleWrap": "切换自动换行",
+    "disableWrap": "禁用自动换行",
+    "enableWrap": "启用自动换行"
+  },
+  "pagination": {
+    "of": "第 {{current}} 项，共 {{total}} 项"
   }
 }

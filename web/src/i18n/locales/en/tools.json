@@ -19,6 +19,9 @@
   "cancelled": "Tool was cancelled before output arrived.",
   "noOutput": "No output was recorded for this tool call.",
   "failed": "Tool did not return output before the response failed.",
+  "retrying": "Retrying {{source}} · attempt {{attempt}}/{{maxAttempts}}{{waiting}}",
+  "waiting": "waiting {{seconds}}s",
+  "policy": { "blocked": "Blocked by policy" },
   "intelligentRouting": "Intelligent routing",
   "unavailable": "unavailable",
   "noRoutingDecision": "No routing decision was recorded for this fan-out.",
@@ -191,5 +194,15 @@
     "withApprove": "{{level}} + approve",
     "levelForUser": "Permission level for {{userId}}",
     "qrLabel": "QR code to open this session in the Omnigent app"
+  },
+  "routing": {
+    "router": "Intelligent model router",
+    "intelligent": "Intelligent routing",
+    "wouldHavePicked": "would have picked",
+    "applied": "applied",
+    "advisory": "advisory",
+    "showRawVerdict": "Show raw routing verdict",
+    "session": "Session",
+    "verdict": "Verdict"
   }
 }

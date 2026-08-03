@@ -1,10 +1,31 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { RoutingDecisionCard, RoutingDecisionChip } from "./StatusBlocks";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 afterEach(cleanup);
 
 describe("RoutingDecisionChip — intelligent model router", () => {
+  it("localizes routing chrome while preserving the model id and rationale", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      render(
+        <RoutingDecisionChip
+          model="databricks-claude-haiku-4-5"
+          applied={false}
+          rationale="keep this raw rationale"
+        />,
+      );
+      const chip = screen.getByTestId("routing-decision-chip");
+      expect(chip).toHaveTextContent("智能模型路由");
+      expect(chip).toHaveTextContent("应选择");
+      expect(chip).toHaveTextContent("haiku");
+      expect(chip).toHaveTextContent("keep this raw rationale");
+    } finally {
+      await restore();
+    }
+  });
+
   it("applied verdict: names the active model with its tier, plus the rationale line", () => {
     render(
       <RoutingDecisionChip

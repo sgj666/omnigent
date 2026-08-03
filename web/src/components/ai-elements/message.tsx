@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { copyText } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { UIMessage } from "ai";
+import { useTranslation } from "react-i18next";
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, WrapTextIcon } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement, ReactNode } from "react";
 import {
@@ -235,11 +236,12 @@ export const MessageBranchSelector = ({ className, ...props }: MessageBranchSele
 export type MessageBranchPreviousProps = ComponentProps<typeof Button>;
 
 export const MessageBranchPrevious = ({ children, ...props }: MessageBranchPreviousProps) => {
+  const { t } = useTranslation("common");
   const { goToPrevious, totalBranches } = useMessageBranch();
 
   return (
     <Button
-      aria-label="Previous branch"
+      aria-label={t("navigation.previousBranch")}
       disabled={totalBranches <= 1}
       onClick={goToPrevious}
       size="icon-sm"
@@ -255,11 +257,12 @@ export const MessageBranchPrevious = ({ children, ...props }: MessageBranchPrevi
 export type MessageBranchNextProps = ComponentProps<typeof Button>;
 
 export const MessageBranchNext = ({ children, ...props }: MessageBranchNextProps) => {
+  const { t } = useTranslation("common");
   const { goToNext, totalBranches } = useMessageBranch();
 
   return (
     <Button
-      aria-label="Next branch"
+      aria-label={t("navigation.nextBranch")}
       disabled={totalBranches <= 1}
       onClick={goToNext}
       size="icon-sm"
@@ -275,6 +278,7 @@ export const MessageBranchNext = ({ children, ...props }: MessageBranchNextProps
 export type MessageBranchPageProps = HTMLAttributes<HTMLSpanElement>;
 
 export const MessageBranchPage = ({ className, ...props }: MessageBranchPageProps) => {
+  const { t } = useTranslation("common");
   const { currentBranch, totalBranches } = useMessageBranch();
 
   return (
@@ -282,7 +286,7 @@ export const MessageBranchPage = ({ className, ...props }: MessageBranchPageProp
       className={cn("border-none bg-transparent text-muted-foreground shadow-none", className)}
       {...props}
     >
-      {currentBranch + 1} of {totalBranches}
+      {t("pagination.of", { current: currentBranch + 1, total: totalBranches })}
     </ButtonGroupText>
   );
 };
@@ -333,6 +337,7 @@ const CODE_BLOCK_OVERLAY_BUTTON_CLASS =
   "size-8 bg-sidebar/80 text-muted-foreground hover:text-foreground supports-[backdrop-filter]:bg-sidebar/70 supports-[backdrop-filter]:backdrop-blur";
 
 function ChatCodeBlockCopyButton({ getCode }: { getCode: () => string }) {
+  const { t } = useTranslation("common");
   const [isCopied, setIsCopied] = useState(false);
   const timeoutRef = useRef<number>(0);
 
@@ -366,11 +371,11 @@ function ChatCodeBlockCopyButton({ getCode }: { getCode: () => string }) {
 
   return (
     <Button
-      aria-label="Copy Code"
+      aria-label={t("code.copy")}
       className={CODE_BLOCK_OVERLAY_BUTTON_CLASS}
       onClick={handleClick}
       size="icon-sm"
-      title="Copy Code"
+      title={t("code.copy")}
       type="button"
       variant="ghost"
     >
@@ -380,15 +385,16 @@ function ChatCodeBlockCopyButton({ getCode }: { getCode: () => string }) {
 }
 
 function ChatCodeBlockWrapToggle({ wrap, onToggle }: { wrap: boolean; onToggle: () => void }) {
+  const { t } = useTranslation("common");
   return (
     <Button
-      aria-label="Toggle word wrap"
+      aria-label={t("code.toggleWrap")}
       aria-pressed={wrap}
       // Brighten when active so the pressed state reads at a glance.
       className={cn(CODE_BLOCK_OVERLAY_BUTTON_CLASS, wrap && "text-foreground")}
       onClick={onToggle}
       size="icon-sm"
-      title={wrap ? "Disable word wrap" : "Enable word wrap"}
+      title={wrap ? t("code.disableWrap") : t("code.enableWrap")}
       type="button"
       variant="ghost"
     >

@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { SessionState } from "@/hooks/useSessionState";
 import { cn } from "@/lib/utils";
 import type { ReactElement } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface SessionStateBadgeProps {
   state: SessionState;
@@ -20,33 +21,37 @@ interface Visual {
   render: () => ReactElement;
 }
 
-function describe(state: SessionState): Visual {
+function describe(
+  state: SessionState,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): Visual {
   switch (state.kind) {
     case "awaiting": {
-      const tooltip =
-        state.count === 1 ? "1 approval prompt waiting" : `${state.count} approval prompts waiting`;
+      const tooltip = t("sessionState.approvalWaiting", { count: state.count });
       return {
         kind: state.kind,
         ariaLabel: tooltip,
         tooltip,
         render: () => (
-          <Badge className="border-transparent bg-warning/25 text-warning">Needs response</Badge>
+          <Badge className="border-transparent bg-warning/25 text-warning">
+            {t("sessionState.needsResponse")}
+          </Badge>
         ),
       };
     }
     case "running":
       return {
         kind: state.kind,
-        ariaLabel: "Session running",
-        tooltip: "Session running",
+        ariaLabel: t("sessionState.running"),
+        tooltip: t("sessionState.running"),
         render: () => <RunningDot className="size-2.5" />,
       };
     case "starting":
       // Same spinner as running — the session is coming up, not yet working.
       return {
         kind: state.kind,
-        ariaLabel: "Session starting up",
-        tooltip: "Session starting up",
+        ariaLabel: t("sessionState.starting"),
+        tooltip: t("sessionState.starting"),
         render: () => <RunningDot className="size-2.5" />,
       };
     case "unseen":
@@ -54,8 +59,8 @@ function describe(state: SessionState): Visual {
       // which is a grey spinner.
       return {
         kind: state.kind,
-        ariaLabel: "New messages",
-        tooltip: "New messages",
+        ariaLabel: t("sessionState.newMessages"),
+        tooltip: t("sessionState.newMessages"),
         render: () => <Dot tone="bg-brand-accent" />,
       };
   }
@@ -66,7 +71,8 @@ function Dot({ tone }: { tone: string }) {
 }
 
 export function SessionStateBadge({ state }: SessionStateBadgeProps) {
-  const visual = describe(state);
+  const { t } = useTranslation("common");
+  const visual = describe(state, t);
   return (
     <Tooltip>
       <TooltipTrigger asChild>

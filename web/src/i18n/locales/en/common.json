@@ -235,5 +235,37 @@
     "title": "Page not found",
     "description": "The URL you followed doesn't match any route in this app.",
     "backHome": "Back to home"
+  },
+  "navigation": {
+    "previousUserMessage": "Previous user message",
+    "nextUserMessage": "Next user message",
+    "previousMessageShortcut": "Previous message (⌘⌥↑)",
+    "nextMessageShortcut": "Next message (⌘⌥↓)",
+    "previousBranch": "Previous branch",
+    "nextBranch": "Next branch"
+  },
+  "host": {
+    "online": "online",
+    "offline": "offline",
+    "unknown": "status unknown",
+    "offlineReconnect": "Host is offline — click to reconnect",
+    "title": "Host {{label}}, {{status}}"
+  },
+  "sessionState": {
+    "approvalWaiting_one": "1 approval prompt waiting",
+    "approvalWaiting_other": "{{count}} approval prompts waiting",
+    "needsResponse": "Needs response",
+    "running": "Session running",
+    "starting": "Session starting up",
+    "newMessages": "New messages"
+  },
+  "code": {
+    "copy": "Copy Code",
+    "toggleWrap": "Toggle word wrap",
+    "disableWrap": "Disable word wrap",
+    "enableWrap": "Enable word wrap"
+  },
+  "pagination": {
+    "of": "{{current}} of {{total}}"
   }
 }

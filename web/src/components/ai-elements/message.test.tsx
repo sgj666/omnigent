@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MessageResponse } from "./message";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 const clipboardDescriptor = Object.getOwnPropertyDescriptor(Navigator.prototype, "clipboard");
 const execCommandDescriptor = Object.getOwnPropertyDescriptor(Document.prototype, "execCommand");
@@ -31,6 +32,18 @@ describe("MessageResponse", () => {
 });
 
 describe("MessageResponse code-block copy", () => {
+  it("localizes code controls in Simplified Chinese without changing code content", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      render(<MessageResponse>{"```ts\nconst modelId = 'gpt-5';\n```"}</MessageResponse>);
+      expect(await screen.findByRole("button", { name: "复制代码" })).toBeInTheDocument();
+      expect(document.body).toHaveTextContent("const modelId = 'gpt-5';");
+    } finally {
+      cleanup();
+      await restore();
+    }
+  });
+
   it("copies the exact fenced code text through the fallback path", async () => {
     const copiedText: string[] = [];
     Object.defineProperty(Navigator.prototype, "clipboard", {

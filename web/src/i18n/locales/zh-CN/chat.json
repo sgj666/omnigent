@@ -79,6 +79,8 @@
   "contextUsageUnavailable": "暂无用量数据 — 发送一条消息后即可查看。",
   "contextItems": "上下文中的条目：{{count}}",
   "unknownError": "未知错误",
+  "errorLabel": "错误",
+  "compacted": "会话上下文已压缩",
   "unknownCommand": "未知命令：{{command}}。可用命令：{{available}}",
   "commandCompactUnsupported": "当前智能体类型不支持 /compact",
   "commandCompactFailed": "会话压缩失败：{{error}}",
@@ -88,5 +90,10 @@
   "commandModelDefault": "智能体默认模型",
   "commandModelFailed": "设置模型失败：{{error}}",
   "planModeEnterFailed": "无法进入规划模式：{{error}}",
-  "planModeExitFailed": "无法退出规划模式：{{error}}"
+  "planModeExitFailed": "无法退出规划模式：{{error}}",
+  "reasoning": {
+    "thinking": "思考中…",
+    "thoughtForSeconds": "已思考 {{duration}} 秒",
+    "thoughtForAFewSeconds": "已思考数秒"
+  }
 }
