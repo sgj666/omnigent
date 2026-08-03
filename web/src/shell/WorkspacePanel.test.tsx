@@ -370,7 +370,7 @@ describe("WorkspacePanel shell tabs", () => {
         selectedTerminalKey: termKey,
       });
 
-      expect(screen.getByText("Shell 终端不可用。")).toBeInTheDocument();
+      expect(screen.getByText("终端不可用。")).toBeInTheDocument();
     } finally {
       cleanup();
       await restoreLanguage();
