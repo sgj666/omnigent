@@ -890,6 +890,7 @@ export function AgentHarnessPicker({
   /** Extra classes merged onto the trigger's label span. */
   triggerLabelClassName?: string;
 }) {
+  const { t } = useTranslation("agents");
   // Controlled so picking a row can close the menu.
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -1004,7 +1005,7 @@ export function AgentHarnessPicker({
       className="gap-2 rounded-sm px-2 py-1.5 text-13 text-muted-foreground"
     >
       <PlusIcon className="size-3.5" />
-      Create custom agent
+      {t("picker.createCustom")}
     </DropdownMenuItem>
   ) : null;
   const hasCustomGroup = hasCustomAgents;
@@ -1023,7 +1024,9 @@ export function AgentHarnessPicker({
         >
           <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
             <span className="truncate">{pendingAgent.name}</span>
-            <span className="truncate text-[11px] text-muted-foreground/70">Custom</span>
+            <span className="truncate text-[11px] text-muted-foreground/70">
+              {t("picker.custom")}
+            </span>
           </div>
         </DropdownMenuItem>
       )}
@@ -1082,7 +1085,7 @@ export function AgentHarnessPicker({
           <span
             className={cn("max-w-[12rem] truncate text-xs text-foreground", triggerLabelClassName)}
           >
-            {hasAgents ? agentLabel : "No agents"}
+            {hasAgents ? agentLabel : t("picker.noAgents")}
           </span>
           <ChevronDownIcon className="size-3.5 opacity-60" />
         </Button>
@@ -1114,7 +1117,7 @@ export function AgentHarnessPicker({
               className="items-center gap-1.5 rounded-sm px-2 py-1.5 text-13 font-medium"
             >
               <ChevronLeftIcon className="size-4 shrink-0 opacity-70" />
-              <span className="truncate">More</span>
+              <span className="truncate">{t("picker.more")}</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {moreHarnessEntries.map(renderEntry)}
@@ -1131,7 +1134,7 @@ export function AgentHarnessPicker({
               className="items-center gap-1.5 rounded-sm px-2 py-1.5 text-13 font-medium"
             >
               <ChevronLeftIcon className="size-4 shrink-0 opacity-70" />
-              <span className="truncate">Custom agents</span>
+              <span className="truncate">{t("picker.customAgents")}</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {customAgentsBody}
@@ -1143,7 +1146,7 @@ export function AgentHarnessPicker({
             list inline; "needs setup" ones fold into a "More" group. */}
             {(readyHarnessEntries.length > 0 || moreHarnessEntries.length > 0) && (
               <>
-                <PickerSectionHeader>Harnesses</PickerSectionHeader>
+                <PickerSectionHeader>{t("picker.harnesses")}</PickerSectionHeader>
                 {readyHarnessEntries.map(renderEntry)}
                 {moreHarnessEntries.length > 0 &&
                   (isMobile ? (
@@ -1156,7 +1159,7 @@ export function AgentHarnessPicker({
                       }}
                       className="items-center gap-2 rounded-sm px-2 py-1.5 text-13"
                     >
-                      <span className="flex-1">More</span>
+                      <span className="flex-1">{t("picker.more")}</span>
                       <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground/70" />
                     </DropdownMenuItem>
                   ) : (
@@ -1166,7 +1169,7 @@ export function AgentHarnessPicker({
                         data-testid="new-chat-landing-harness-more"
                         className="items-center gap-2 rounded-sm px-2 py-1.5 text-13"
                       >
-                        <span className="flex-1">More</span>
+                        <span className="flex-1">{t("picker.more")}</span>
                       </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-56 max-w-[calc(100vw-2rem)] overflow-y-auto p-1">
                         {moreHarnessEntries.map(renderEntry)}
@@ -1177,7 +1180,7 @@ export function AgentHarnessPicker({
               </>
             )}
             {/* Agents group — built-in bundle agents (Polly / Debby) inline. */}
-            <PickerSectionHeader>Agents</PickerSectionHeader>
+            <PickerSectionHeader>{t("picker.agents")}</PickerSectionHeader>
             {bundleEntries.map(renderEntry)}
             {/* Existing custom agents fold into a "Custom agents" submenu (with
             the pending upload and the create action). With no custom agents the
@@ -1195,7 +1198,7 @@ export function AgentHarnessPicker({
                   }}
                   className="items-center gap-2 rounded-sm px-2 py-1.5 text-13"
                 >
-                  <span className="flex-1">Custom agents</span>
+                  <span className="flex-1">{t("picker.customAgents")}</span>
                   <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground/70" />
                 </DropdownMenuItem>
               ) : (
@@ -1205,7 +1208,7 @@ export function AgentHarnessPicker({
                     data-testid="new-chat-landing-custom-agents"
                     className="items-center gap-2 rounded-sm px-2 py-1.5 text-13"
                   >
-                    <span className="flex-1">Custom agents</span>
+                    <span className="flex-1">{t("picker.customAgents")}</span>
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-56 max-w-[calc(100vw-2rem)] overflow-y-auto p-1">
                     {customAgentsBody}
@@ -2814,15 +2817,18 @@ export function NewChatLandingScreen() {
   // Chip display labels.
   const workspaceLabel = workspaceTrimmed
     ? (workspaceTrimmed.split("/").filter(Boolean).pop() ?? workspaceTrimmed)
-    : "Working directory";
+    : t("picker.workingDirectory", { ns: "agents" });
   const hostLabel = connectingThisMachine
-    ? "Connecting…"
+    ? t("picker.connecting", { ns: "agents" })
     : sandboxSelected
       ? sandboxLabel
-      : (selectedHost?.name ?? (onlineHosts.length === 0 ? "No hosts" : "Select host"));
+      : (selectedHost?.name ??
+        (onlineHosts.length === 0
+          ? t("picker.noHosts", { ns: "agents" })
+          : t("picker.selectHost", { ns: "agents" })));
   // The chip shows just the branch (the "(existing)" distinction lives in the
   // popover's warning; appending it here only gets clipped by the chip's cap).
-  const worktreeLabel = branchName.trim() || "No worktree";
+  const worktreeLabel = branchName.trim() || t("picker.noWorktree", { ns: "agents" });
   // Sandbox repository chip label: repo name (server's clone-dir rule)
   // plus the pinned branch, e.g. "repo#main"; placeholder when unset.
   const sandboxRepoName = deriveRepoName(sandboxRepoUrl);
@@ -2830,11 +2836,13 @@ export function NewChatLandingScreen() {
     ? sandboxRepoBranch.trim()
       ? `${sandboxRepoName}#${sandboxRepoBranch.trim()}`
       : sandboxRepoName
-    : "Repository";
+    : t("picker.repository", { ns: "agents" });
   // The trigger label is just the agent name; the run-config knobs live in
   // the picker's per-entry submenu, so duplicating their values here would be
   // redundant.
-  const agentLabel = selectedAgent ? selectedAgent.display_name : "Select agent";
+  const agentLabel = selectedAgent
+    ? selectedAgent.display_name
+    : t("picker.selectAgent", { ns: "agents" });
 
   // Wrap the harness setter so every explicit pick is persisted to
   // localStorage. The caller can pass an explicit `agentId` for the
@@ -3643,14 +3651,16 @@ export function NewChatLandingScreen() {
                         >
                           <span className="flex items-center gap-2">
                             <MonitorCloudIcon className="size-4 text-muted-foreground" />
-                            <span className="text-xs">New Sandbox</span>
+                            <span className="text-xs">
+                              {t("picker.newSandbox", { ns: "agents" })}
+                            </span>
                           </span>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <button
                                 type="button"
                                 className="inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground/80 hover:text-foreground"
-                                aria-label="Why New Sandbox is unavailable"
+                                aria-label={t("picker.newSandboxUnavailable", { ns: "agents" })}
                                 onClick={(e) => e.stopPropagation()}
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter" || e.key === " ") e.stopPropagation();

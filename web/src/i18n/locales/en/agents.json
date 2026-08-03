@@ -15,11 +15,14 @@
   },
   "policy": {
     "addTitle": "Add Policy",
+    "addButton": "Add policy",
     "choose": "Choose a policy to apply to this session.",
-    "filter": "Filter policies…",
+    "filter": "Filter policies...",
     "adding": "Adding…",
     "add": "Add",
-    "noPolicies": "No policies added"
+    "noPolicies": "No policies added",
+    "policies": "Policies",
+    "change": "Change"
   },
   "mcp": {
     "manageTitle": "Manage MCP Servers",
@@ -32,6 +35,15 @@
     "save": "Save",
     "saving": "Saving…",
     "manage": "Manage MCP servers",
+    "restartToApply": "Restart to apply changes",
+    "url": "URL",
+    "headers": "Headers",
+    "descriptionLabel": "Description",
+    "nameRequired": "Name is required.",
+    "nameInvalid": "Name can use letters, numbers, dots, dashes, and underscores.",
+    "urlRequired": "URL is required.",
+    "urlInvalid": "URL must start with http:// or https://.",
+    "commandRequired": "Command is required.",
     "addHeader": "Add header",
     "removeHeader": "Remove header",
     "optional": "Optional"
@@ -43,5 +55,23 @@
     "copiedSessionId": "Copied session ID",
     "agentToolsPolicies": "Agent tools and policies",
     "agentToolsPoliciesTooltip": "Agent tools & policies"
+  },
+  "picker": {
+    "createCustom": "Create custom agent",
+    "custom": "Custom",
+    "more": "More",
+    "customAgents": "Custom agents",
+    "harnesses": "Harnesses",
+    "agents": "Agents",
+    "noAgents": "No agents",
+    "connecting": "Connecting…",
+    "noHosts": "No hosts",
+    "selectHost": "Select host",
+    "selectAgent": "Select agent",
+    "workingDirectory": "Working directory",
+    "noWorktree": "No worktree",
+    "repository": "Repository",
+    "newSandbox": "New Sandbox",
+    "newSandboxUnavailable": "Why New Sandbox is unavailable"
   }
 }

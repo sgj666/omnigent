@@ -15,11 +15,14 @@
   },
   "policy": {
     "addTitle": "添加策略",
+    "addButton": "添加策略",
     "choose": "选择要应用于此会话的策略。",
     "filter": "筛选策略…",
     "adding": "添加中…",
     "add": "添加",
-    "noPolicies": "尚未添加策略"
+    "noPolicies": "尚未添加策略",
+    "policies": "策略",
+    "change": "更改"
   },
   "mcp": {
     "manageTitle": "管理 MCP 服务器",
@@ -32,6 +35,15 @@
     "save": "保存",
     "saving": "保存中…",
     "manage": "管理 MCP 服务器",
+    "restartToApply": "重启后应用更改",
+    "url": "URL",
+    "headers": "请求头",
+    "descriptionLabel": "描述",
+    "nameRequired": "名称不能为空。",
+    "nameInvalid": "名称只能包含字母、数字、点、短横线和下划线。",
+    "urlRequired": "URL 不能为空。",
+    "urlInvalid": "URL 必须以 http:// 或 https:// 开头。",
+    "commandRequired": "命令不能为空。",
     "addHeader": "添加请求头",
     "removeHeader": "移除请求头",
     "optional": "可选"
@@ -43,5 +55,23 @@
     "copiedSessionId": "已复制会话 ID",
     "agentToolsPolicies": "智能体工具与策略",
     "agentToolsPoliciesTooltip": "智能体工具与策略"
+  },
+  "picker": {
+    "createCustom": "创建自定义智能体",
+    "custom": "自定义",
+    "more": "更多",
+    "customAgents": "自定义智能体",
+    "harnesses": "运行框架",
+    "agents": "智能体",
+    "noAgents": "暂无智能体",
+    "connecting": "正在连接…",
+    "noHosts": "暂无主机",
+    "selectHost": "选择主机",
+    "selectAgent": "选择智能体",
+    "workingDirectory": "工作目录",
+    "noWorktree": "无工作树",
+    "repository": "仓库",
+    "newSandbox": "新建沙箱",
+    "newSandboxUnavailable": "为何新建沙箱不可用"
   }
 }
