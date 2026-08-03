@@ -360,7 +360,7 @@ function AddDefaultPolicyDialog({
                           prop?.type === "array"
                             ? prop?.default !== undefined
                               ? (prop.default as string[]).join(", ")
-                              : "comma-separated values"
+                              : t("policies.commaSeparatedPlaceholder")
                             : prop?.default !== undefined
                               ? String(prop.default)
                               : ""
@@ -554,7 +554,7 @@ export function PoliciesPage() {
                               enabled: checked,
                             })
                           }
-                          aria-label={`Toggle ${p.name}`}
+                          aria-label={t("policies.toggle", { name: p.name })}
                         />
                         <Button
                           variant="ghost"

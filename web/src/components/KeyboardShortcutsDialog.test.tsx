@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { KeyboardShortcutsDialog, openKeyboardShortcuts } from "./KeyboardShortcutsDialog";
+import { i18n } from "@/i18n";
 
 // The pinned-session row shows in both shells; only its chord differs (Alt in
 // the browser). Default the mock to browser (false); flip per-test for native.
@@ -16,7 +17,10 @@ vi.mock("@/lib/nativeBridge", () => ({
 beforeEach(() => {
   isNativeShell.mockReturnValue(false);
 });
-afterEach(cleanup);
+afterEach(async () => {
+  cleanup();
+  await i18n.changeLanguage("en");
+});
 
 // jsdom's navigator is non-mac, so the modifier glyph renders as "Ctrl".
 function toggleViaHotkey() {
@@ -78,5 +82,27 @@ describe("KeyboardShortcutsDialog", () => {
     expect(row).toBeTruthy();
     expect(within(row!).queryByText("Alt")).toBeNull();
     expect(within(row!).getByText("1…0")).toBeTruthy();
+  });
+
+  it("localizes the complete shortcut catalog in Simplified Chinese", async () => {
+    await i18n.changeLanguage("zh-CN");
+    render(<KeyboardShortcutsDialog />);
+    toggleViaHotkey();
+
+    expect(screen.getByText("键盘快捷键")).toBeInTheDocument();
+    for (const label of [
+      "打开命令面板",
+      "发送消息",
+      "调出上一条提示词",
+      "上一个会话",
+      "跳转到已固定会话（1–10）",
+      "切换会话侧栏",
+      "浏览建议项",
+      "应用高亮命令",
+      "关闭菜单",
+    ]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    expect(screen.getByText("建议菜单打开时", { exact: false })).toBeInTheDocument();
   });
 });

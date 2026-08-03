@@ -57,6 +57,8 @@
     "name": "name",
     "multiSelect": "multi-select",
     "commaSeparated": "comma-separated",
+    "commaSeparatedPlaceholder": "Comma-separated values",
+    "toggle": "Toggle {{name}}",
     "cancel": "Cancel",
     "adding": "Adding...",
     "add": "Add",

@@ -11,6 +11,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PoliciesPage } from "./PoliciesPage";
+import { i18n } from "@/i18n";
 import * as identity from "@/lib/identity";
 import * as defaultPolicies from "@/hooks/useDefaultPolicies";
 import * as policies from "@/hooks/usePolicies";
@@ -106,9 +107,10 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
   vi.clearAllMocks();
+  await i18n.changeLanguage("en");
 });
 
 describe("PoliciesPage gating", () => {
@@ -165,6 +167,39 @@ describe("PoliciesPage list", () => {
 });
 
 describe("PoliciesPage actions", () => {
+  it("localizes policy controls while preserving raw policy names", async () => {
+    await i18n.changeLanguage("zh-CN");
+    setPolicies([policy({ id: "p1", name: "block_canada", enabled: true })]);
+    renderPage();
+
+    expect(await screen.findByRole("switch", { name: "切换 block_canada" })).toBeInTheDocument();
+  });
+
+  it("localizes the comma-separated array placeholder", async () => {
+    await i18n.changeLanguage("zh-CN");
+    vi.mocked(policies.usePolicyRegistry).mockReturnValue({
+      data: [
+        {
+          handler: "omnigent.policies.budget",
+          kind: "factory",
+          name: "Budget Guard",
+          description: "blocks expensive models",
+          params_schema: {
+            properties: { model_patterns: { type: "array", items: { type: "string" } } },
+            required: [],
+          },
+        },
+      ],
+    } as never);
+    renderPage();
+    await screen.findByText(/尚未配置全局策略/);
+
+    fireEvent.click(screen.getByRole("button", { name: /添加策略/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByText("Budget Guard"));
+    expect(within(dialog).getByPlaceholderText("以逗号分隔的值")).toBeInTheDocument();
+  });
+
   it("toggling a policy's switch fires the update mutation with the new state", async () => {
     setPolicies([policy({ id: "p1", name: "block_canada", enabled: true })]);
     renderPage();

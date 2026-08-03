@@ -119,7 +119,42 @@
   },
   "shortcuts": {
     "title": "Keyboard shortcuts",
-    "description": "Speed up common actions with the keyboard."
+    "description": "Speed up common actions with the keyboard.",
+    "groups": {
+      "general": {
+        "title": "General",
+        "openCommandPalette": "Open command palette",
+        "showKeyboardShortcuts": "Show keyboard shortcuts"
+      },
+      "chat": {
+        "title": "In chats",
+        "sendMessage": "Send message",
+        "newLine": "New line in message",
+        "recallPreviousPrompt": "Recall previous prompt",
+        "recallNextPrompt": "Recall next prompt",
+        "acceptApprovalPrompt": "Accept approval prompt",
+        "toggleVoiceDictation": "Toggle voice dictation",
+        "stopResponse": "Stop response"
+      },
+      "navigation": {
+        "title": "Navigation",
+        "previousSession": "Previous session",
+        "nextSession": "Next session",
+        "jumpToPinnedSession": "Jump to pinned session (1–10)"
+      },
+      "view": {
+        "title": "View",
+        "toggleConversationsSidebar": "Toggle conversations sidebar",
+        "toggleWorkspaceSidebar": "Toggle workspace sidebar"
+      },
+      "slash": {
+        "title": "Slash commands",
+        "suggestionsMenuOpen": "while the suggestions menu is open",
+        "navigateSuggestions": "Navigate suggestions",
+        "applyHighlightedCommand": "Apply highlighted command",
+        "dismissMenu": "Dismiss menu"
+      }
+    }
   },
   "archived": {
     "title": "Archived sessions",

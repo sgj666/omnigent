@@ -117,7 +117,45 @@
     "defaultBaseBranchHelper": "命名新的工作树分支时自动填充为基线；留空则不自动填充。",
     "placeholder": "例如 main"
   },
-  "shortcuts": { "title": "键盘快捷键", "description": "使用键盘加速常用操作。" },
+  "shortcuts": {
+    "title": "键盘快捷键",
+    "description": "使用键盘加速常用操作。",
+    "groups": {
+      "general": {
+        "title": "通用",
+        "openCommandPalette": "打开命令面板",
+        "showKeyboardShortcuts": "显示键盘快捷键"
+      },
+      "chat": {
+        "title": "会话中",
+        "sendMessage": "发送消息",
+        "newLine": "在消息中换行",
+        "recallPreviousPrompt": "调出上一条提示词",
+        "recallNextPrompt": "调出下一条提示词",
+        "acceptApprovalPrompt": "批准审批提示",
+        "toggleVoiceDictation": "切换语音听写",
+        "stopResponse": "停止响应"
+      },
+      "navigation": {
+        "title": "导航",
+        "previousSession": "上一个会话",
+        "nextSession": "下一个会话",
+        "jumpToPinnedSession": "跳转到已固定会话（1–10）"
+      },
+      "view": {
+        "title": "视图",
+        "toggleConversationsSidebar": "切换会话侧栏",
+        "toggleWorkspaceSidebar": "切换工作区侧栏"
+      },
+      "slash": {
+        "title": "斜杠命令",
+        "suggestionsMenuOpen": "建议菜单打开时",
+        "navigateSuggestions": "浏览建议项",
+        "applyHighlightedCommand": "应用高亮命令",
+        "dismissMenu": "关闭菜单"
+      }
+    }
+  },
   "archived": {
     "title": "已归档会话",
     "description": "你归档的会话。可将其恢复到侧栏，或永久删除。",

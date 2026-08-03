@@ -57,6 +57,8 @@
     "name": "名称",
     "multiSelect": "多选",
     "commaSeparated": "逗号分隔",
+    "commaSeparatedPlaceholder": "以逗号分隔的值",
+    "toggle": "切换 {{name}}",
     "cancel": "取消",
     "adding": "正在添加…",
     "add": "添加",
