@@ -74,7 +74,7 @@
   "scheduleValidation": {
     "validMinute": "请输入 0 到 59 之间的有效分钟数。",
     "validTime": "请输入有效时间。",
-    "weekdayRequired": "请至少选择一个工作日。",
+    "weekdayRequired": "请至少选择一个星期中的日期。",
     "intervalMinimum": "间隔必须是大于等于 1 的整数。",
     "hourlyInterval": "每小时任务的运行间隔不能少于 1 小时（间隔 ≥ 1）。",
     "monthDayRequired": "请至少选择一个月内的日期。"
