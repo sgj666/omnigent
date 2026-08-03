@@ -74,3 +74,23 @@ def test_unknown_thread_and_unauthorized_action_are_diagnostic() -> None:
     )
     assert unknown.diagnostic and "unknown_thread" in unknown.diagnostic
 
+
+def test_nested_sender_and_malformed_payload_are_safe() -> None:
+    adapter, _coordinator = _adapter()
+    result = adapter.receive(
+        {
+            "header": {"event_type": "im.message.receive_v1", "event_id": "m-3"},
+            "event": {
+                "message": {
+                    "chat_id": "c",
+                    "content": '{"text":"hello"}',
+                    "mentions": [{"id": {"open_id": "worker"}}],
+                },
+                "sender": {"sender_id": {"open_id": "u"}},
+            },
+        }
+    )
+    assert result.result.actor_id == "u"
+    assert result.result.mentions == ("worker",)
+    malformed = adapter.receive({"header": {"event_type": "im.message.receive_v1"}})
+    assert malformed.diagnostic and malformed.diagnostic.startswith("protocol:")

@@ -47,6 +47,17 @@ def _obj(value: object) -> Mapping[str, Any]:
     return value
 
 
+def _identity(value: object) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, Mapping):
+        for key in ("open_id", "user_id", "id", "key"):
+            found = _identity(value.get(key))
+            if found:
+                return found
+    return None
+
+
 def _text(content: object) -> str:
     if isinstance(content, str):
         try:
@@ -71,8 +82,8 @@ def decode_message(payload: Mapping[str, Any]) -> LarkMessage:
     if not isinstance(chat_id, str) or not chat_id:
         raise LarkProtocolError("message is missing chat_id")
     sender = _obj(event.get("sender", message.get("sender", {})))
-    sender_id = sender.get("sender_id") or sender.get("open_id") or sender.get("user_id")
-    if not isinstance(sender_id, str) or not sender_id:
+    sender_id = _identity(sender.get("sender_id") or sender)
+    if sender_id is None:
         raise LarkProtocolError("message is missing sender id")
     mentions_raw = message.get("mentions", event.get("mentions", ()))
     mentions: list[str] = []
@@ -82,8 +93,9 @@ def decode_message(payload: Mapping[str, Any]) -> LarkMessage:
                 value = mention.get("key") or mention.get("id") or mention.get("name")
             else:
                 value = mention
-            if isinstance(value, str) and value:
-                mentions.append(value)
+            found = _identity(value)
+            if found:
+                mentions.append(found)
     event_id = header.get("event_id") or envelope.get("event_id") or message.get("message_id")
     if not isinstance(event_id, str) or not event_id:
         raise LarkProtocolError("message is missing event_id")
@@ -114,8 +126,8 @@ def decode_card_action(payload: Mapping[str, Any]) -> LarkCardAction:
     if not isinstance(nonce, str) or not nonce:
         raise LarkProtocolError("card action is missing nonce")
     actor = _obj(event.get("operator", event.get("user", {})))
-    actor_id = actor.get("open_id") or actor.get("user_id") or actor.get("id")
-    if not isinstance(actor_id, str) or not actor_id:
+    actor_id = _identity(actor)
+    if actor_id is None:
         raise LarkProtocolError("card action is missing actor id")
     chat_id = event.get("chat_id") or value.get("chat_id")
     if not isinstance(chat_id, str) or not chat_id:

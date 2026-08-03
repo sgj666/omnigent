@@ -60,7 +60,9 @@ class LarkRouter:
         return context
 
     def resolve(self, chat_id: str, thread_id: str | None) -> RouteContext:
-        context = self.bindings.get((chat_id, thread_id)) or self.bindings.get((chat_id, None))
+        context = self.bindings.get((chat_id, thread_id))
+        if context is None and thread_id is None:
+            context = self.bindings.get((chat_id, None))
         if context is None and self.resolver is not None:
             context = self.resolver(chat_id, thread_id)
         if context is None:
@@ -80,6 +82,8 @@ class LarkRouter:
 
     def route_message(self, event: LarkMessage) -> Any:
         context = self.resolve(event.chat_id, event.thread_id)
+        if context.members and event.sender_id not in context.members:
+            raise LarkRoutingError("forbidden", "Lark member is not allowed to send messages")
         team_id = self._id(context.team)
         coordinator_id = self._id(context.coordinator)
         request = RunRequest(event.text, "coordinator", event.sender_id, team_id, coordinator_id,

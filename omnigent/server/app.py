@@ -1,6 +1,7 @@
 """FastAPI application — main entry point for the omnigent server."""
 
 import asyncio
+import inspect
 import logging
 import mimetypes
 import os
@@ -1135,8 +1136,20 @@ def create_app(
             # sweep and no periodic reconcile.
 
         try:
+            if lark_adapter is not None:
+                startup = getattr(lark_adapter, "start", None)
+                if startup is not None:
+                    started = startup()
+                    if inspect.isawaitable(started):
+                        await started
             yield
         finally:
+            if lark_adapter is not None:
+                shutdown = getattr(lark_adapter, "close", None)
+                if shutdown is not None:
+                    closed = shutdown()
+                    if inspect.isawaitable(closed):
+                        await closed
             # Run completion is event-driven (the _publish_status hook) plus a
             # lazy-on-read stale backstop — there is no run-reconciler task to
             # cancel. Only the per-job scheduler holds timers that need stopping.
