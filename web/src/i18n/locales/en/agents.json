@@ -98,5 +98,25 @@
     "repository": "Repository",
     "newSandbox": "New Sandbox",
     "newSandboxUnavailable": "Why New Sandbox is unavailable"
+  },
+  "subagents": {
+    "loading": "Loading…",
+    "loadFailed": "Failed to load agents.",
+    "loadingGraph": "Loading graph…",
+    "add": "Add agent",
+    "listView": "List view",
+    "graphView": "Graph view",
+    "main": "main",
+    "expand": "Expand subagents",
+    "collapse": "Collapse subagents",
+    "status": {
+      "awaiting": "Needs response",
+      "failed": "Failed",
+      "launching": "Launching",
+      "working": "Working",
+      "disconnected": "Disconnected",
+      "done": "Done",
+      "idle": "Idle"
+    }
   }
 }

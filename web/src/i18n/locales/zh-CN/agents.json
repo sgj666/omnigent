@@ -98,5 +98,25 @@
     "repository": "仓库",
     "newSandbox": "新建沙箱",
     "newSandboxUnavailable": "为何新建沙箱不可用"
+  },
+  "subagents": {
+    "loading": "正在加载…",
+    "loadFailed": "加载智能体失败。",
+    "loadingGraph": "正在加载关系图…",
+    "add": "添加智能体",
+    "listView": "列表视图",
+    "graphView": "关系图视图",
+    "main": "主会话",
+    "expand": "展开子智能体",
+    "collapse": "收起子智能体",
+    "status": {
+      "awaiting": "需要响应",
+      "failed": "失败",
+      "launching": "启动中",
+      "working": "工作中",
+      "disconnected": "已断开连接",
+      "done": "已完成",
+      "idle": "空闲"
+    }
   }
 }
