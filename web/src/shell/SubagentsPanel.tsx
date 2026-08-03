@@ -15,6 +15,7 @@
 // click opens it in a new tab, matching the sidebar's behavior.
 
 import { lazy, Suspense, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { ComponentType, SVGProps } from "react";
 import {
   BookOpenIcon,
@@ -109,6 +110,7 @@ interface SubagentsPanelProps {
 type ViewMode = "list" | "graph";
 
 export function SubagentsPanel({ conversationId, rootSessionId }: SubagentsPanelProps) {
+  const { t } = useTranslation("agents");
   const { children, isLoading, error } = useChildSessions(rootSessionId);
   const [addOpen, setAddOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
@@ -122,14 +124,14 @@ export function SubagentsPanel({ conversationId, rootSessionId }: SubagentsPanel
   if (isLoading && children.length === 0) {
     return (
       <div className="flex h-full flex-1 items-center justify-center px-4 py-8 text-center text-xs text-muted-foreground bg-card">
-        Loading…
+        {t("subagents.loading")}
       </div>
     );
   }
   if (error && children.length === 0) {
     return (
       <div className="flex h-full flex-1 items-center justify-center px-4 py-8 text-center text-xs text-muted-foreground bg-card">
-        Failed to load agents.
+        {t("subagents.loadFailed")}
       </div>
     );
   }
@@ -141,7 +143,7 @@ export function SubagentsPanel({ conversationId, rootSessionId }: SubagentsPanel
         <Suspense
           fallback={
             <div className="flex h-full flex-1 items-center justify-center text-xs text-muted-foreground">
-              Loading graph…
+              {t("subagents.loadingGraph")}
             </div>
           }
         >
@@ -161,7 +163,7 @@ export function SubagentsPanel({ conversationId, rootSessionId }: SubagentsPanel
         className="hidden"
       >
         <PlusIcon className="size-3.5 shrink-0" />
-        Add agent
+        {t("subagents.add")}
       </button>
       <ul className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-1">
         <MainRow rootSessionId={rootSessionId} isActive={conversationId === rootSessionId} />
@@ -192,14 +194,15 @@ function ViewModeToggle({
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
 }) {
+  const { t } = useTranslation("agents");
   return (
     <div className="flex shrink-0 items-center justify-end gap-0.5 border-b px-2 py-1">
       <Button
         variant={viewMode === "list" ? "secondary" : "ghost"}
         size="icon-xs"
         onClick={() => onViewModeChange("list")}
-        aria-label="List view"
-        title="List view"
+        aria-label={t("subagents.listView")}
+        title={t("subagents.listView")}
         data-testid="view-mode-list"
       >
         <ListIcon className="size-3.5" />
@@ -208,8 +211,8 @@ function ViewModeToggle({
         variant={viewMode === "graph" ? "secondary" : "ghost"}
         size="icon-xs"
         onClick={() => onViewModeChange("graph")}
-        aria-label="Graph view"
-        title="Graph view"
+        aria-label={t("subagents.graphView")}
+        title={t("subagents.graphView")}
         data-testid="view-mode-graph"
       >
         <NetworkIcon className="size-3.5" />
@@ -331,7 +334,10 @@ function brandChildIcon(child: ChildSessionInfo): AgentRowIcon | null {
  * @param status - The resolved activity + label to render.
  */
 function StatusIndicator({ activity, label, details }: AgentStatus) {
-  const title = details ? `${label}: ${details}` : label;
+  const { t } = useTranslation("agents");
+  const displayLabel =
+    activity === "other" ? label : t(`subagents.status.${activity}`, { defaultValue: label });
+  const title = details ? `${displayLabel}: ${details}` : displayLabel;
   // Awaiting renders the exact same "Needs response" tag as the sidebar
   // (SessionStateBadge) so the approval affordance reads identically across
   // the app. The tag carries its own copy, so the row's separate label word
@@ -344,7 +350,7 @@ function StatusIndicator({ activity, label, details }: AgentStatus) {
         data-testid="subagent-status-dot"
         className="inline-flex shrink-0 items-center text-xs"
       >
-        <Badge className="border-transparent bg-warning/15 text-warning">Needs response</Badge>
+        <Badge className="border-transparent bg-warning/15 text-warning">{displayLabel}</Badge>
       </span>
     );
   }
@@ -356,7 +362,7 @@ function StatusIndicator({ activity, label, details }: AgentStatus) {
         data-testid="subagent-status-dot"
         className="inline-flex shrink-0 items-center gap-1 text-destructive text-xs"
       >
-        <span>{label}</span>
+        <span>{displayLabel}</span>
         <span
           className={cn(
             "inline-block size-2 shrink-0 rounded-full",
@@ -517,7 +523,8 @@ function MainRow({ rootSessionId, isActive }: { rootSessionId: string; isActive:
   // of the spec's YAML name (e.g. "claude-native-ui"); other agents show
   // their agent name, with "main" only while the session loads or when it
   // carries no name.
-  const label = nativeAgent?.displayName ?? session?.agentName ?? "main";
+  const { t } = useTranslation("agents");
+  const label = nativeAgent?.displayName ?? session?.agentName ?? t("subagents.main");
   const preview = mainMessagePreview(session?.items);
   return (
     <li>
@@ -584,6 +591,7 @@ function SubagentRow({
   collapsedRows: Record<string, boolean>;
   onToggleCollapsed: (id: string) => void;
 }) {
+  const { t } = useTranslation("agents");
   const collapsed = collapsedRows[child.id] ?? false;
   const status = childStatus(child);
   const search = railLinkSearch(useLocation().search);
@@ -607,7 +615,7 @@ function SubagentRow({
             type="button"
             data-testid="subagent-collapse-toggle"
             aria-expanded={!collapsed}
-            aria-label={collapsed ? "Expand subagents" : "Collapse subagents"}
+            aria-label={collapsed ? t("subagents.expand") : t("subagents.collapse")}
             style={{ left: rowPaddingLeft(depth) - ROW_TOGGLE_SIZE_PX }}
             className="absolute top-2 z-10 flex size-4 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             onClick={(event) => {
