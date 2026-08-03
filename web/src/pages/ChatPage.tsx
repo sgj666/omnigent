@@ -1220,13 +1220,14 @@ function SessionLayout({ mainAgent }: SessionLayoutProps) {
   );
 }
 
-function SelectionPopup({
+export function SelectionPopup({
   containerRef,
   onReply,
 }: {
   containerRef: React.RefObject<HTMLElement | null>;
   onReply: (text: string) => void;
 }) {
+  const { t } = useTranslation("chat");
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
   const selectedTextRef = useRef<string>("");
 
@@ -1313,7 +1314,7 @@ function SelectionPopup({
         }}
       >
         <CornerUpLeftIcon className="size-3.5" />
-        Reply ↵
+        {t("reply")} ↵
       </Button>
     </div>
   );
