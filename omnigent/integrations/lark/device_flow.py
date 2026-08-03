@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TypeAlias, cast
 
 import httpx
 
@@ -21,8 +21,9 @@ _APPLICATIONS_PATH = "/open-apis/application/v6/applications"
 _TENANT_TOKEN_PATH = "/open-apis/auth/v3/tenant_access_token/internal"
 _BOT_INFO_PATH = "/open-apis/bot/v3/info"
 
-Json = Mapping[str, Any]
-Request = Callable[[str, str, Json | None, Mapping[str, str] | None], Awaitable[Json]]
+JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+JsonObject: TypeAlias = dict[str, JsonValue]
+Request = Callable[[str, str, JsonObject | None, Mapping[str, str] | None], Awaitable[JsonObject]]
 
 
 class FeishuDeviceFlowError(RuntimeError):
@@ -55,12 +56,28 @@ class FeishuRegistration:
     app_id: str
     app_secret: str
     installer_open_id: str
-    bot: Json
+    bot: JsonObject
 
 
-def _data(payload: Json) -> Json:
+def _coerce_json(value: object) -> JsonValue:
+    """Convert an untyped HTTP JSON response to the supported JSON shape."""
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, list):
+        return [_coerce_json(item) for item in value]
+    if isinstance(value, dict):
+        result: JsonObject = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise FeishuDeviceFlowError("protocol", "Feishu returned an invalid response")
+            result[key] = _coerce_json(item)
+        return result
+    raise FeishuDeviceFlowError("protocol", "Feishu returned an invalid response")
+
+
+def _data(payload: JsonObject) -> JsonObject:
     value = payload.get("data", payload)
-    return value if isinstance(value, Mapping) else {}
+    return value if isinstance(value, dict) else {}
 
 
 def _string(value: object) -> str | None:
@@ -88,9 +105,9 @@ class FeishuPersonalAgentDeviceFlow:
         self,
         method: str,
         url: str,
-        json: Json | None,
+        json: JsonObject | None,
         headers: Mapping[str, str] | None,
-    ) -> Json:
+    ) -> JsonObject:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.request(method, url, json=json, headers=headers)
@@ -106,7 +123,8 @@ class FeishuPersonalAgentDeviceFlow:
             ) from exc
         except ValueError as exc:
             raise FeishuDeviceFlowError("protocol", "Feishu returned an invalid response") from exc
-        if not isinstance(payload, Mapping):
+        payload = _coerce_json(cast(object, payload))
+        if not isinstance(payload, dict):
             raise FeishuDeviceFlowError("protocol", "Feishu returned an invalid response")
         return payload
 
@@ -171,7 +189,7 @@ class FeishuPersonalAgentDeviceFlow:
         bot = await self.bot_info(app_id, app_secret)
         return FeishuRegistration(app_id, app_secret, installer_open_id, bot)
 
-    async def bot_info(self, app_id: str, app_secret: str) -> Json:
+    async def bot_info(self, app_id: str, app_secret: str) -> JsonObject:
         """Fetch Bot Info using the newly issued app credential."""
         token_payload = await self._call(
             "POST", _TENANT_TOKEN_PATH, {"app_id": app_id, "app_secret": app_secret}
@@ -186,8 +204,8 @@ class FeishuPersonalAgentDeviceFlow:
             headers={"Authorization": f"Bearer {token}"},
         )
         bot_data = bot_response.get("data")
-        bot = bot_data.get("bot") if isinstance(bot_data, Mapping) else None
-        if not isinstance(bot, Mapping) or _string(bot.get("open_id")) is None:
+        bot = bot_data.get("bot") if isinstance(bot_data, dict) else None
+        if not isinstance(bot, dict) or _string(bot.get("open_id")) is None:
             raise FeishuDeviceFlowError("protocol", "Feishu returned invalid Bot Info")
         return bot
 
@@ -195,10 +213,10 @@ class FeishuPersonalAgentDeviceFlow:
         self,
         method: str,
         path: str,
-        json: Json | None,
+        json: JsonObject | None,
         *,
         headers: Mapping[str, str] | None = None,
-    ) -> Json:
+    ) -> JsonObject:
         payload = await self._request(method, f"{self._base_url}{path}", json, headers)
         code = payload.get("code")
         if isinstance(code, int) and code != 0:
