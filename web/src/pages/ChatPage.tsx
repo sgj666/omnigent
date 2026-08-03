@@ -173,6 +173,7 @@ import {
   EFFORT_SELECT_NONE,
   MODEL_SELECT_DEFAULT,
   MODEL_SELECT_SMART,
+  translateConfigOptionLabel,
 } from "@/components/HarnessConfigControls";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { MainTerminalView } from "@/shell/MainTerminalView";
@@ -5822,7 +5823,11 @@ function SessionConfigModal({
                       // other harnesses title-case for display.
                       className={modelPickerKind === "codex" ? undefined : "capitalize"}
                     >
-                      {formatStatusEffortLabel(level, modelPickerKind === "codex") ?? level}
+                      {translateConfigOptionLabel(
+                        t,
+                        level,
+                        formatStatusEffortLabel(level, modelPickerKind === "codex") ?? level,
+                      )}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -5998,7 +6003,13 @@ function useSessionConfigSummary({
   // Suppress Effort while Smart Routing is on: the router picks the model and
   // its effort per turn, so a pinned effort doesn't apply and would mislead.
   if (showEffort && !routingOn) {
-    const effortValue = formatStatusEffortLabel(selectedEffort, modelPickerKind === "codex");
+    const effortValue = selectedEffort
+      ? translateConfigOptionLabel(
+          t,
+          selectedEffort,
+          formatStatusEffortLabel(selectedEffort, modelPickerKind === "codex") ?? selectedEffort,
+        )
+      : null;
     rows.push({ label: t("summaryEffort"), value: effortValue ?? t("reasoning.default") });
   }
   // Routable agents with no Model row surface Smart Routing as a standalone row;
@@ -6156,11 +6167,11 @@ function ComposerModelEffortLabel({
     showEffort && selectedEffort
       ? (() => {
           const key = selectedEffort.toLowerCase();
-          const translated =
-            key === "low" || key === "medium" || key === "high" || key === "xhigh" || key === "max"
-              ? t(`reasoning.${key}`)
-              : null;
-          return translated ?? formatStatusEffortLabel(selectedEffort, modelPickerKind === "codex");
+          return translateConfigOptionLabel(
+            t,
+            key,
+            formatStatusEffortLabel(selectedEffort, modelPickerKind === "codex") ?? selectedEffort,
+          );
         })()
       : null;
   // SDK/bundle sessions (no native picker) still surface their resolved model

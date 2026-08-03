@@ -55,6 +55,7 @@ import {
   EFFORT_SELECT_NONE,
   MODEL_SELECT_DEFAULT,
   MODEL_SELECT_SMART,
+  translateConfigOptionLabel,
 } from "@/components/HarnessConfigControls";
 import {
   DropdownMenu,
@@ -1488,7 +1489,7 @@ function HarnessConfigModal({
                     <SelectItem value={EFFORT_SELECT_NONE}>{t("reasoning.default")}</SelectItem>
                     {CLAUDE_NATIVE_EFFORTS.map((e) => (
                       <SelectItem key={e.value} value={e.value}>
-                        {e.label}
+                        {translateConfigOptionLabel(t, e.value, e.label)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -2278,11 +2279,17 @@ export function NewChatLandingScreen() {
       const effortValue =
         routingOn || !pickedEffort
           ? t("reasoning.default")
-          : (CLAUDE_NATIVE_EFFORTS.find((e) => e.value === pickedEffort)?.label ??
-            t("reasoning.default"));
-      const permissionValue =
+          : translateConfigOptionLabel(
+              t,
+              pickedEffort,
+              CLAUDE_NATIVE_EFFORTS.find((e) => e.value === pickedEffort)?.label ?? pickedEffort,
+            );
+      const permissionValue = translateConfigOptionLabel(
+        t,
+        permissionMode,
         CLAUDE_NATIVE_PERMISSION_MODES.find((m) => m.value === permissionMode)?.label ??
-        permissionMode;
+          permissionMode,
+      );
       return [
         { label: t("model"), value: modelValue },
         { label: t("summaryEffort"), value: effortValue },
@@ -2303,24 +2310,38 @@ export function NewChatLandingScreen() {
       // (which would misleadingly imply approvals are still at e.g. "Default").
       const approvalValue =
         isCodex && bypassSandbox
-          ? CODEX_NATIVE_BYPASS_APPROVAL_OPTION.label
-          : (CODEX_NATIVE_APPROVAL_MODES.find((m) => m.value === approvalMode)?.label ??
-            approvalMode);
+          ? translateConfigOptionLabel(
+              t,
+              CODEX_NATIVE_BYPASS_APPROVAL_OPTION.value,
+              CODEX_NATIVE_BYPASS_APPROVAL_OPTION.label,
+            )
+          : translateConfigOptionLabel(
+              t,
+              approvalMode,
+              CODEX_NATIVE_APPROVAL_MODES.find((m) => m.value === approvalMode)?.label ??
+                approvalMode,
+            );
       const modelRows = isCodex
         ? [
             {
               label: t("model"),
               value:
                 codexModelOptions.find((m) => m.id === pickedModel)?.id ??
-                defaultModelLabel(codexModelOptions, displayModelId),
+                defaultModelLabel(codexModelOptions, displayModelId).replace(
+                  /^Default/,
+                  t("reasoning.default"),
+                ),
             },
           ]
         : [];
       return [...modelRows, { label: t("approval"), value: approvalValue }, ...routingRow];
     }
     if (supportsCursorMode) {
-      const modeValue =
-        CURSOR_NATIVE_EXEC_MODES.find((m) => m.value === cursorExecMode)?.label ?? cursorExecMode;
+      const modeValue = translateConfigOptionLabel(
+        t,
+        cursorExecMode,
+        CURSOR_NATIVE_EXEC_MODES.find((m) => m.value === cursorExecMode)?.label ?? cursorExecMode,
+      );
       return [{ label: t("mode"), value: modeValue }, ...routingRow];
     }
     if (selectedAgent?.harness != null && selectedAgent.harness in brainHarnessLabels) {

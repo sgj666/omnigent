@@ -2601,6 +2601,10 @@ describe("NewChatLandingScreen agent picker + config gear", () => {
       expect(screen.getByText("权限")).toBeTruthy();
       expect(screen.getByTestId("new-chat-landing-config-cancel")).toHaveTextContent("取消");
       expect(screen.getByTestId("new-chat-landing-config-save")).toHaveTextContent("保存");
+      openSelect("new-chat-landing-config-effort");
+      expect(screen.getByRole("option", { name: "低" })).toBeTruthy();
+      expect(screen.getByRole("option", { name: "中" })).toBeTruthy();
+      expect(screen.getByRole("option", { name: "超高" })).toBeTruthy();
     } finally {
       await restore();
     }
@@ -2631,6 +2635,25 @@ describe("NewChatLandingScreen agent picker + config gear", () => {
     // Unset effort reads "Default" (mirrors the modal), never the "—" sentinel.
     expect(tooltip.textContent).toContain("Effort: Default");
     expect(tooltip.textContent).not.toContain("—");
+  });
+
+  it("localizes effort and permission values in the configuration summary", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      renderLanding();
+      openAgentConfig("a1");
+      pickSelectOption("new-chat-landing-config-permission", "规划");
+      pickSelectOption("new-chat-landing-config-effort", "高");
+      saveConfig();
+      fireEvent.focus(screen.getByTestId("new-chat-landing-config-gear"));
+      const tooltip = await screen.findByTestId("new-chat-landing-config-gear-tooltip");
+      expect(tooltip.textContent).toContain("权限: 规划");
+      expect(tooltip.textContent).toContain("推理强度: 高");
+      expect(tooltip.textContent).not.toContain("Plan");
+      expect(tooltip.textContent).not.toContain("High");
+    } finally {
+      await restore();
+    }
   });
 
   it("reflects an armed Codex bypass as the Approval value in the gear tooltip", async () => {

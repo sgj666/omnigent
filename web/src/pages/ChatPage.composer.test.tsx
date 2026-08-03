@@ -8,6 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 // Composer reads workspace files via a TanStack query hook (for "@"-file
 // mentions). These slash-command tests don't exercise that, so stub the hook
@@ -675,6 +676,28 @@ describe("Composer model/effort label", () => {
     // Model black, effort grey.
     expect(within(label()).getByText("Opus")).toHaveClass("text-foreground");
     expect(within(label()).getByText("High")).toHaveClass("text-muted-foreground");
+  });
+
+  it("localizes known reasoning efforts in the composer status label", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      useChatStore.setState({ selectedModel: "opus", selectedEffort: "xhigh" });
+      renderWithTooltips(
+        <Composer
+          {...composerProps({
+            agents: [{ id: "a1", name: "claude" }],
+            selectedAgentId: "a1",
+            modelPickerKind: "claude",
+            showModels: true,
+            codexModelOptions: CLAUDE_MODEL_OPTIONS,
+          })}
+        />,
+      );
+      expect(label()).toHaveTextContent("超高");
+      expect(label()).not.toHaveTextContent("xHigh");
+    } finally {
+      await restore();
+    }
   });
 
   it("reads 'Smart Routing' with no model/effort when routing is on", () => {
