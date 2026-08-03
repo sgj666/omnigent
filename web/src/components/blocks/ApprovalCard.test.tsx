@@ -929,6 +929,43 @@ describe("ApprovalCard — AskUserQuestion form (parsed from content_preview)", 
     expect(screen.getByText("First?")).toBeDefined();
   });
 
+  it("localizes the question progress label", async () => {
+    await withTestLanguage("zh-CN", () => {
+      render(
+        <ApprovalCard
+          elicitationId="elic_carousel_zh"
+          message="Claude wants to call AskUserQuestion"
+          phase="pre_tool_use"
+          policyName="claude_native_permission"
+          contentPreview=""
+          requestedSchema={{}}
+          status="pending"
+          response={null}
+          askUserQuestion={{
+            questions: [
+              {
+                question: "First?",
+                header: "",
+                options: [{ label: "A", description: "" }],
+                multiSelect: false,
+              },
+              {
+                question: "Second?",
+                header: "",
+                options: [{ label: "B", description: "" }],
+                multiSelect: false,
+              },
+            ],
+          }}
+        />,
+      );
+
+      expect(screen.getByTestId("ask-user-question-progress")).toHaveTextContent(
+        "第 1 项，共 2 项:",
+      );
+    });
+  });
+
   it("hides Submit until the carousel is on the final question", () => {
     // Submit is the only path to commit the form, so it only
     // makes sense on the last slide — earlier slides expose Next.
