@@ -24,11 +24,24 @@ from omnigent.entities.conversation import (
     synthesize_conversation_title,
 )
 from omnigent.entities.device_grant import DeviceGrant
+from omnigent.entities.feishu import (
+    FeishuInstallation,
+    FeishuInstallationStatus,
+    FeishuPairing,
+)
 from omnigent.entities.file import StoredFile
 from omnigent.entities.pagination import PagedList
 from omnigent.entities.permission import ResolvedAccess, SessionPermission
 from omnigent.entities.policy import Policy
 from omnigent.entities.project import Project
+from omnigent.entities.run import (
+    Attempt,
+    AttemptStatus,
+    Run,
+    RunStatus,
+    Task,
+    TaskStatus,
+)
 from omnigent.entities.scheduled_task import ScheduledTask, ScheduledTaskRun
 from omnigent.entities.session_resources import (
     DEFAULT_ENVIRONMENT_ID,
@@ -37,6 +50,8 @@ from omnigent.entities.session_resources import (
     get_resource_by_id,
     resolve_terminal_entry_by_resource_id,
 )
+from omnigent.entities.team import AgentProfile, AgentRole, Team, TeamStatus
+from omnigent.entities.workspace_bundle import RepositorySpec, WorkspaceBundle
 
 __all__ = [
     "DEFAULT_ENVIRONMENT_ID",
@@ -44,6 +59,10 @@ __all__ = [
     "Account",
     "AccountToken",
     "Agent",
+    "AgentProfile",
+    "AgentRole",
+    "Attempt",
+    "AttemptStatus",
     "Comment",
     "CommentsFingerprint",
     "CompactionData",
@@ -51,6 +70,9 @@ __all__ = [
     "ConversationItem",
     "DeviceGrant",
     "ErrorData",
+    "FeishuInstallation",
+    "FeishuInstallationStatus",
+    "FeishuPairing",
     "FunctionCallData",
     "FunctionCallOutputData",
     "ItemData",
@@ -62,16 +84,24 @@ __all__ = [
     "Policy",
     "Project",
     "ReasoningData",
+    "RepositorySpec",
     "ResolvedAccess",
     "ResourceEventData",
     "RoutingDecisionData",
+    "Run",
+    "RunStatus",
     "ScheduledTask",
     "ScheduledTaskRun",
     "SessionPermission",
     "SessionResourceView",
     "SlashCommandData",
     "StoredFile",
+    "Task",
+    "TaskStatus",
+    "Team",
+    "TeamStatus",
     "TerminalCommandData",
+    "WorkspaceBundle",
     "filter_resources_by_type",
     "get_resource_by_id",
     "parse_item_data",
