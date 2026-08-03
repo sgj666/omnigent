@@ -5,6 +5,21 @@
   "shell": "Shell",
   "shells": "Shells",
   "workspace": "Workspace",
+  "fileMention": {
+    "hint": "↵ open · ⇥ attach",
+    "open": "Open {{name}}",
+    "attach": "Attach {{name}}",
+    "attachFolder": "Attach whole folder {{name}}",
+    "folder": "folder"
+  },
+  "imageLightbox": {
+    "zoomImage": "Zoom image",
+    "zoomImageWithAlt": "Zoom image: {{alt}}",
+    "zoomOut": "Zoom out",
+    "resetZoom": "Reset zoom",
+    "zoomIn": "Zoom in",
+    "preview": "Image preview"
+  },
   "files": "Files",
   "agents": "Agents",
   "agentsCount": "Agents {{count}}",

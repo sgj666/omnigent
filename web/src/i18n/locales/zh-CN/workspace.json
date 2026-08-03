@@ -5,6 +5,21 @@
   "shell": "终端",
   "shells": "终端",
   "workspace": "工作区",
+  "fileMention": {
+    "hint": "↵ 打开 · ⇥ 附加",
+    "open": "打开 {{name}}",
+    "attach": "附加 {{name}}",
+    "attachFolder": "附加整个文件夹 {{name}}",
+    "folder": "文件夹"
+  },
+  "imageLightbox": {
+    "zoomImage": "放大图片",
+    "zoomImageWithAlt": "放大图片：{{alt}}",
+    "zoomOut": "缩小",
+    "resetZoom": "重置缩放",
+    "zoomIn": "放大",
+    "preview": "图片预览"
+  },
   "files": "文件",
   "agents": "智能体",
   "agentsCount": "智能体 {{count}}",

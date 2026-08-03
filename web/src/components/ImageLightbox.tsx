@@ -10,6 +10,7 @@ import {
 } from "react";
 import * as DialogPrimitive from "radix-ui/dialog";
 import { XIcon, ZoomInIcon, ZoomOutIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { getEmbedRoot } from "@/lib/host";
 import { Button } from "@/components/ui/button";
@@ -59,10 +60,11 @@ export interface ZoomableImageProps extends React.ComponentProps<"img"> {
  */
 export function ZoomableImage({ src, alt, className, ...imgProps }: ZoomableImageProps) {
   const { open } = useLightbox();
+  const { t } = useTranslation("workspace");
   return (
     <button
       type="button"
-      aria-label={alt ? `Zoom image: ${alt}` : "Zoom image"}
+      aria-label={alt ? t("imageLightbox.zoomImageWithAlt", { alt }) : t("imageLightbox.zoomImage")}
       className="m-0 inline-flex max-w-full cursor-zoom-in appearance-none border-0 bg-transparent p-0 leading-none"
       onClick={() => {
         if (src) open({ src, alt });
@@ -83,6 +85,7 @@ export function ZoomableImage({ src, alt, className, ...imgProps }: ZoomableImag
  * so the zoomed image never escapes the card.
  */
 function ZoomViewer({ image }: { image: LightboxImage }) {
+  const { t } = useTranslation("workspace");
   const viewportRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -165,7 +168,7 @@ function ZoomViewer({ image }: { image: LightboxImage }) {
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Zoom out"
+          aria-label={t("imageLightbox.zoomOut")}
           disabled={zoom <= MIN_ZOOM}
           onClick={() => applyZoom(zoom - ZOOM_STEP * 2)}
         >
@@ -173,7 +176,7 @@ function ZoomViewer({ image }: { image: LightboxImage }) {
         </Button>
         <button
           type="button"
-          aria-label="Reset zoom"
+          aria-label={t("imageLightbox.resetZoom")}
           className="min-w-[3ch] cursor-pointer text-center text-xs tabular-nums text-muted-foreground hover:text-foreground"
           onClick={resetView}
         >
@@ -182,7 +185,7 @@ function ZoomViewer({ image }: { image: LightboxImage }) {
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Zoom in"
+          aria-label={t("imageLightbox.zoomIn")}
           disabled={zoom >= MAX_ZOOM}
           onClick={() => applyZoom(zoom + ZOOM_STEP * 2)}
         >
@@ -201,6 +204,7 @@ function ZoomViewer({ image }: { image: LightboxImage }) {
  * lands "outside" — closing is Escape or the x only, by design.
  */
 export function ImageLightboxProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation("workspace");
   const [image, setImage] = useState<LightboxImage | null>(null);
 
   const open = useCallback((img: LightboxImage) => setImage(img), []);
@@ -240,7 +244,7 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
             onInteractOutside={(e) => e.preventDefault()}
           >
             <DialogPrimitive.Title className="sr-only">
-              {image?.alt || "Image preview"}
+              {image?.alt || t("imageLightbox.preview")}
             </DialogPrimitive.Title>
             {/* key by src so zoom/pan state resets when a new image opens. */}
             {image && <ZoomViewer key={image.src} image={image} />}
@@ -251,7 +255,7 @@ export function ImageLightboxProvider({ children }: { children: React.ReactNode 
                 className="absolute top-3 right-3 bg-background/70 hover:bg-background/90"
               >
                 <XIcon />
-                <span className="sr-only">Close</span>
+                <span className="sr-only">{t("close")}</span>
               </Button>
             </DialogPrimitive.Close>
           </DialogPrimitive.Content>

@@ -127,7 +127,7 @@ describe("ExecutionLogsPanel open/close gating", () => {
   it("fires onClose when the header close button is clicked", () => {
     // WHY: the X button is the primary dismiss affordance.
     const { onClose } = renderPanel({ open: true });
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close panel" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
