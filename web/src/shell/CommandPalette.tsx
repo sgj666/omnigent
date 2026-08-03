@@ -39,6 +39,8 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { conversationDisplayLabel, getConversationAgentType } from "./sidebarNav";
+import { useTranslation } from "react-i18next";
+import "@/i18n";
 
 export interface CommandPaletteProps {
   open: boolean;
@@ -100,6 +102,7 @@ export function CommandPalette({
   onToggleLeftSidebar,
   onToggleRightSidebar,
 }: CommandPaletteProps) {
+  const { t } = useTranslation("common");
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -123,48 +126,48 @@ export function CommandPalette({
     () => [
       {
         id: "new-chat",
-        label: "New chat",
+        label: t("shell.newChatAction"),
         icon: SquarePenIcon,
         keywords: ["compose", "start", "new session"],
         run: () => navigate("/"),
       },
       {
         id: "go-inbox",
-        label: "Go to Inbox",
+        label: t("shell.goToInbox"),
         icon: InboxIcon,
         keywords: ["notifications", "comments", "needs response"],
         run: () => navigate("/inbox"),
       },
       {
         id: "go-tasks",
-        label: "Go to Automations",
+        label: t("shell.goToAutomations"),
         icon: CalendarClockIcon,
         keywords: ["scheduled", "recurring", "cron", "automation", "schedule"],
         run: () => navigate("/tasks"),
       },
       {
         id: "go-settings",
-        label: "Go to Settings",
+        label: t("shell.goToSettings"),
         icon: SettingsIcon,
         keywords: ["preferences", "configuration", "account"],
         run: () => navigate("/settings"),
       },
       {
         id: "toggle-left-sidebar",
-        label: "Toggle conversations sidebar",
+        label: t("shell.toggleConversationsSidebar"),
         icon: PanelLeftIcon,
         keywords: ["panel", "left", "sessions list"],
         run: onToggleLeftSidebar,
       },
       {
         id: "toggle-right-sidebar",
-        label: "Toggle workspace sidebar",
+        label: t("shell.toggleWorkspaceSidebar"),
         icon: PanelRightIcon,
         keywords: ["panel", "right", "files", "terminal"],
         run: onToggleRightSidebar,
       },
     ],
-    [navigate, onToggleLeftSidebar, onToggleRightSidebar],
+    [navigate, onToggleLeftSidebar, onToggleRightSidebar, t],
   );
 
   const filteredActions = useMemo(() => {
@@ -222,23 +225,23 @@ export function CommandPalette({
         className="top-1/4 translate-y-0 overflow-hidden p-0 sm:max-w-2xl"
         showCloseButton={false}
       >
-        <DialogTitle className="sr-only">Command palette</DialogTitle>
+        <DialogTitle className="sr-only">{t("shell.commandPalette")}</DialogTitle>
         {/* shouldFilter=false: the server filters sessions and we filter actions
             (see file header). vimBindings=false: keep Ctrl+K/J from doubling as
             list-nav on Win/Linux, where Ctrl+K is also the opener. */}
-        <Command shouldFilter={false} vimBindings={false} label="Command palette">
+        <Command shouldFilter={false} vimBindings={false} label={t("shell.commandPalette")}>
           <CommandInput
             value={query}
             onValueChange={setQuery}
-            placeholder="Search sessions or run a command"
+            placeholder={t("shell.searchSessionsOrCommand")}
             data-testid="command-palette-input"
           />
           <CommandList>
             <CommandEmpty>
-              {isFetching && debouncedQuery ? "Searching…" : "No results found"}
+              {isFetching && debouncedQuery ? t("shell.searching") : t("shell.noResults")}
             </CommandEmpty>
             {sessions.length > 0 && (
-              <CommandGroup heading="Sessions">
+              <CommandGroup heading={t("shell.sessions")}>
                 {sessions.map((s) => (
                   // pl-6 indents the label to line up with the icon-prefixed
                   // Action rows below (their 16px icon + 8px gap), so the two
@@ -267,7 +270,7 @@ export function CommandPalette({
               </CommandGroup>
             )}
             {filteredActions.length > 0 && (
-              <CommandGroup heading="Actions">
+              <CommandGroup heading={t("shell.actions")}>
                 {filteredActions.map((a) => {
                   const Icon = a.icon;
                   return (

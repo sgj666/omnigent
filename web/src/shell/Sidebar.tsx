@@ -150,6 +150,8 @@ import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useResizableSidebar } from "@/hooks/useResizableSidebar";
 import { useSessionSwitchHotkey } from "@/hooks/useSessionSwitchHotkey";
 import { usePinnedSessionHotkeys } from "@/hooks/usePinnedSessionHotkeys";
+import { useTranslation } from "react-i18next";
+import "@/i18n";
 import { isCurrentServerLocal } from "@/lib/serverOrigin";
 import { NewProjectButton } from "./NewProjectButton";
 import { SettingsSidebarBody, useSettingsRoute, useTrackSettingsReturn } from "./settingsNav";
@@ -424,6 +426,7 @@ export function useMigrateLocalPinsToServer(
 }
 
 export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: SidebarProps) {
+  const { t } = useTranslation("common");
   const [selectionMode, setSelectionMode] = useState(false);
   // Which rows the current selection targets: the flat "Sessions" list, or the
   // sessions nested inside project folders. Set when selection mode is entered
@@ -700,7 +703,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    aria-label="Search"
+                    aria-label={t("shell.search")}
                     onClick={() => onOpenSearch?.()}
                     className="size-6 rounded-sm text-muted-foreground hover:text-foreground"
                     data-testid="sidebar-search-button"
@@ -708,7 +711,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                     <SearchIcon className="size-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Search</TooltipContent>
+                <TooltipContent side="bottom">{t("shell.search")}</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -716,7 +719,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                     asChild
                     variant="ghost"
                     size="icon-xs"
-                    aria-label="Settings"
+                    aria-label={t("shell.settings")}
                     className="size-6 rounded-sm text-muted-foreground hover:text-foreground"
                   >
                     {/* No onNavClick: on mobile, entering Settings keeps the
@@ -726,7 +729,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                     </Link>
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Settings</TooltipContent>
+                <TooltipContent side="bottom">{t("shell.settings")}</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -734,7 +737,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                     type="button"
                     variant="ghost"
                     size="icon-xs"
-                    aria-label="Close sidebar"
+                    aria-label={t("shell.closeSidebar")}
                     onClick={onClose}
                     className="size-6 rounded-sm text-muted-foreground hover:text-foreground"
                   >
@@ -746,7 +749,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                 </TooltipTrigger>
                 {/* Bottom placement keeps the tooltip clear of the macOS
                 Electron shell's traffic lights at the window's top edge. */}
-                <TooltipContent side="bottom">Collapse sidebar</TooltipContent>
+                <TooltipContent side="bottom">{t("shell.collapseSidebar")}</TooltipContent>
               </Tooltip>
             </div>
           </div>
@@ -782,7 +785,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                 }}
               >
                 <SquarePenIcon className="size-3.5 text-muted-foreground" />
-                New session
+                {t("shell.newSession")}
               </Link>
             </Button>
             {/* Keep Scheduled in the primary nav group with the same row treatment as New session. */}
@@ -801,7 +804,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
             >
               <Link to="/tasks" onClick={onNavClick}>
                 <ClockIcon className="size-3.5 text-muted-foreground" />
-                Automations
+                {t("shell.automations")}
               </Link>
             </Button>
             <Button
@@ -816,13 +819,13 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
             >
               <Link to="/inbox" onClick={onNavClick}>
                 <InboxIcon className="size-3.5 text-muted-foreground" />
-                Inbox
+                {t("shell.inbox")}
                 {inboxCount > 0 && (
                   <span
                     aria-label={
                       inboxCount === 1
-                        ? "1 inbox item waiting"
-                        : `${inboxCount} inbox items waiting`
+                        ? t("shell.inboxWaiting_one", { count: inboxCount })
+                        : t("shell.inboxWaiting_other", { count: inboxCount })
                     }
                     className="ml-auto inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-warning/15 px-1 text-10 font-medium text-warning tabular-nums"
                   >
@@ -851,14 +854,14 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                     data-testid="sidebar-tab-mine"
                     className="sidebar-compact-text min-w-0 font-normal hover:bg-[var(--sidebar-hover)] data-active:bg-[var(--sidebar-active)] data-active:text-[var(--sidebar-active-foreground)] data-active:shadow-none"
                   >
-                    <span className="min-w-0 truncate">My sessions</span>
+                    <span className="min-w-0 truncate">{t("shell.mySessions")}</span>
                   </TabsTrigger>
                   <TabsTrigger
                     value="shared"
                     data-testid="sidebar-tab-shared"
                     className="sidebar-compact-text min-w-0 font-normal hover:bg-[var(--sidebar-hover)] data-active:bg-[var(--sidebar-active)] data-active:text-[var(--sidebar-active-foreground)] data-active:shadow-none"
                   >
-                    <span className="min-w-0 truncate">Shared with me</span>
+                    <span className="min-w-0 truncate">{t("shell.sharedWithMe")}</span>
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
@@ -916,6 +919,7 @@ function InfiniteScrollSentinel({
   scrollRoot: RefObject<HTMLElement | null>;
   indent?: boolean;
 }) {
+  const { t } = useTranslation("common");
   const ref = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const sentinel = ref.current;
@@ -947,10 +951,10 @@ function InfiniteScrollSentinel({
       {isFetching ? (
         <>
           <Loader2Icon className="size-3 animate-spin" />
-          Loading…
+          {t("shell.loading")}
         </>
       ) : (
-        "Load more"
+        t("shell.loadMore")
       )}
     </button>
   );
@@ -1187,6 +1191,7 @@ function ConversationList({
   onExitSelectionMode,
   getVisibleIdsRef,
 }: ConversationListProps) {
+  const { t } = useTranslation("common");
   // Viewer id for the owner-based My/Shared split below.
   const viewerId = useViewerId();
   // Host metadata is shared by every row tooltip. Resolve it once at the list
@@ -1675,22 +1680,22 @@ function ConversationList({
   const { fetchNextPage, isFetchingNextPage } = conversationsQuery;
 
   if (conversationsQuery.isLoading) {
-    return <p className="px-2 py-1 text-muted-foreground text-xs">Loading…</p>;
+    return <p className="px-2 py-1 text-muted-foreground text-xs">{t("shell.loading")}</p>;
   }
   if (conversationsQuery.isError) {
     const err = conversationsQuery.error;
     return (
       <p className="px-2 py-1 text-destructive text-xs">
-        Failed to load: {err instanceof Error ? err.message : String(err)}
+        {t("shell.loading")} — {err instanceof Error ? err.message : String(err)}
       </p>
     );
   }
   const showShared = activeTab === "shared";
   const emptyMessage = searchQuery
-    ? "No matching conversations"
+    ? t("shell.noMatchingConversations")
     : showShared
-      ? "No sessions shared with you"
-      : "No active sessions";
+      ? t("shell.noSharedSessions")
+      : t("shell.noActiveSessions");
 
   // Archived sessions are surfaced on the Settings page, not here, so they
   // don't count toward the sidebar's empty-state threshold. Each project
@@ -1762,7 +1767,7 @@ function ConversationList({
                   // an unpinned session; outline-only highlight.
                   <PinDropZone active={activeDrag != null && !activeDrag.isPinned}>
                     <ConversationSection
-                      title="Pinned"
+                      title={t("shell.pinned")}
                       conversations={sections.pinned}
                       pinnedConversationIds={pinnedConversationIds}
                       collapsed={effectiveCollapsedSections.includes("Pinned")}
@@ -1784,7 +1789,7 @@ function ConversationList({
               (create-empty) is discoverable — projects are a My-sessions tool. */}
                 {activeTab !== "shared" && (
                   <SectionGroup
-                    title="Projects"
+                    title={t("shell.projects")}
                     collapsed={effectiveCollapsedSections.includes("Projects")}
                     onToggleCollapsed={() => effectiveToggleSectionCollapsed("Projects")}
                     afterHeader={
@@ -1841,7 +1846,7 @@ function ConversationList({
                     {sections.projectGroups.length === 0 &&
                       !effectiveCollapsedSections.includes("Projects") && (
                         <p className="px-3 py-1.5 text-xs text-muted-foreground">
-                          No projects yet. Create one to group your sessions.
+                          {t("shell.noProjectsYet")}
                         </p>
                       )}
                   </SectionGroup>
@@ -1857,7 +1862,7 @@ function ConversationList({
                     }
                   >
                     <ConversationSection
-                      title="Sessions"
+                      title={t("shell.sessions")}
                       conversations={sections.sessions}
                       pinnedConversationIds={pinnedConversationIds}
                       collapsed={effectiveCollapsedSections.includes("Chats")}
@@ -1886,7 +1891,7 @@ function ConversationList({
                                 type="button"
                                 variant="ghost"
                                 size="icon-xs"
-                                aria-label="Select sessions"
+                                aria-label={t("shell.selectSessions")}
                                 data-testid="toggle-selection-mode"
                                 onClick={(event) => {
                                   event.stopPropagation();
@@ -1896,7 +1901,9 @@ function ConversationList({
                                 <ListChecksIcon className="size-3.5" />
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent side="bottom">Select sessions</TooltipContent>
+                            <TooltipContent side="bottom">
+                              {t("shell.selectSessions")}
+                            </TooltipContent>
                           </Tooltip>
                         ) : undefined
                       }
@@ -2465,6 +2472,7 @@ function ConversationMenuItems({
   setMenuOpen: (open: boolean) => void;
   runArchive: () => void;
 }) {
+  const { t } = useTranslation("common");
   // Mobile lacks the horizontal room for a side-opening submenu, so the
   // project picker replaces the menu body in place instead of flying out
   // to the side. `view` swaps between the main actions and that sub-view;
@@ -2508,7 +2516,7 @@ function ConversationMenuItems({
           }}
         >
           <ChevronLeftIcon className="size-3.5" />
-          Back
+          {t("shell.back")}
         </C.Item>
         <C.Separator />
         <ProjectPickerMenu
@@ -2532,7 +2540,7 @@ function ConversationMenuItems({
           onSelect={() => onTogglePinned(conversation.id)}
         >
           {isPinned ? <PinOffIcon className="size-3.5" /> : <PinIcon className="size-3.5" />}
-          {isPinned ? "Unpin" : "Pin"}
+          {isPinned ? t("shell.unpin") : t("shell.pin")}
         </C.Item>
       )}
       {/* Single-user mode has no other users to share with — omit the item
@@ -2541,7 +2549,7 @@ function ConversationMenuItems({
         (isOwner && !sharingOff ? (
           <C.Item data-testid="share-conversation" onSelect={() => setShareOpen(true)}>
             <ShareIcon className="size-3.5" />
-            Share
+            {t("shell.share")}
           </C.Item>
         ) : (
           <Tooltip>
@@ -2549,7 +2557,7 @@ function ConversationMenuItems({
               <div>
                 <C.Item data-testid="share-conversation" disabled>
                   <ShareIcon className="size-3.5" />
-                  Share
+                  {t("shell.share")}
                 </C.Item>
               </div>
             </TooltipTrigger>
@@ -2565,7 +2573,7 @@ function ConversationMenuItems({
       {isOwner ? (
         <C.Item data-testid="rename-conversation" onSelect={() => setIsEditing(true)}>
           <PencilIcon className="size-3.5" />
-          Rename
+          {t("shell.rename")}
         </C.Item>
       ) : (
         <Tooltip>
@@ -2573,7 +2581,7 @@ function ConversationMenuItems({
             <div>
               <C.Item data-testid="rename-conversation" disabled>
                 <PencilIcon className="size-3.5" />
-                Rename
+                {t("shell.rename")}
               </C.Item>
             </div>
           </TooltipTrigger>
@@ -2594,7 +2602,7 @@ function ConversationMenuItems({
           }}
         >
           <MailIcon className="size-3.5" />
-          Mark as unread
+          {t("shell.markUnread")}
         </C.Item>
       )}
       {/* Projects are a My-sessions-only tool, so filing is owner-only — a
@@ -2615,13 +2623,13 @@ function ConversationMenuItems({
             <FolderInputIcon className="size-3.5" />
             {/* "Add to project" until the session is filed, then "Move
                 session" to switch or remove it. */}
-            {currentProject ? "Move session" : "Add to project"}
+            {currentProject ? t("shell.moveSession") : t("shell.addToProject")}
           </C.Item>
         ) : (
           <C.Sub>
             <C.SubTrigger data-testid="move-to-project" className="whitespace-nowrap">
               <FolderInputIcon className="size-3.5" />
-              {currentProject ? "Move session" : "Add to project"}
+              {currentProject ? t("shell.moveSession") : t("shell.addToProject")}
             </C.SubTrigger>
             <C.SubContent className="w-56 p-1 [&_[role=menuitem]]:text-xs">
               {/* A native submenu flyout — no separate popover layer, so no
@@ -2656,7 +2664,7 @@ function ConversationMenuItems({
             }}
           >
             <CircleStopIcon className="size-3.5" />
-            Stop session
+            {t("shell.stopSession")}
           </C.Item>
         ) : (
           <Tooltip>
@@ -2664,7 +2672,7 @@ function ConversationMenuItems({
               <div>
                 <C.Item data-testid="stop-conversation" disabled>
                   <CircleStopIcon className="size-3.5" />
-                  Stop session
+                  {t("shell.stopSession")}
                 </C.Item>
               </div>
             </TooltipTrigger>
@@ -2680,7 +2688,7 @@ function ConversationMenuItems({
           ) : (
             <ArchiveIcon className="size-3.5" />
           )}
-          {isArchived ? "Unarchive" : "Archive"}
+          {isArchived ? t("shell.unarchive") : t("shell.archive")}
         </C.Item>
       ) : (
         <Tooltip>
@@ -2692,7 +2700,7 @@ function ConversationMenuItems({
                 ) : (
                   <ArchiveIcon className="size-3.5" />
                 )}
-                {isArchived ? "Unarchive" : "Archive"}
+                {isArchived ? t("shell.unarchive") : t("shell.archive")}
               </C.Item>
             </div>
           </TooltipTrigger>
@@ -2708,7 +2716,7 @@ function ConversationMenuItems({
           onSelect={() => setDeleteOpen(true)}
         >
           <Trash2Icon className="size-3.5" />
-          Delete
+          {t("shell.delete")}
         </C.Item>
       ) : (
         <Tooltip>
@@ -2716,7 +2724,7 @@ function ConversationMenuItems({
             <div>
               <C.Item data-testid="delete-conversation" disabled>
                 <Trash2Icon className="size-3.5" />
-                Delete
+                {t("shell.delete")}
               </C.Item>
             </div>
           </TooltipTrigger>
@@ -2803,6 +2811,7 @@ function ConversationRow({
   onToggleSelected: (conversationId: string, shiftKey?: boolean) => void;
   onProjectAssigned?: (projectName: string) => void;
 }) {
+  const { t } = useTranslation("common");
   const hostsById = useContext(HostsByIdContext);
   // `useParams` reads from the active matched route. On `/`, the param is
   // undefined; on `/c/:conversationId`, it carries the active id.
@@ -3412,17 +3421,14 @@ function ConversationRow({
           onClick={(e) => e.stopPropagation()}
         >
           <DialogHeader>
-            <DialogTitle>Delete conversation?</DialogTitle>
-            <DialogDescription>
-              <span className="font-medium break-all">{label}</span> and all of its history will be
-              removed. This cannot be undone.
-            </DialogDescription>
+            <DialogTitle>{t("shell.deleteConversationQuestion")}</DialogTitle>
+            <DialogDescription>{t("shell.deleteDescription", { label })}</DialogDescription>
           </DialogHeader>
           {gitBranch !== null && (
             <div className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
               <p className="text-xs text-muted-foreground">
                 Optionally clean up the git worktree. These actions are{" "}
-                <span className="font-semibold text-destructive">irreversible</span>.
+                <span className="font-semibold text-destructive">{t("shell.irreversible")}</span>.
               </p>
               <label className="flex cursor-pointer items-start gap-2 text-sm">
                 <input
@@ -3434,7 +3440,7 @@ function ConversationRow({
                 />
                 <GitBranchIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                 <span className="min-w-0">
-                  Delete local branch{" "}
+                  {t("shell.deleteBranch")}{" "}
                   <code className="break-all rounded bg-muted px-1 py-0.5 text-xs">
                     {gitBranch}
                   </code>
@@ -3451,7 +3457,7 @@ function ConversationRow({
               onClick={() => setDeleteOpen(false)}
               disabled={del.isPending}
             >
-              Cancel
+              {t("shell.cancel")}
             </Button>
             <Button
               type="button"
@@ -3459,7 +3465,7 @@ function ConversationRow({
               onClick={confirmDelete}
               disabled={del.isPending}
             >
-              Delete
+              {t("shell.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -3473,15 +3479,12 @@ function ConversationRow({
           onClick={(e) => e.stopPropagation()}
         >
           <DialogHeader>
-            <DialogTitle>Stop session?</DialogTitle>
-            <DialogDescription>
-              This terminates the running session for <span className="font-medium">{label}</span>{" "}
-              and stops its runner. The conversation and its history are kept.
-            </DialogDescription>
+            <DialogTitle>{t("shell.stopSessionQuestion")}</DialogTitle>
+            <DialogDescription>{t("shell.stopDescription", { label })}</DialogDescription>
           </DialogHeader>
           {stopSession.isError && (
             <p className="text-sm text-destructive" role="alert">
-              Couldn't stop the session
+              {t("shell.couldNotStop")}
               {stopSession.error instanceof Error && stopSession.error.message
                 ? `: ${stopSession.error.message}`
                 : " — it may still be running"}
@@ -3495,7 +3498,7 @@ function ConversationRow({
               onClick={() => setStopOpen(false)}
               disabled={stopSession.isPending}
             >
-              Cancel
+              {t("shell.cancel")}
             </Button>
             <Button
               type="button"
@@ -3505,7 +3508,7 @@ function ConversationRow({
               }
               disabled={stopSession.isPending}
             >
-              Stop session
+              {t("shell.stopSession")}
             </Button>
           </DialogFooter>
         </DialogContent>
