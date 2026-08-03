@@ -26,6 +26,7 @@
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { ThemeProvider as NextThemesProvider } from "next-themes";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import "./i18n";
 import App from "./App";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { ImageLightboxProvider } from "./components/ImageLightbox";

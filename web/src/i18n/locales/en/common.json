@@ -1,0 +1,10 @@
+{
+  "meta": { "languageName": "English" },
+  "documentTitle": "Omnigent",
+  "terms": {
+    "agent": "Agent",
+    "harness": "Harness",
+    "reasoningEffort": "Reasoning effort",
+    "token": "Token"
+  }
+}
