@@ -81,6 +81,10 @@ describe("bundled localization resources", () => {
       unknownCommand: "未知命令：{{command}}。可用命令：{{available}}",
       closedSubAgent: "此子智能体会话已关闭",
       readOnlySubAgent: "Claude Code 子智能体为只读",
+      subAgentDefault: "子智能体",
+      mcpMoreNames: "还有 {{count}} 个",
+      unknownError: "未知错误",
+      commandModelDefault: "智能体默认模型",
     });
     expect(resources["zh-CN"].chat.contextModel).toContain("{{model}}");
     expect(resources["zh-CN"].chat.contextModelOverride).toContain("{{model}}");
