@@ -39,6 +39,18 @@
   "submit": "Submit",
   "reject": "Reject",
   "questionOf": "Question {{current}} of {{total}}",
+  "slashCommand": {
+    "skill": "Skill",
+    "command": "Command",
+    "arguments": "Arguments",
+    "output": "Output"
+  },
+  "terminalCommand": {
+    "output": "output",
+    "noOutput": "(no output)",
+    "stdout": "stdout",
+    "stderr": "stderr"
+  },
   "slashDescriptions": {
     "compact": "Compact conversation context to free up space",
     "context": "Show context window usage for this session",

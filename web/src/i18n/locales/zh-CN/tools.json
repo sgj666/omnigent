@@ -39,6 +39,18 @@
   "submit": "提交",
   "reject": "拒绝",
   "questionOf": "第 {{current}} 项，共 {{total}} 项",
+  "slashCommand": {
+    "skill": "技能",
+    "command": "命令",
+    "arguments": "参数",
+    "output": "输出"
+  },
+  "terminalCommand": {
+    "output": "输出",
+    "noOutput": "（无输出）",
+    "stdout": "标准输出",
+    "stderr": "标准错误"
+  },
   "slashDescriptions": {
     "compact": "压缩会话上下文以释放空间",
     "context": "显示此会话的上下文窗口用量",

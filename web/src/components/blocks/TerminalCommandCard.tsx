@@ -7,6 +7,7 @@
 //            output doesn't dominate the conversation view.
 
 import { ChevronRightIcon, SquareTerminalIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { CodeBlock, CodeBlockHeader, CodeBlockTitle } from "@/components/ai-elements/code-block";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
@@ -18,6 +19,7 @@ interface TerminalCommandCardProps {
 }
 
 export function TerminalCommandCard({ kind, input, stdout, stderr }: TerminalCommandCardProps) {
+  const { t } = useTranslation("tools");
   if (kind === "input") {
     return (
       <div
@@ -47,7 +49,7 @@ export function TerminalCommandCard({ kind, input, stdout, stderr }: TerminalCom
     >
       <SquareTerminalIcon className="size-3 shrink-0 text-emerald-500 dark:text-emerald-400" />
       <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground/80">
-        {hasOutput ? "output" : "(no output)"}
+        {hasOutput ? t("terminalCommand.output") : t("terminalCommand.noOutput")}
       </span>
       {hasOutput && (
         <ChevronRightIcon className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
@@ -67,7 +69,9 @@ export function TerminalCommandCard({ kind, input, stdout, stderr }: TerminalCom
           <CodeBlock code={stdout as string} language="bash">
             <CodeBlockHeader>
               <CodeBlockTitle className="min-w-0">
-                <span className="truncate font-medium uppercase tracking-wide">stdout</span>
+                <span className="truncate font-medium uppercase tracking-wide">
+                  {t("terminalCommand.stdout")}
+                </span>
               </CodeBlockTitle>
             </CodeBlockHeader>
           </CodeBlock>
@@ -76,7 +80,9 @@ export function TerminalCommandCard({ kind, input, stdout, stderr }: TerminalCom
           <CodeBlock code={stderr as string} language="bash">
             <CodeBlockHeader>
               <CodeBlockTitle className="min-w-0">
-                <span className="truncate font-medium uppercase tracking-wide">stderr</span>
+                <span className="truncate font-medium uppercase tracking-wide">
+                  {t("terminalCommand.stderr")}
+                </span>
               </CodeBlockTitle>
             </CodeBlockHeader>
           </CodeBlock>
