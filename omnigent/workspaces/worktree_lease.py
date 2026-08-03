@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -93,6 +93,7 @@ class WorktreeLeaseManager:
         repositories: Iterable[WorkspaceRepository],
         attempt_id: str,
         owner_id: str,
+        branch_names: Mapping[str, str] | None = None,
     ) -> tuple[WorktreeLease, ...]:
         """Atomically acquire one isolated worktree lease per repository.
 
@@ -130,7 +131,9 @@ class WorktreeLeaseManager:
                         host_registry=host_registry,
                         host_conn=host_conn,
                         repo_path=repo_path,
-                        branch_name=_branch_name(attempt_id, repository.id),
+                        branch_name=(branch_names or {}).get(
+                            repository.id, _branch_name(attempt_id, repository.id)
+                        ),
                         base_branch=base_branch,
                     )
                     created.append(
@@ -205,7 +208,13 @@ class WorktreeLeaseManager:
             for lease in expired:
                 if lease.status is LeaseStatus.ACTIVE:
                     lease.status = LeaseStatus.EXPIRED
-            await self._release_locked(host_registry, host_conn, expired)
+            try:
+                await self._release_locked(host_registry, host_conn, expired)
+            except Exception:
+                for lease in expired:
+                    if lease.status is not LeaseStatus.RELEASED:
+                        lease.status = LeaseStatus.RECOVERY_REQUIRED
+                raise
         finally:
             for lock in reversed(locks):
                 lock.release()

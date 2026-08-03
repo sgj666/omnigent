@@ -16,7 +16,7 @@ import urllib.parse
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import httpx
 from fastapi import (
@@ -166,6 +166,9 @@ from omnigent.server.schemas import (
     SkillSummary,
     ToolOutputDeltaEvent,
 )
+
+if TYPE_CHECKING:
+    from omnigent.workspaces.worktree_lease import WorktreeLease
 from omnigent.session_lifecycle import (
     labels_with_closed_status,
     title_without_closed_marker,
@@ -7144,6 +7147,8 @@ async def _create_session_worktree(
     source_repo: str | None,
     git: SessionGitOptions,
     request: Request,
+    attempt_id: str | None = None,
+    lease_owner_id: str | None = None,
 ) -> CreatedWorktree:
     """
     Create a git worktree on the host for a new session branch.
@@ -7173,8 +7178,10 @@ async def _create_session_worktree(
     from omnigent.server.routes._host_worktree import (
         WorktreeHostUnavailableError,
         WorktreeProxyError,
+        acquire_attempt_worktree_leases,
         create_worktree_on_host,
     )
+    from omnigent.workspaces.manifest import WorkspaceRepository
 
     if source_repo is None:  # pragma: no cover — host_id guarantees a workspace
         raise OmnigentError(
@@ -7189,6 +7196,31 @@ async def _create_session_worktree(
     host_conn = _require_host_conn_for_worktree(host_id, request)
     host_registry = request.app.state.host_registry
     try:
+        if (attempt_id is None) != (lease_owner_id is None):
+            raise ValueError("attempt_id and lease_owner_id must be provided together")
+        if attempt_id is not None and lease_owner_id is not None:
+            leases = await acquire_attempt_worktree_leases(
+                host_id=host_conn.host_id,
+                host_registry=host_registry,
+                host_conn=host_conn,
+                workspace_root=source_repo,
+                repositories=(
+                    WorkspaceRepository(
+                        id="session-repository",
+                        path=".",
+                        default_branch=git.base_branch,
+                    ),
+                ),
+                attempt_id=attempt_id,
+                owner_id=lease_owner_id,
+                branch_names={"session-repository": git.branch_name},
+            )
+            lease = leases[0]
+            return CreatedWorktree(
+                worktree_path=lease.worktree_path,
+                branch=lease.branch,
+                lease=lease,
+            )
         return await create_worktree_on_host(
             host_registry=host_registry,
             host_conn=host_conn,
@@ -7213,6 +7245,7 @@ async def _remove_session_worktree_best_effort(
     delete_branch: bool,
     request: Request,
     reason: str,
+    lease: WorktreeLease | None = None,
 ) -> None:
     """
     Best-effort removal of a session's git worktree.
@@ -7235,8 +7268,10 @@ async def _remove_session_worktree_best_effort(
     """
     from omnigent.server.routes._host_worktree import (
         WorktreeProxyError,
+        release_attempt_worktree_leases,
         remove_worktree_on_host,
     )
+    from omnigent.workspaces.worktree_lease import WorktreeLeaseError
 
     host_registry = getattr(request.app.state, "host_registry", None)
     if host_registry is None:
@@ -7251,14 +7286,22 @@ async def _remove_session_worktree_best_effort(
         )
         return
     try:
-        await remove_worktree_on_host(
-            host_registry=host_registry,
-            host_conn=host_conn,
-            worktree_path=worktree_path,
-            branch=branch,
-            delete_branch=delete_branch,
-        )
-    except WorktreeProxyError:
+        if lease is not None:
+            await release_attempt_worktree_leases(
+                host_registry=host_registry,
+                host_conn=host_conn,
+                leases=(lease,),
+                owner_id=lease.owner,
+            )
+        else:
+            await remove_worktree_on_host(
+                host_registry=host_registry,
+                host_conn=host_conn,
+                worktree_path=worktree_path,
+                branch=branch,
+                delete_branch=delete_branch,
+            )
+    except (WorktreeLeaseError, WorktreeProxyError):
         _logger.warning(
             "Best-effort worktree removal (%s) failed for %s",
             reason,

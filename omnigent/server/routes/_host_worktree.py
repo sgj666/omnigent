@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -87,6 +87,7 @@ class CreatedWorktree:
 
     worktree_path: str
     branch: str
+    lease: WorktreeLease | None = None
 
 
 async def _await_host_worktree_result(
@@ -310,6 +311,7 @@ async def acquire_attempt_worktree_leases(
     repositories: Iterable[WorkspaceRepository],
     attempt_id: str,
     owner_id: str,
+    branch_names: Mapping[str, str] | None = None,
 ) -> tuple[WorktreeLease, ...]:
     """Production lifecycle seam for scheduler/session attempt startup."""
     return await get_attempt_worktree_lease_manager().acquire(
@@ -320,6 +322,7 @@ async def acquire_attempt_worktree_leases(
         repositories=repositories,
         attempt_id=attempt_id,
         owner_id=owner_id,
+        branch_names=branch_names,
     )
 
 

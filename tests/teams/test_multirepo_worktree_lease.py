@@ -5,14 +5,21 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from omnigent.server.routes import _host_worktree
+from omnigent.server.routes._sessions.helpers import (
+    _create_session_worktree,
+    _remove_session_worktree_best_effort,
+)
+from omnigent.server.schemas import SessionGitOptions
 from omnigent.workspaces.manifest import WorkspaceRepository
 from omnigent.workspaces.worktree_lease import (
     LeaseOwnershipError,
     LeaseStatus,
+    WorktreeLease,
     WorktreeLeaseManager,
 )
 
@@ -239,3 +246,98 @@ async def test_expiry_recovery_does_not_remove_lease_released_while_waiting_for_
     await release_task
     assert await recovery_task == ()
     assert leases[0].status is LeaseStatus.RELEASED
+
+
+@pytest.mark.asyncio
+async def test_failed_expired_removal_remains_retryable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A transient host failure does not strand a lease in EXPIRED."""
+    remove_attempts = 0
+
+    async def create(**kwargs: object) -> _Created:
+        return _Created(worktree_path="/leases/api", branch="attempt-branch")
+
+    async def remove(**kwargs: object) -> None:
+        nonlocal remove_attempts
+        remove_attempts += 1
+        if remove_attempts == 1:
+            raise RuntimeError("host temporarily unavailable")
+
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.create_worktree_on_host", create)
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.remove_worktree_on_host", remove)
+    now = 1_000.0
+    manager = WorktreeLeaseManager(ttl_s=10, clock=lambda: now)
+    leases = await manager.acquire(
+        host_id="host-1",
+        host_registry=object(),
+        host_conn=_Host(),
+        workspace_root=tmp_path,
+        repositories=(WorkspaceRepository(id="api", path="api"),),
+        attempt_id="attempt-retry",
+        owner_id="runner-1",
+    )
+    now += 11
+
+    with pytest.raises(RuntimeError, match="temporarily unavailable"):
+        await manager.recover_expired(host_registry=object(), host_conn=_Host())
+
+    assert leases[0].status is LeaseStatus.RECOVERY_REQUIRED
+    assert await manager.recover_expired(host_registry=object(), host_conn=_Host()) == leases
+    assert leases[0].status is LeaseStatus.RELEASED
+
+
+@pytest.mark.asyncio
+async def test_session_worktree_helpers_use_lease_lifecycle_for_attempt_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real session helper acquires and releases an attempt lease."""
+    lease = WorktreeLease(
+        host_id="host-1",
+        repository_id="session-repository",
+        repo_path="/repos/api",
+        attempt_id="attempt-1",
+        worktree_path="/leases/api",
+        branch="feature/task",
+        owner="runner-1",
+        status=LeaseStatus.ACTIVE,
+        heartbeat_at=1_000.0,
+    )
+    acquired: dict[str, object] = {}
+    released: dict[str, object] = {}
+
+    async def acquire(**kwargs: object) -> tuple[WorktreeLease, ...]:
+        acquired.update(kwargs)
+        return (lease,)
+
+    async def release(**kwargs: object) -> None:
+        released.update(kwargs)
+
+    monkeypatch.setattr(_host_worktree, "acquire_attempt_worktree_leases", acquire)
+    monkeypatch.setattr(_host_worktree, "release_attempt_worktree_leases", release)
+    registry = SimpleNamespace(get=lambda host_id: _Host())
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(host_registry=registry)))
+
+    created = await _create_session_worktree(
+        host_id="host-1",
+        source_repo="/repos/api",
+        git=SessionGitOptions(branch_name="feature/task"),
+        request=request,
+        attempt_id="attempt-1",
+        lease_owner_id="runner-1",
+    )
+    await _remove_session_worktree_best_effort(
+        host_id="host-1",
+        worktree_path=created.worktree_path,
+        branch=created.branch,
+        delete_branch=True,
+        request=request,
+        reason="attempt-finished",
+        lease=created.lease,
+    )
+
+    assert acquired["attempt_id"] == "attempt-1"
+    assert acquired["owner_id"] == "runner-1"
+    assert acquired["branch_names"] == {"session-repository": "feature/task"}
+    assert released["leases"] == (lease,)
+    assert released["owner_id"] == "runner-1"
