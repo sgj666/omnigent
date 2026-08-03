@@ -763,6 +763,7 @@ def create_app(
     sharing_mode: SharingMode | Callable[[], SharingMode] | None = None,
     public_sharing: bool | Callable[[], bool] | None = None,
     server_config: dict[str, Any] | None = None,
+    lark_adapter: Any | None = None,
 ) -> FastAPI:
     """
     Build and return the FastAPI application with all routes mounted.
@@ -1184,6 +1185,10 @@ def create_app(
     app.state.host_registry = host_registry
     app.state.host_store = host_store
     app.state.sandbox_config = sandbox_config
+    # Optional Feishu/Lark transport.  The adapter owns event validation and
+    # Coordinator routing; keeping it on app.state avoids coupling the core
+    # server factory to a particular provider client.
+    app.state.lark_adapter = lark_adapter
     # Admin roster: the config ``admins:`` list (canonical) union'd with the
     # runtime-editable ``<data_dir>/admins`` file. Built once here so BOTH the
     # admin-gated auth routes AND ``/v1/me``'s is_admin computation consult the
