@@ -4365,3 +4365,72 @@ class UpdateProjectRequest(BaseModel):
         if len(trimmed) > 100:
             raise ValueError("name must be at most 100 characters")
         return trimmed
+
+
+# ── Team harness ───────────────────────────────────────────────
+
+
+class TeamMemberRequest(BaseModel):
+    """One coordinator or worker configuration in a team request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=256)
+    role: Literal["coordinator", "worker"]
+    harness: str | None = Field(default=None, max_length=128)
+    capabilities: list[str] = Field(default_factory=list)
+    concurrency: int = Field(default=1, ge=1, le=128)
+    pairing: dict[str, Any] = Field(default_factory=dict)
+    surface: dict[str, Any] = Field(default_factory=dict)
+
+
+class CreateTeamRequest(BaseModel):
+    """Payload for creating a team; its membership has exactly one coordinator."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=256)
+    members: list[TeamMemberRequest] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _require_one_coordinator(self) -> CreateTeamRequest:
+        if sum(member.role == "coordinator" for member in self.members) != 1:
+            raise ValueError("a team must have exactly one coordinator")
+        return self
+
+
+class UpdateTeamRequest(BaseModel):
+    """Mutable team fields; providing members replaces the full membership."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=256)
+    status: Literal["active", "paused", "archived"] | None = None
+    members: list[TeamMemberRequest] | None = None
+
+    @model_validator(mode="after")
+    def _require_one_coordinator_when_replacing(self) -> UpdateTeamRequest:
+        if (
+            self.members is not None
+            and sum(member.role == "coordinator" for member in self.members) != 1
+        ):
+            raise ValueError("a team must have exactly one coordinator")
+        return self
+
+
+class CreateWorkspaceRequest(BaseModel):
+    """Payload for a run workspace bundle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    root_path: str = Field(min_length=1, max_length=2048)
+    repositories: list[dict[str, str]] = Field(default_factory=list)
+
+
+class SelectWorkspaceRequest(BaseModel):
+    """Select a workspace as a thread's default, optionally for a concrete run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str = Field(min_length=1, max_length=256)
+    run_id: str | None = Field(default=None, min_length=1, max_length=64)

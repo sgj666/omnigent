@@ -1684,6 +1684,7 @@ class SqlWorkspaceRepository(OmnigentBase):
         server_default="0",
         default=current_workspace_id,
     )
+
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     workspace_bundle_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -1699,6 +1700,25 @@ class SqlWorkspaceRepository(OmnigentBase):
         ),
         Index("ix_workspace_repositories_bundle_id", "workspace_id", "workspace_bundle_id", "id"),
     )
+
+
+class SqlThreadWorkspaceSelection(OmnigentBase):
+    """Durable default workspace selected for a harness thread."""
+
+    __tablename__ = "thread_workspace_selections"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    thread_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(128), primary_key=True, server_default="")
+    selected_workspace_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class SqlRun(OmnigentBase):

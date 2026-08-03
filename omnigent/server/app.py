@@ -78,8 +78,14 @@ from omnigent.server.routes.sessions import (
     set_server_runner_router,
 )
 from omnigent.server.routes.sharing import create_sharing_router
+from omnigent.server.routes.teams import (
+    SqlAlchemyTeamWorkspaceStore,
+    TeamMemoryStore,
+    create_teams_router,
+)
 from omnigent.server.routes.terminal_attach import create_terminal_attach_router
 from omnigent.server.routes.usage import create_usage_router
+from omnigent.server.routes.workspaces import create_workspaces_router
 from omnigent.server.runner_session_init import RunnerSessionInitializer
 from omnigent.server.scheduled import ScheduledTaskScheduler
 from omnigent.server.ws_origin import WebSocketOriginMiddleware
@@ -744,6 +750,7 @@ def create_app(
     permission_store: PermissionStore | None = None,
     scheduled_task_store: ScheduledTaskStore | None = None,
     project_store: ProjectStore | None = None,
+    team_store: TeamMemoryStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
     account_store: Any | None = None,  # SqlAlchemyAccountStore — accounts mode only
@@ -915,6 +922,10 @@ def create_app(
         RunnerBackgroundTitleGenerator(runner_router),
     )
     host_registry = HostRegistry()
+    # Team-harness persistence is independently injectable so hosted
+    # deployments can provide their durable store while API-only installs keep
+    # a small local state boundary.
+    team_store = team_store or SqlAlchemyTeamWorkspaceStore(agent_store.storage_location)
     # Shared between the host tunnel (which records ``host.runner_exited``
     # reports from daemons) and the runner status endpoint (which surfaces
     # them to clients waiting for a launched runner to connect).
@@ -1947,6 +1958,16 @@ def create_app(
         create_harnesses_router(auth_provider=auth_provider),
         prefix="/v1",
         tags=["harnesses"],
+    )
+    app.include_router(
+        create_teams_router(team_store, auth_provider=auth_provider),
+        prefix="/v1",
+        tags=["teams"],
+    )
+    app.include_router(
+        create_workspaces_router(team_store, auth_provider=auth_provider),
+        prefix="/v1",
+        tags=["workspaces"],
     )
     # Server-side speech-to-text behind the composer mic button
     # (designs/server-dictation.md). Availability is probed lazily, so
