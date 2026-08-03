@@ -169,9 +169,13 @@ export function TerminalView({
       disposeActiveSession();
       setConnectAttempt((attempt) => attempt + 1);
     } catch (error) {
-      setResumeError(resumeErrorText(error));
+      setResumeError(
+        error instanceof Error && error.message
+          ? t("resumeErrorWithMessage", { message: error.message })
+          : t("resumeErrorGeneric"),
+      );
     }
-  }, [onResume, disposeActiveSession]);
+  }, [onResume, disposeActiveSession, t]);
 
   const attachSession = useCallback(
     (node: HTMLDivElement | null) => {
@@ -446,11 +450,6 @@ function StatusOverlay({
       {state.kind === "error" && <span>{t("bridgeError")}</span>}
     </div>
   );
-}
-
-function resumeErrorText(error: unknown): string {
-  if (error instanceof Error && error.message) return `Couldn't resume session: ${error.message}`;
-  return "Couldn't resume session.";
 }
 
 /**

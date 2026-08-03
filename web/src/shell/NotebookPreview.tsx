@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlockContent } from "@/components/ai-elements/code-block";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 // ansi-to-react is CJS with a TS-compiled `exports.default`; depending on the
 // bundler interop (Vite dev prebundle vs vitest vs production build) the
@@ -135,6 +136,7 @@ function AnsiText({ text, className }: { text: string; className?: string }) {
 }
 
 function OutputView({ output }: { output: NotebookOutput }) {
+  const { t } = useTranslation("workspace");
   if (output.output_type === "stream") {
     return (
       <AnsiText
@@ -162,14 +164,14 @@ function OutputView({ output }: { output: NotebookOutput }) {
       return (
         <img
           src={`data:${imageMime};base64,${b64}`}
-          alt="notebook output"
+          alt={t("notebookOutputImageAlt")}
           className="max-w-full my-1"
         />
       );
     }
     // Corrupt payload: don't emit a broken <img> — note it and fall through to
     // the text/plain repr below (matplotlib etc. usually include one).
-    imageError = `Image output (${imageMime}) could not be decoded.`;
+    imageError = t("notebookImageDecodeError", { mime: imageMime });
   }
 
   const plain = data["text/plain"] !== undefined ? joinSource(data["text/plain"]) : undefined;
@@ -182,7 +184,7 @@ function OutputView({ output }: { output: NotebookOutput }) {
       )}
       {suppressedHtml && (
         <div className="text-xs text-muted-foreground italic px-2 pt-1">
-          Rich HTML output hidden — showing plain text.
+          {t("notebookRichHtmlHidden")}
         </div>
       )}
       {plain !== undefined && <AnsiText text={plain} />}
@@ -219,15 +221,14 @@ export function NotebookPreview({
   rootRef?: RefObject<HTMLDivElement | null>;
   onScroll?: (event: UIEvent<HTMLElement>) => void;
 }) {
+  const { t } = useTranslation("workspace");
   const { notebook, error } = parseNotebook(content);
 
   if (error || !notebook) {
     return (
       <div className="p-8 text-sm">
-        <div className="text-destructive">Cannot render notebook: {error}</div>
-        <div className="mt-1 text-muted-foreground">
-          Switch to the source view to inspect the raw file.
-        </div>
+        <div className="text-destructive">{t("notebookCannotRender", { error })}</div>
+        <div className="mt-1 text-muted-foreground">{t("notebookSourceViewHint")}</div>
       </div>
     );
   }
