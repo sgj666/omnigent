@@ -2,6 +2,31 @@
   "meta": { "languageName": "简体中文" },
   "title": "智能体",
   "remove": "移除",
+  "dialogs": {
+    "cancel": "取消",
+    "add": {
+      "title": "添加智能体",
+      "pickAgent": "选择智能体",
+      "noAgents": "此服务器上没有可用的智能体。请使用 <command>omnigent server --agent</command> 注册智能体。",
+      "name": "名称",
+      "namePlaceholder": "为智能体命名",
+      "nameRequired": "请输入智能体名称。",
+      "failed": "无法添加智能体，请重试。",
+      "adding": "添加中…",
+      "submit": "添加"
+    },
+    "switch": {
+      "title": "切换智能体",
+      "description": "将此会话切换到其他智能体。会话记录、评论和文件都会保留；下一条消息将由新智能体处理。",
+      "agent": "智能体",
+      "currentAgent": "（当前智能体）",
+      "chooseAgent": "选择智能体",
+      "resetWarning": "切换到不同提供方后，模型和推理强度将重置为 {{agent}} 的默认值。",
+      "failed": "无法切换智能体，请重试。",
+      "switching": "切换中…",
+      "submit": "切换"
+    }
+  },
   "mcpServersUpdated": "MCP 服务器已更新。重启会话后生效。",
   "usage": {
     "tokenUsage": "Token 用量",

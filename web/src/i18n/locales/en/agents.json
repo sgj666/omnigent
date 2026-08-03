@@ -2,6 +2,31 @@
   "meta": { "languageName": "English" },
   "title": "Agents",
   "remove": "Remove",
+  "dialogs": {
+    "cancel": "Cancel",
+    "add": {
+      "title": "Add agent",
+      "pickAgent": "Pick an agent",
+      "noAgents": "No agents available on this server. Register one with <command>omnigent server --agent</command>.",
+      "name": "Name",
+      "namePlaceholder": "Name this agent",
+      "nameRequired": "Enter a name for the agent.",
+      "failed": "Couldn't add the agent. Try again.",
+      "adding": "Adding…",
+      "submit": "Add"
+    },
+    "switch": {
+      "title": "Switch agent",
+      "description": "Continue this session on a different agent. The conversation, comments, and files stay; the next message runs on the new agent.",
+      "agent": "Agent",
+      "currentAgent": "(current agent)",
+      "chooseAgent": "Choose an agent",
+      "resetWarning": "Model and reasoning effort will reset to {{agent}}'s defaults (different provider).",
+      "failed": "Couldn't switch the agent. Try again.",
+      "switching": "Switching…",
+      "submit": "Switch"
+    }
+  },
   "mcpServersUpdated": "MCP servers updated. Restart the session to apply changes.",
   "usage": {
     "tokenUsage": "Token usage",
