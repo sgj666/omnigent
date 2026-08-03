@@ -14,7 +14,9 @@ interface BotSurfacePanelProps {
   onReinitialize?: () => void | Promise<void>;
 }
 
-export function BotSurfacePanel({ surface = {}, onReinitialize }: BotSurfacePanelProps) {
+const EMPTY_SURFACE: BotSurfaceState = {};
+
+export function BotSurfacePanel({ surface = EMPTY_SURFACE, onReinitialize }: BotSurfacePanelProps) {
   const [pending, setPending] = useState(false);
   const state = surface as BotSurfaceState;
   async function reinitialize() {

@@ -32,7 +32,7 @@ export function AgentProfileList({ members, onChange }: AgentProfileListProps) {
   return (
     <div className="space-y-3" aria-label="Agent profiles">
       {members.map((member, index) => (
-        <div key={`${member.id}-${index}`} className="rounded-lg border p-3">
+        <div key={member.id} className="rounded-lg border p-3">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-sm font-medium">{member.role === "coordinator" ? "Coordinator" : "Worker"}</span>
             {member.role !== "coordinator" && (

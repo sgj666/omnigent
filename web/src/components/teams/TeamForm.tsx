@@ -33,6 +33,8 @@ interface TeamFormProps {
   submitting?: boolean;
 }
 
+const EMPTY_WORKSPACES: { id: string; root_path: string }[] = [];
+
 const defaultMember = (role: TeamMember["role"], id: string): DraftMember => ({
   id,
   name: role === "coordinator" ? "Coordinator" : "Worker",
@@ -44,7 +46,7 @@ const defaultMember = (role: TeamMember["role"], id: string): DraftMember => ({
   surface: {},
 });
 
-export function TeamForm({ initial, workspaces = [], onSubmit, submitting = false }: TeamFormProps) {
+export function TeamForm({ initial, workspaces = EMPTY_WORKSPACES, onSubmit, submitting = false }: TeamFormProps) {
   const [name, setName] = useState(initial?.name ?? "");
   const [members, setMembers] = useState<DraftMember[]>(initial?.members ?? [defaultMember("coordinator", "coordinator")]);
   const [workspaceId, setWorkspaceId] = useState(initial?.workspaceId ?? "");

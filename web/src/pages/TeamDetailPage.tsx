@@ -1,12 +1,11 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "@/lib/routing";
 import { PageScroll } from "@/components/PageScroll";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useCreateTeam, useTeam, useUpdateTeam } from "@/hooks/useTeams";
 import { useWorkspaces } from "@/hooks/useWorkspaces";
 import type { TeamMember } from "@/lib/teamsApi";
-import { AgentProfileList, type DraftMember } from "@/components/teams/AgentProfileList";
+import type { DraftMember } from "@/components/teams/AgentProfileList";
 import { BotSurfacePanel, type BotSurfaceState } from "@/components/teams/BotSurfacePanel";
 import { FeishuPairingPanel } from "@/components/teams/FeishuPairingPanel";
 import { TeamForm, type TeamFormValues } from "@/components/teams/TeamForm";
