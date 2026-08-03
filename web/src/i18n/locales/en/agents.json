@@ -4,6 +4,25 @@
   "remove": "Remove",
   "dialogs": {
     "cancel": "Cancel",
+    "create": {
+      "title": "Create custom agent",
+      "name": "Name",
+      "description": "Description",
+      "descriptionPlaceholder": "A short summary of what this agent does",
+      "harness": "Harness",
+      "model": "Model",
+      "systemInstructions": "System instructions",
+      "systemInstructionsPlaceholder": "You are a helpful assistant that...",
+      "mcpTools": "MCP tools",
+      "addServer": "Add server",
+      "submit": "Create",
+      "mcp": {
+        "commandPlaceholder": "Command (e.g. npx)",
+        "argsPlaceholder": "Arguments (e.g. -y @modelcontextprotocol/server-github)",
+        "envPlaceholder": "Environment variables (KEY=VALUE per line)\ne.g. GITHUB_TOKEN=ghp_...",
+        "headersPlaceholder": "HTTP headers (one per line)\ne.g. Authorization: Bearer tok_..."
+      }
+    },
     "add": {
       "title": "Add agent",
       "pickAgent": "Pick an agent",

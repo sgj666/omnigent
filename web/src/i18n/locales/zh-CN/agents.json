@@ -4,6 +4,25 @@
   "remove": "移除",
   "dialogs": {
     "cancel": "取消",
+    "create": {
+      "title": "创建自定义智能体",
+      "name": "名称",
+      "description": "描述",
+      "descriptionPlaceholder": "简要说明此智能体的职责",
+      "harness": "运行框架",
+      "model": "模型",
+      "systemInstructions": "系统指令",
+      "systemInstructionsPlaceholder": "你是一名乐于助人的助手，……",
+      "mcpTools": "MCP 工具",
+      "addServer": "添加服务器",
+      "submit": "创建",
+      "mcp": {
+        "commandPlaceholder": "命令（例如 npx）",
+        "argsPlaceholder": "参数（例如 -y @modelcontextprotocol/server-github）",
+        "envPlaceholder": "环境变量（每行一个 KEY=VALUE）\n例如 GITHUB_TOKEN=ghp_…",
+        "headersPlaceholder": "HTTP 请求头（每行一个）\n例如 Authorization: Bearer tok_…"
+      }
+    },
     "add": {
       "title": "添加智能体",
       "pickAgent": "选择智能体",
