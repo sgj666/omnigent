@@ -14,6 +14,7 @@
 
 import { ChevronDownIcon } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -90,6 +91,7 @@ export function ProjectSettingsDialog({
   projectId: string | null;
   projectName: string;
 }) {
+  const { t } = useTranslation("common");
   // A label-only folder has no row to read; its config starts empty and the
   // save promotes it. Fetch only runs for a first-class project.
   const { data: stored, isLoading, isError } = useProjectConfig(open ? projectId : null);
@@ -213,7 +215,7 @@ export function ProjectSettingsDialog({
   const harnessEntries = useMemo(() => agentList.filter(isNativeCodingAgent), [agentList]);
   const agentEntries = useMemo(() => agentList.filter((a) => !isNativeCodingAgent(a)), [agentList]);
   const selectedAgent = agentList.find((a) => a.id === agentId) ?? null;
-  const agentLabel = selectedAgent ? selectedAgent.display_name : "No default";
+  const agentLabel = selectedAgent ? selectedAgent.display_name : t("projectSettings.noDefault");
   // The host the agent picker's readiness badges check against (its config
   // hints show whether a harness is set up there). Null when no concrete host.
   const warningHost = onlineHosts.find((h) => h.host_id === browsableHostId) ?? null;
@@ -230,14 +232,13 @@ export function ProjectSettingsDialog({
         onInteractOutside={guardDialogDismiss}
       >
         <DialogHeader>
-          <DialogTitle>Project settings</DialogTitle>
+          <DialogTitle>{t("projectSettings.title")}</DialogTitle>
           <DialogDescription>
-            Defaults for new sessions in <span className="font-medium">{projectName}</span>. Each is
-            a starting point you can change per session; leave a field blank for no default.
+            {t("projectSettings.description", { project: projectName })}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <Field label="Host" hint="Where new sessions run by default">
+          <Field label={t("projectSettings.host")} hint={t("projectSettings.hostHint")}>
             <Select
               value={hostId}
               onValueChange={setHostId}
@@ -245,10 +246,10 @@ export function ProjectSettingsDialog({
               disabled={isLoading}
             >
               <SelectTrigger className="w-full" data-testid="project-settings-host">
-                <SelectValue placeholder="No default" />
+                <SelectValue placeholder={t("projectSettings.noDefault")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={NONE}>No default</SelectItem>
+                <SelectItem value={NONE}>{t("projectSettings.noDefault")}</SelectItem>
                 {managedSandboxesEnabled && (
                   <SelectItem value={SANDBOX_HOST_CHOICE}>
                     {sandboxOptionLabel(sandboxProvider)}
@@ -269,13 +270,13 @@ export function ProjectSettingsDialog({
           </Field>
 
           <Field
-            label="Working directory"
+            label={t("projectSettings.workingDirectory")}
             hint={
               hostId === NONE
-                ? "Pick a host first"
+                ? t("projectSettings.pickHostFirst")
                 : browsableHostId
-                  ? "Browse the host or type a path"
-                  : "Absolute path on the host"
+                  ? t("projectSettings.browseOrTypePath")
+                  : t("projectSettings.absolutePath")
             }
             htmlFor="project-settings-workspace"
           >
@@ -309,7 +310,7 @@ export function ProjectSettingsDialog({
                   className="flex h-8 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <span className={workspace ? "truncate" : "truncate text-muted-foreground"}>
-                    {workspace || "Browse…"}
+                    {workspace || t("projectSettings.browse")}
                   </span>
                   <ChevronDownIcon
                     className={`size-4 shrink-0 opacity-50 transition-transform ${
@@ -324,7 +325,7 @@ export function ProjectSettingsDialog({
                           click outside it. */}
                     <button
                       type="button"
-                      aria-label="Close directory browser"
+                      aria-label={t("projectSettings.closeDirectoryBrowser")}
                       className="fixed inset-0 z-10 cursor-default"
                       onClick={() => setWorkspaceOpen(false)}
                     />
@@ -345,7 +346,7 @@ export function ProjectSettingsDialog({
                 id="project-settings-workspace"
                 data-testid="project-settings-workspace"
                 className="w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                placeholder="/path/to/repo"
+                placeholder={t("projectSettings.pathPlaceholder")}
                 value={workspace}
                 onChange={(e) => setWorkspace(e.target.value)}
                 disabled={isLoading}
@@ -354,8 +355,8 @@ export function ProjectSettingsDialog({
           </Field>
 
           <Field
-            label="Random worktree"
-            hint="Start each new session in a fresh randomly-named git worktree (vs. directly in the workspace)"
+            label={t("projectSettings.randomWorktree")}
+            hint={t("projectSettings.randomWorktreeHint")}
           >
             <div className="flex sm:justify-end">
               <Switch
@@ -367,7 +368,7 @@ export function ProjectSettingsDialog({
             </div>
           </Field>
 
-          <Field label="Agent" hint="Default agent / harness for new sessions">
+          <Field label={t("projectSettings.agent")} hint={t("projectSettings.agentHint")}>
             <div className="flex flex-col items-end gap-1" data-testid="project-settings-agent">
               <AgentHarnessPicker
                 agentEntries={agentEntries}
@@ -410,7 +411,7 @@ export function ProjectSettingsDialog({
                   className="h-auto p-0 text-muted-foreground text-xs hover:bg-transparent"
                   onClick={() => setAgentId(null)}
                 >
-                  Clear
+                  {t("projectSettings.clear")}
                 </Button>
               )}
             </div>
@@ -422,8 +423,7 @@ export function ProjectSettingsDialog({
               role="alert"
               data-testid="project-settings-load-error"
             >
-              Couldn't load this project's settings. Close and reopen to try again — saving is
-              disabled so your existing defaults aren't overwritten.
+              {t("projectSettings.loadFailed")}
             </p>
           )}
           {updateConfig.isError && (
@@ -439,14 +439,14 @@ export function ProjectSettingsDialog({
               onClick={() => onOpenChange(false)}
               disabled={updateConfig.isPending}
             >
-              Cancel
+              {t("projectSettings.cancel")}
             </Button>
             <Button
               type="submit"
               data-testid="project-settings-save"
               disabled={updateConfig.isPending || isLoading || loadFailed}
             >
-              {updateConfig.isPending ? "Saving…" : "Save"}
+              {updateConfig.isPending ? t("projectSettings.saving") : t("projectSettings.save")}
             </Button>
           </DialogFooter>
         </form>

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
+import { withTestLanguage } from "@/i18n/testHelpers";
 import { getProject, updateProjectConfig, createProject } from "@/lib/projectsApi";
 
 vi.mock("@/lib/projectsApi", () => ({
@@ -69,6 +70,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("ProjectSettingsDialog", () => {
+  it("localizes project settings chrome in Simplified Chinese", async () => {
+    await withTestLanguage("zh-CN", () => {
+      renderDialog();
+      expect(screen.getByRole("heading", { name: "项目设置" })).toBeInTheDocument();
+      expect(screen.getByText("主机")).toBeInTheDocument();
+      expect(screen.getByText("工作目录")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "取消" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "保存" })).toBeInTheDocument();
+    });
+  });
   it("seeds fields from the project's stored config", async () => {
     // No stored host → the working directory can't be chosen yet, so it shows
     // the "pick a host first" placeholder rather than a path input / browser.
