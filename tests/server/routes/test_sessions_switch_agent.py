@@ -219,12 +219,15 @@ def _conv(
     conv_id: str = "e9f8f58523cec9a57d3bdf93be543e8c",
     agent_id: str | None = "a98bb825ebd41391c19637c58fe3c0b7",
     kind: str = "default",
+    *,
+    pinned: bool = False,
 ) -> Conversation:
     """Build a Conversation entity.
 
     :param conv_id: Conversation id.
     :param agent_id: Bound agent id, or None.
     :param kind: ``"default"`` or ``"sub_agent"``.
+    :param pinned: Whether to include an immutable Agent Bundle snapshot.
     :returns: A Conversation.
     """
     return Conversation(
@@ -235,6 +238,9 @@ def _conv(
         agent_id=agent_id,
         title="Source",
         kind=kind,
+        agent_bundle_version=1 if pinned else None,
+        agent_bundle_digest="a" * 64 if pinned else None,
+        agent_bundle_location=f"{agent_id}/{'a' * 64}" if pinned else None,
     )
 
 
@@ -336,6 +342,33 @@ _BUILTIN_QWEN = _agent("ec99b28a23f0c9a5bf70c63df08dd14d", "qwen-native-ui", "bu
 
 
 # ── Tests ────────────────────────────────────────────────────────
+
+
+def test_switch_pinned_session_rejected_before_any_mutation() -> None:
+    """A Bundle-pinned Session is immutable and must be forked instead."""
+    conv_store = _ConversationStore(
+        conversations={"e9f8f58523cec9a57d3bdf93be543e8c": _conv(pinned=True)}
+    )
+    agent_store = _AgentStore(
+        {
+            "a98bb825ebd41391c19637c58fe3c0b7": _CURRENT,
+            "52adb39f0c5ea92b5563da5327dac08f": _BUILTIN_CLAUDE,
+        }
+    )
+    client = TestClient(_build_app(conv_store, agent_store))
+
+    response = client.post(
+        "/v1/sessions/e9f8f58523cec9a57d3bdf93be543e8c/switch-agent",
+        json={"agent_id": "52adb39f0c5ea92b5563da5327dac08f"},
+    )
+
+    assert response.status_code == 409, response.text
+    error = response.json()["error"]
+    assert error["code"] == "conflict"
+    assert "Bundle is immutable" in error["message"]
+    assert "fork" in error["message"].lower()
+    assert "new Session" in error["message"]
+    assert conv_store.switch_calls == []
 
 
 @pytest.mark.asyncio

@@ -8,8 +8,10 @@ from typing import Any
 
 import pytest
 
-from omnigent.entities import Conversation, ConversationItem, MessageData, PagedList
+from omnigent.entities import Agent, Conversation, ConversationItem, MessageData, PagedList
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.routes import sessions as _sessions_mod
+from omnigent.server.routes._sessions import orchestration as _orchestration
 from omnigent.server.routes.sessions import (
     _LABEL_VALUE_MAX_LEN,
     SessionLiveness,
@@ -179,6 +181,118 @@ def _message_item(item_id: str, text: str) -> ConversationItem:
             content=[{"type": "input_text", "text": text}],
         ),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("bundle_version", "bundle_digest", "bundle_location"),
+    [
+        (3, None, None),
+        (None, "c" * 64, None),
+        (None, None, f"087b7cb7ac30abf4debfaa578d052ec6/{'c' * 64}"),
+        (3, "c" * 64, None),
+        (3, None, f"087b7cb7ac30abf4debfaa578d052ec6/{'c' * 64}"),
+        (None, "c" * 64, f"087b7cb7ac30abf4debfaa578d052ec6/{'c' * 64}"),
+        (3, "c" * 64, f"087b7cb7ac30abf4debfaa578d052ec6/{'d' * 64}"),
+    ],
+    ids=[
+        "version-only",
+        "digest-only",
+        "location-only",
+        "version-and-digest",
+        "version-and-location",
+        "digest-and-location",
+        "complete-digest-mismatch",
+    ],
+)
+async def test_session_snapshot_rejects_invalid_bundle_snapshot_before_side_effects(
+    monkeypatch: pytest.MonkeyPatch,
+    bundle_version: int | None,
+    bundle_digest: str | None,
+    bundle_location: str | None,
+) -> None:
+    """Persisted snapshot conflicts precede every snapshot side effect."""
+    session_id = "f4156f0f46924761995720ce31580e2a"
+    agent_id = "087b7cb7ac30abf4debfaa578d052ec6"
+    conv = Conversation(
+        id=session_id,
+        created_at=1,
+        updated_at=1,
+        root_conversation_id=session_id,
+        agent_id=agent_id,
+        agent_bundle_version=bundle_version,
+        agent_bundle_digest=bundle_digest,
+        agent_bundle_location=bundle_location,
+    )
+    conv_store = _ConversationStore([], conversations={session_id: conv})
+    events: list[str] = []
+
+    class _AgentStore:
+        @staticmethod
+        def get(requested_agent_id: str) -> Agent:
+            events.append("agent_store.get")
+            return Agent(
+                id=requested_agent_id,
+                created_at=1,
+                name="current-agent",
+                bundle_location=f"{requested_agent_id}/{'a' * 64}",
+            )
+
+    class _AgentCache:
+        @staticmethod
+        def load(requested_agent_id: str, location: str) -> Any:
+            events.append("agent_cache.load")
+            raise AssertionError((requested_agent_id, location))
+
+    def _get_runner_router() -> None:
+        events.append("runner.resolve.router")
+
+    def _get_runner_client() -> None:
+        events.append("runner.resolve.client")
+
+    original_invalidate = _orchestration._invalidate_runner_backed_snapshot_state
+    original_status = _orchestration._session_status_from_cache
+
+    def _invalidate(*args: Any, **kwargs: Any) -> None:
+        events.append("refresh.invalidate")
+        original_invalidate(*args, **kwargs)
+
+    def _status(requested_session_id: str) -> str:
+        events.append("status.read")
+        return original_status(requested_session_id)
+
+    monkeypatch.setattr("omnigent.runtime.get_runner_router", _get_runner_router)
+    monkeypatch.setattr("omnigent.runtime.get_runner_client", _get_runner_client)
+    monkeypatch.setattr(
+        _orchestration,
+        "_invalidate_runner_backed_snapshot_state",
+        _invalidate,
+    )
+    monkeypatch.setattr(_orchestration, "_session_status_from_cache", _status)
+
+    skills_marker: list[Any] = [object()]
+    _orchestration._runner_skills_cache[session_id] = skills_marker  # type: ignore[assignment]
+    _orchestration._session_status_cache[session_id] = "waiting"
+    try:
+        with pytest.raises(OmnigentError) as exc_info:
+            await _get_session_snapshot(
+                conv_store,  # type: ignore[arg-type]
+                session_id,
+                agent_store=_AgentStore(),  # type: ignore[arg-type]
+                agent_cache=_AgentCache(),  # type: ignore[arg-type]
+                conversation=conv,
+                include_items=False,
+                refresh_state=True,
+            )
+
+        assert exc_info.value.code == ErrorCode.CONFLICT
+        assert events == []
+        assert conv_store.list_items_calls == []
+        assert _orchestration._runner_skills_cache[session_id] is skills_marker
+        assert _orchestration._session_status_cache[session_id] == "waiting"
+    finally:
+        _orchestration._runner_skills_cache.pop(session_id, None)
+        _orchestration._session_status_cache.pop(session_id, None)
 
 
 @pytest.mark.asyncio

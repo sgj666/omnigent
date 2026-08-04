@@ -339,6 +339,9 @@ class ConversationStore(ABC):
         git_branch: str | None = None,
         terminal_launch_args: list[str] | None = None,
         conversation_id: str | None = None,
+        agent_bundle_version: int | None = None,
+        agent_bundle_digest: str | None = None,
+        agent_bundle_location: str | None = None,
     ) -> Conversation:
         """
         Create a new conversation. Generates a unique
@@ -394,6 +397,11 @@ class ConversationStore(ABC):
         :param conversation_id: Optional caller-supplied identifier.
             ``None`` generates a new random id. Reserved for flows that
             require database-enforced idempotency.
+        :param agent_bundle_version: Captured Agent Bundle version. Required
+            with the other Bundle fields for a new top-level Agent-bound
+            conversation. Children inherit it from their parent.
+        :param agent_bundle_digest: Captured Agent Bundle SHA-256 digest.
+        :param agent_bundle_location: Internal captured bundle artifact key.
         :returns: The newly created :class:`Conversation`.
         :raises NameAlreadyExistsError: If
             ``parent_conversation_id`` is not ``None`` and a
@@ -1454,6 +1462,7 @@ class ConversationStore(ABC):
         cloned_agent_name: str | None = None,
         cloned_agent_bundle_location: str | None = None,
         cloned_agent_description: str | None = None,
+        bundle_source_agent_id: str | None = None,
         copy_model_settings: bool = True,
         copy_terminal_launch_args: bool = True,
         carry_history_into_native: bool = False,
@@ -1482,7 +1491,7 @@ class ConversationStore(ABC):
             the fork inherits the source's ``agent_id``. With
             ``cloned_agent_bundle_location`` set, a fresh agent row is
             created with this id; otherwise it must name an existing
-            agent, whose ``session_id`` is repointed at the fork.
+            template Agent in the current workspace.
         :param cloned_agent_name: Name for the cloned agent row.
             Required when ``cloned_agent_bundle_location`` is set.
         :param cloned_agent_bundle_location: When set, clone this
@@ -1493,6 +1502,11 @@ class ConversationStore(ABC):
         :param cloned_agent_description: Optional description for the
             cloned agent row. Ignored unless
             ``cloned_agent_bundle_location`` is set.
+        :param bundle_source_agent_id: Existing target Agent whose current
+            Bundle snapshot is captured when the fork switches Agent.
+            Must identify a template Agent; session-scoped Agents cannot be
+            reused as Bundle sources. ``None`` means this is a same-Agent clone
+            and copies the source Conversation's snapshot exactly.
         :param copy_model_settings: When ``True`` (default), copy the
             source's ``model_override`` / ``reasoning_effort``. When
             ``False``, both are left ``None`` so the fork falls back to
@@ -1604,6 +1618,9 @@ class ConversationStore(ABC):
         :returns: The updated :class:`Conversation`.
         :raises LookupError: If no conversation with *conversation_id*
             exists.
+        :raises ValueError: If the Session has any immutable Agent Bundle
+            snapshot field; pinned and partially pinned Sessions cannot be
+            rebound in place.
         """
         ...
 

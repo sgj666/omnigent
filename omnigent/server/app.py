@@ -2249,8 +2249,12 @@ def create_app(
 
         :param runner_id: The reconnecting runner's id.
         """
+        from omnigent.server.routes._session_create_validation import (
+            validate_session_agent_bundle_snapshot,
+        )
         from omnigent.server.routes.sessions import (
             _ensure_runner_relay,
+            _ensure_runner_session_initialized,
             _publish_runner_recovered_status,
         )
 
@@ -2282,6 +2286,14 @@ def create_app(
                 conv.agent_id,
             )
             try:
+                validate_session_agent_bundle_snapshot(conv)
+            except OmnigentError:
+                _logger.exception(
+                    "Skipping corrupt session %s on runner reconnect",
+                    conv.id,
+                )
+                continue
+            try:
                 routed = runner_router.client_for_session_resources(conv.id)
             except OmnigentError:
                 _logger.exception(
@@ -2302,10 +2314,25 @@ def create_app(
                 )
             else:
                 try:
-                    await runner_session_initializer.initialize(
+                    await _ensure_runner_session_initialized(
+                        conv.id,
                         conv,
                         routed.client,
-                        timeout=10.0,
+                        conversation_store,
+                        initializer=runner_session_initializer,
+                        agent_store=agent_store,
+                        recover_status=False,
+                    )
+                except OmnigentError as exc:
+                    if exc.code == ErrorCode.CONFLICT:
+                        _logger.exception(
+                            "Skipping session %s with an invalid Agent view on reconnect",
+                            conv.id,
+                        )
+                        continue
+                    _logger.exception(
+                        "Failed to re-assign session %s on reconnect",
+                        conv.id,
                     )
                 except Exception:
                     _logger.exception(

@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from omnigent.db.utils import generate_agent_id, generate_task_id
 from omnigent.entities import (
     Agent,
+    AgentBundleSnapshot,
     CommentsFingerprint,
     Conversation,
     ConversationItem,
@@ -106,7 +107,10 @@ from omnigent.server.routes._auth_helpers import (
 )
 from omnigent.server.routes._errors import session_not_found as _session_not_found
 from omnigent.server.routes._session_create_validation import (
+    pin_session_agent_bundle,
+    resolve_session_agent_view,
     validate_session_agent,
+    validate_session_agent_bundle_snapshot,
     validate_session_model_metadata,
 )
 
@@ -557,6 +561,8 @@ def _build_session_list_item(
         id=conv.id,
         agent_id=conv.agent_id,
         agent_name=agent_names_by_id.get(conv.agent_id),
+        agent_bundle_version=conv.agent_bundle_version,
+        agent_bundle_digest=conv.agent_bundle_digest,
         status=_session_status_with_child_rollup(conv.id, child_session_ids, conv.live_status),
         created_at=conv.created_at,
         updated_at=conv.updated_at,
@@ -657,6 +663,7 @@ def _build_session_response(
     can_approve: bool | None = None,
     background_task_count: int | None = None,
     llm_model: str | None = None,
+    harness: str | None = None,
     context_window: int | None = None,
     last_total_tokens: int | None = None,
     last_task_error: dict[str, str] | None = None,
@@ -697,6 +704,8 @@ def _build_session_response(
     :param llm_model: The LLM model identifier from the bound
         agent's spec, e.g. ``"anthropic/claude-sonnet-4-6"``.
         ``None`` when not available.
+    :param harness: Canonical harness resolved from the Session's pinned
+        Bundle. ``None`` when the pinned spec cannot be loaded.
     :param context_window: Context window size in tokens looked up
         from litellm server-side, e.g. ``200_000``. ``None`` when
         the model is not in litellm's registry.
@@ -765,6 +774,8 @@ def _build_session_response(
         id=conv.id,
         agent_id=conv.agent_id,
         agent_name=agent_name,
+        agent_bundle_version=conv.agent_bundle_version,
+        agent_bundle_digest=conv.agent_bundle_digest,
         status=status,
         background_task_count=background_task_count,
         created_at=conv.created_at,
@@ -784,7 +795,7 @@ def _build_session_response(
         parent_session_id=conv.parent_conversation_id,
         root_conversation_id=conv.root_conversation_id,
         llm_model=llm_model,
-        harness=_resolve_harness(conv),
+        harness=harness,
         model_override=conv.model_override,
         cost_control_mode_override=conv.cost_control_mode_override,
         context_window=context_window,
@@ -2852,6 +2863,8 @@ async def _ensure_runner_session_initialized(
     initializer: RunnerSessionInitializer | None = None,
     *,
     suppress_recovery_turn: bool = False,
+    agent_store: AgentStore | None = None,
+    recover_status: bool = True,
 ) -> bool:
     """
     Drive — and wait for — the runner's session-init handshake.
@@ -2903,6 +2916,27 @@ async def _ensure_runner_session_initialized(
     :returns: ``True`` when a current runner explicitly confirmed its native
         terminal is ready; ``False`` for legacy or non-native responses.
     """
+    legacy_agent: Agent | None = None
+    bundle_snapshot = validate_session_agent_bundle_snapshot(conv)
+    if bundle_snapshot is None:
+        if agent_store is None or conv.agent_id is None:
+            raise OmnigentError(
+                "legacy session initialization requires the current bound Agent",
+                code=ErrorCode.CONFLICT,
+            )
+        legacy_agent = await asyncio.to_thread(agent_store.get, conv.agent_id)
+        if legacy_agent is None:
+            raise OmnigentError(
+                f"Agent not found: {conv.agent_id!r}",
+                code=ErrorCode.CONFLICT,
+            )
+        try:
+            AgentBundleSnapshot.from_agent(legacy_agent)
+        except ValueError as exc:
+            raise OmnigentError(
+                f"legacy session has no valid current Agent bundle snapshot: {exc}",
+                code=ErrorCode.CONFLICT,
+            ) from exc
     try:
         if initializer is not None:
             resp = await initializer.initialize(
@@ -2910,6 +2944,7 @@ async def _ensure_runner_session_initialized(
                 runner_client,
                 timeout=_RUNNER_SESSION_INIT_TIMEOUT_S,
                 suppress_recovery_turn=suppress_recovery_turn,
+                agent=legacy_agent,
             )
         else:
             from omnigent.version import VERSION
@@ -2920,6 +2955,7 @@ async def _ensure_runner_session_initialized(
                     conv,
                     server_version=VERSION,
                     suppress_recovery_turn=suppress_recovery_turn,
+                    agent=legacy_agent,
                 ),
                 timeout=_RUNNER_SESSION_INIT_TIMEOUT_S,
             )
@@ -2928,7 +2964,8 @@ async def _ensure_runner_session_initialized(
         # via the same warning path rather than silently forwarding into a
         # half-initialized runner.
         resp.raise_for_status()
-        await _publish_runner_recovered_status(session_id, conversation_store)
+        if recover_status:
+            await _publish_runner_recovered_status(session_id, conversation_store)
         try:
             payload = resp.json()
         except ValueError:
@@ -5355,14 +5392,6 @@ async def _create_session_from_existing_agent(
     _reject_reserved_cost_control_label_seed(body.labels)
     _reject_server_reserved_label_seed(body.labels)
 
-    agent = await validate_session_agent(
-        user_id=user_id,
-        agent_id=body.agent_id,
-        agent_store=agent_store,
-        permission_store=permission_store,
-        conversation_store=conversation_store,
-    )
-
     # Authorize parent_session_id before inheriting anything.
     # The caller must own or have READ access to the parent session;
     # otherwise a forged parent link lets them inherit runner
@@ -5376,6 +5405,32 @@ async def _create_session_from_existing_agent(
             permission_store,
             conversation_store,
         )
+
+    parent_conv: Conversation | None = None
+    if body.parent_session_id is not None:
+        parent_conv = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            body.parent_session_id,
+        )
+        if parent_conv is None:
+            raise OmnigentError(
+                f"Parent session not found: {body.parent_session_id!r}",
+                code=ErrorCode.NOT_FOUND,
+            )
+        if validate_session_agent_bundle_snapshot(parent_conv) is None:
+            raise OmnigentError(
+                "parent session has no pinned agent bundle snapshot",
+                code=ErrorCode.CONFLICT,
+            )
+
+    agent = await validate_session_agent(
+        user_id=user_id,
+        agent_id=body.agent_id,
+        agent_store=agent_store,
+        permission_store=permission_store,
+        conversation_store=conversation_store,
+    )
+    agent, bundle_snapshot = pin_session_agent_bundle(agent, parent_conv)
 
     # Reject an undeclared sub-agent before persisting the row. Downstream
     # spec swaps are all guarded by ``if ... is not None`` with no
@@ -5412,9 +5467,7 @@ async def _create_session_from_existing_agent(
     # (auto requires a swappable brain harness).
     _force_auto_for_child = False
     if body.parent_session_id is not None:
-        _parent_for_routing = await asyncio.to_thread(
-            conversation_store.get_conversation, body.parent_session_id
-        )
+        _parent_for_routing = parent_conv
         if (
             _parent_for_routing is not None
             and _parent_for_routing.cost_control_mode_override == "on"
@@ -5446,20 +5499,13 @@ async def _create_session_from_existing_agent(
     # Inherit runner affinity from the parent session so the child
     # is assigned to the same runner (sub-agent co-location).
     inherited_runner_id: str | None = None
-    if body.parent_session_id is not None:
-        parent_conv = conversation_store.get_conversation(body.parent_session_id)
-        if parent_conv is not None:
-            inherited_runner_id = parent_conv.runner_id
-            # Defense-in-depth: don't inherit a runner the
-            # caller doesn't own.
-            if (
-                inherited_runner_id is not None
-                and user_id is not None
-                and runner_router is not None
-            ):
-                runner_owner = runner_router.runner_owner(inherited_runner_id)
-                if runner_owner is not None and runner_owner != user_id:
-                    inherited_runner_id = None
+    if parent_conv is not None:
+        inherited_runner_id = parent_conv.runner_id
+        # Defense-in-depth: don't inherit a runner the caller doesn't own.
+        if inherited_runner_id is not None and user_id is not None and runner_router is not None:
+            runner_owner = runner_router.runner_owner(inherited_runner_id)
+            if runner_owner is not None and runner_owner != user_id:
+                inherited_runner_id = None
 
     # Workspace validation: if the caller is binding to a host,
     # they must also pass a workspace, and the workspace must
@@ -5574,6 +5620,9 @@ async def _create_session_from_existing_agent(
             workspace=canonical_workspace,
             git_branch=git_branch,
             terminal_launch_args=validated_launch_args,
+            agent_bundle_version=bundle_snapshot.bundle_version,
+            agent_bundle_digest=bundle_snapshot.bundle_digest,
+            agent_bundle_location=bundle_snapshot.bundle_location,
         )
     except Exception:
         # Broad catch is intentional: ANY create_conversation failure
@@ -6527,6 +6576,19 @@ async def _get_session_snapshot(
         conv = await asyncio.to_thread(conv_store.get_conversation, session_id)
     if conv is None:
         raise _session_not_found()
+    # Reject malformed persisted snapshots before item reads, runner/cache
+    # resolution, refresh invalidation, or any other snapshot side effect.
+    validate_session_agent_bundle_snapshot(conv)
+    agent: Agent | None = None
+    if agent_store is not None and agent_cache is not None and conv.agent_id is not None:
+        try:
+            agent = await asyncio.to_thread(agent_store.get, conv.agent_id)
+            if agent is not None:
+                agent = resolve_session_agent_view(agent, conv)
+        except OmnigentError:
+            raise
+        except Exception:  # noqa: BLE001
+            agent = None
     # Return the most recent committed items while preserving the
     # SessionResponse contract that ``items`` is chronological. The
     # store's default page is the oldest 100 (``order="asc"``), which
@@ -6627,58 +6689,62 @@ async def _get_session_snapshot(
             last_task_error = {"code": "runner_failed_to_start", "message": exit_error}
             status = "failed"
     llm_model: str | None = None
+    harness: str | None = None
     context_window: int | None = None
     agent_name: str | None = None
-    if agent_store is not None and agent_cache is not None and conv.agent_id is not None:
+    if agent is not None and agent_cache is not None:
         try:
-            agent = await asyncio.to_thread(agent_store.get, conv.agent_id)
-            if agent is not None:
-                agent_name = agent.name
-                if agent.bundle_location is not None:
-                    # Offload to a worker thread: on a cold cache this fetches
-                    # the bundle from the artifact store and parses the spec —
-                    # blocking IO that would otherwise stall the single-worker
-                    # event loop on every page-load snapshot.
-                    loaded = await asyncio.to_thread(
-                        agent_cache.load, agent.id, agent.bundle_location
-                    )
-                    spec = loaded.spec
-                    if conv.sub_agent_name:
-                        child_spec = _find_spec_by_name(spec, conv.sub_agent_name)
-                        if child_spec is not None:
-                            spec = child_spec
-                    # Prefer the spec's name over the agent row's: a
-                    # switch-created session-scoped clone is named
-                    # "<builtin> (switch ag_…)" for row disambiguation,
-                    # but clients display agent_name verbatim — the spec
-                    # carries the clean identity (e.g. "claude-native-ui").
-                    if spec.name:
-                        agent_name = spec.name
-                    llm_model = spec.executor.model
+            agent_name = agent.name
+            if agent.bundle_location is not None:
+                # Offload to a worker thread: on a cold cache this fetches
+                # the bundle from the artifact store and parses the spec —
+                # blocking IO that would otherwise stall the single-worker
+                # event loop on every page-load snapshot.
+                loaded = await asyncio.to_thread(
+                    agent_cache.load,
+                    agent.id,
+                    agent.bundle_location,
+                )
+                spec = loaded.spec
+                if conv.sub_agent_name:
+                    child_spec = _find_spec_by_name(spec, conv.sub_agent_name)
+                    if child_spec is not None:
+                        spec = child_spec
+                # Prefer the spec's name over the agent row's: a
+                # switch-created session-scoped clone is named
+                # "<builtin> (switch ag_…)" for row disambiguation,
+                # but clients display agent_name verbatim — the spec
+                # carries the clean identity (e.g. "claude-native-ui").
+                if spec.name:
+                    agent_name = spec.name
+                llm_model = spec.executor.model
+                harness = _spec_harness(spec)
 
-                    # Size the context ring against whatever the next turn will
-                    # actually run, using the SAME resolver the runner uses to
-                    # budget compaction. That makes the UI ring and the runner's
-                    # compaction trigger a single source of truth — computed by
-                    # one function — so they can't drift even though they run in
-                    # different processes at different times. (They previously
-                    # each inlined this rule and silently fell out of step;
-                    # sharing the function removes the manual
-                    # sync.) spec.executor.context_window describes only the spec
-                    # model, so an active override bypasses it — the resolver
-                    # makes that decision from the spec model + override.
-                    #
-                    # Offload to a worker thread: an active override (or an
-                    # undeclared window) can trigger a cache-cold provider
-                    # catalog fetch (blocking HTTP / CPU-bound litellm) inside
-                    # the resolver, which would otherwise stall the single-worker
-                    # event loop and serialize every concurrent snapshot.
-                    context_window = await asyncio.to_thread(
-                        resolve_effective_context_window,
-                        spec.executor.context_window,
-                        llm_model,
-                        model_override=conv.model_override,
-                    )
+                # Size the context ring against whatever the next turn will
+                # actually run, using the SAME resolver the runner uses to
+                # budget compaction. That makes the UI ring and the runner's
+                # compaction trigger a single source of truth — computed by
+                # one function — so they can't drift even though they run in
+                # different processes at different times. (They previously
+                # each inlined this rule and silently fell out of step;
+                # sharing the function removes the manual
+                # sync.) spec.executor.context_window describes only the spec
+                # model, so an active override bypasses it — the resolver
+                # makes that decision from the spec model + override.
+                #
+                # Offload to a worker thread: an active override (or an
+                # undeclared window) can trigger a cache-cold provider
+                # catalog fetch (blocking HTTP / CPU-bound litellm) inside
+                # the resolver, which would otherwise stall the single-worker
+                # event loop and serialize every concurrent snapshot.
+                context_window = await asyncio.to_thread(
+                    resolve_effective_context_window,
+                    spec.executor.context_window,
+                    llm_model,
+                    model_override=conv.model_override,
+                )
+        except OmnigentError:
+            raise
         except Exception:  # noqa: BLE001
             pass
     # Skills are runner-owned: the bound runner discovers them against its
@@ -6738,6 +6804,7 @@ async def _get_session_snapshot(
         can_approve,
         background_task_count=_session_background_task_count_cache.get(session_id),
         llm_model=llm_model,
+        harness=harness,
         context_window=context_window,
         last_total_tokens=last_total_tokens,
         last_task_error=last_task_error,

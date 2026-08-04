@@ -96,6 +96,10 @@ from omnigent.server.routes._content_type import (
 )
 from omnigent.server.routes._errors import session_not_found as _session_not_found
 from omnigent.server.routes._origin import require_trusted_origin
+from omnigent.server.routes._session_create_validation import (
+    resolve_session_agent_view,
+    validate_session_agent_bundle_snapshot,
+)
 from omnigent.server.routes._sessions.common import *
 from omnigent.server.routes._sessions.common import (
     get_server_runner_router,
@@ -517,13 +521,18 @@ def register_core_routes(
 
         inherited_runner_id: str | None = None
         if parsed_metadata.parent_session_id is not None:
-            inherited_runner_id = await _authorize_bundled_parent_and_inherit_runner(
+            parent_conv, inherited_runner_id = await _authorize_bundled_parent_and_inherit_runner(
                 parsed_metadata.parent_session_id,
                 user_id=user_id,
                 permission_store=permission_store,
                 conversation_store=conversation_store,
                 runner_router=runner_router,
             )
+            if validate_session_agent_bundle_snapshot(parent_conv) is None:
+                raise OmnigentError(
+                    "parent session has no pinned agent bundle snapshot",
+                    code=ErrorCode.CONFLICT,
+                )
 
         bundle_bytes = await bundle.read()
         result = await asyncio.to_thread(
@@ -856,6 +865,8 @@ def register_core_routes(
             # Pins are per-user: filter to the caller's own pin key.
             pinned_owner=user_id,
         )
+        for conv in page.data:
+            validate_session_agent_bundle_snapshot(conv)
         # list_conversations may return rows with agent_id=None for
         # legacy conversations; skip them before building the batch IDs.
         conv_ids = [conv.id for conv in page.data if conv.agent_id is not None]
@@ -1018,6 +1029,8 @@ def register_core_routes(
         convs = await asyncio.to_thread(_load_sessions, accessible)
         if not convs:
             return []
+        for conv in convs:
+            validate_session_agent_bundle_snapshot(conv)
         unique_agent_ids = list({c.agent_id for c in convs if c.agent_id is not None})
         conv_ids = [c.id for c in convs]
         agent_names_by_id, child_ids_by_parent, comments_fingerprints = await asyncio.gather(
@@ -1926,6 +1939,7 @@ def register_core_routes(
                     f"Session not found: {source_id!r}",
                     code=ErrorCode.NOT_FOUND,
                 )
+        validate_session_agent_bundle_snapshot(source)
         if source.kind == "sub_agent":
             raise OmnigentError(
                 "Cannot fork a sub-agent session — only top-level sessions can be forked.",
@@ -1943,6 +1957,7 @@ def register_core_routes(
                 f"Source agent not found: {source.agent_id!r}",
                 code=ErrorCode.NOT_FOUND,
             )
+        source_agent = resolve_session_agent_view(source_agent, source)
 
         # By default the fork clones the source's agent (same harness). When
         # ``body.agent_id`` names a different agent, the fork SWITCHES to it
@@ -2024,14 +2039,16 @@ def register_core_routes(
         )
 
         try:
+            cloned_bundle_location = base_agent.bundle_location
             new_conv = await asyncio.to_thread(
                 conversation_store.fork_conversation,
                 source_id,
                 title=body.title,
                 agent_id=cloned_agent_id,
                 cloned_agent_name=cloned_agent_name,
-                cloned_agent_bundle_location=base_agent.bundle_location,
+                cloned_agent_bundle_location=cloned_bundle_location,
                 cloned_agent_description=base_agent.description,
+                bundle_source_agent_id=base_agent.id if switching_agent else None,
                 copy_model_settings=copy_model_settings,
                 # Launch flags are CLI-specific. On an agent switch the fork may
                 # bind a different CLI (e.g. claude-code → pi), whose flag set
@@ -2141,6 +2158,19 @@ def register_core_routes(
             raise OmnigentError(
                 "Session has no agent binding — cannot switch agent.",
                 code=ErrorCode.INVALID_INPUT,
+            )
+        if any(
+            value is not None
+            for value in (
+                session.agent_bundle_version,
+                session.agent_bundle_digest,
+                session.agent_bundle_location,
+            )
+        ):
+            raise OmnigentError(
+                "This Session's Agent Bundle is immutable. Fork the Session or "
+                "create a new Session to use another Agent.",
+                code=ErrorCode.CONFLICT,
             )
 
         # Switching mid-turn would tear the running harness subprocess out

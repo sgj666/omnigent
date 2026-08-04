@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from sqlalchemy import text
 
 from omnigent.db.utils import get_or_create_engine
 from omnigent.entities import (
+    Conversation,
     ErrorData,
     FunctionCallData,
     FunctionCallOutputData,
@@ -26,6 +29,96 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 from omnigent.stores.host_store import HostStore
 
 # ── CRUD ──────────────────────────────────────────────
+
+
+def _bundle_snapshot_kwargs(agent_id: str) -> dict[str, object]:
+    digest = hashlib.sha256(agent_id.encode()).hexdigest()
+    return {
+        "agent_bundle_version": 1,
+        "agent_bundle_digest": digest,
+        "agent_bundle_location": f"{agent_id}/{digest}",
+    }
+
+
+def _create_snapshot_parent(
+    conversation_store: SqlAlchemyConversationStore,
+    *,
+    kind: str = "default",
+    title: str | None = None,
+    runner_id: str | None = None,
+) -> Conversation:
+    agent_id = "f" * 32
+    return conversation_store.create_conversation(
+        agent_id=agent_id,
+        kind=kind,
+        title=title,
+        runner_id=runner_id,
+        **_bundle_snapshot_kwargs(agent_id),
+    )
+
+
+def _clear_bundle_snapshot(db_uri: str, conversation_id: str) -> None:
+    """Convert a pinned test Session into a legacy unpinned row."""
+    engine = get_or_create_engine(db_uri)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE conversations SET agent_bundle_version = NULL, "
+                "agent_bundle_digest = NULL, agent_bundle_location = NULL "
+                "WHERE id = :id"
+            ),
+            {"id": bytes.fromhex(conversation_id)},
+        )
+
+
+def _set_bundle_snapshot(
+    db_uri: str,
+    conversation_id: str,
+    *,
+    version: int | None,
+    digest: str | None,
+    location: str | None,
+) -> None:
+    """Replace one Session snapshot to exercise persisted legacy/corrupt rows."""
+    engine = get_or_create_engine(db_uri)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE conversations SET agent_bundle_version = :version, "
+                "agent_bundle_digest = :digest, agent_bundle_location = :location "
+                "WHERE id = :id"
+            ),
+            {
+                "version": version,
+                "digest": digest,
+                "location": location,
+                "id": bytes.fromhex(conversation_id),
+            },
+        )
+
+
+def _fork_persistence_state(
+    db_uri: str, workspace_id: int = 0
+) -> dict[str, list[tuple[object, ...]]]:
+    """Snapshot every table an existing-Agent fork may mutate."""
+    engine = get_or_create_engine(db_uri)
+    tables = (
+        "agents",
+        "conversations",
+        "conversation_items",
+        "omnigent_conversation_metadata",
+    )
+    with engine.connect() as connection:
+        return {
+            table: [
+                tuple(row)
+                for row in connection.execute(
+                    text(f"SELECT * FROM {table} WHERE workspace_id = :workspace_id ORDER BY id"),
+                    {"workspace_id": workspace_id},
+                ).all()
+            ]
+            for table in tables
+        }
 
 
 def test_fork_drops_import_provenance_labels(
@@ -81,6 +174,80 @@ def test_create_and_get(conversation_store: SqlAlchemyConversationStore) -> None
     fetched = conversation_store.get_conversation(conv.id)
     assert fetched is not None
     assert fetched.id == conv.id
+
+
+def test_agent_bound_root_requires_and_persists_bundle_snapshot(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    digest = "a" * 64
+
+    with pytest.raises(ValueError, match="complete agent bundle snapshot"):
+        conversation_store.create_conversation(agent_id="1" * 32)
+
+    created = conversation_store.create_conversation(
+        agent_id="1" * 32,
+        agent_bundle_version=3,
+        agent_bundle_digest=digest,
+        agent_bundle_location="1" * 32 + f"/{digest}",
+    )
+
+    fetched = conversation_store.get_conversation(created.id)
+    assert fetched is not None
+    assert fetched.agent_bundle_version == 3
+    assert fetched.agent_bundle_digest == digest
+    assert fetched.agent_bundle_location == f"{'1' * 32}/{digest}"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"agent_bundle_version": 4}, "agent_bundle_version"),
+        ({"agent_bundle_digest": "b" * 64}, "agent_bundle_digest"),
+        ({"agent_bundle_location": f"{'2' * 32}/{'b' * 64}"}, "agent_bundle_location"),
+    ],
+)
+def test_child_inherits_parent_bundle_snapshot_and_rejects_switches(
+    conversation_store: SqlAlchemyConversationStore,
+    overrides: dict[str, object],
+    match: str,
+) -> None:
+    digest = "a" * 64
+    parent = conversation_store.create_conversation(
+        agent_id="1" * 32,
+        agent_bundle_version=3,
+        agent_bundle_digest=digest,
+        agent_bundle_location=f"{'1' * 32}/{digest}",
+    )
+    inherited = conversation_store.create_conversation(
+        agent_id="1" * 32,
+        kind="sub_agent",
+        parent_conversation_id=parent.id,
+    )
+
+    assert inherited.agent_bundle_version == parent.agent_bundle_version
+    assert inherited.agent_bundle_digest == parent.agent_bundle_digest
+    assert inherited.agent_bundle_location == parent.agent_bundle_location
+
+    with pytest.raises(ValueError, match=match):
+        conversation_store.create_conversation(
+            agent_id="1" * 32,
+            kind="sub_agent",
+            parent_conversation_id=parent.id,
+            **overrides,  # type: ignore[arg-type]
+        )
+
+
+def test_child_rejects_legacy_parent_without_bundle_snapshot(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    parent = conversation_store.create_conversation()
+
+    with pytest.raises(ValueError, match=r"parent.*agent bundle snapshot"):
+        conversation_store.create_conversation(
+            agent_id="1" * 32,
+            kind="sub_agent",
+            parent_conversation_id=parent.id,
+        )
 
 
 def test_create_with_existing_caller_supplied_id_raises(db_uri: str) -> None:
@@ -1431,7 +1598,7 @@ def test_list_conversations_kind_filter_returns_only_matching(
     default listing (the sidebar's view).
     """
     top = conversation_store.create_conversation(kind="default", title="top")
-    parent = conversation_store.create_conversation(kind="default", title="parent")
+    parent = _create_snapshot_parent(conversation_store, kind="default", title="parent")
     child = conversation_store.create_conversation(
         kind="sub_agent", title="child", parent_conversation_id=parent.id
     )
@@ -1718,7 +1885,7 @@ def test_subagent_conversations_are_isolated(
     # Sub-agents require a parent (kind="sub_agent" iff parent set). A shared
     # parent is fine — the test only asserts the two children's items are
     # isolated from each other.
-    parent = conversation_store.create_conversation(kind="default")
+    parent = _create_snapshot_parent(conversation_store, kind="default")
     conv_a = conversation_store.create_conversation(
         kind="sub_agent", parent_conversation_id=parent.id, title="alpha"
     )
@@ -2014,7 +2181,7 @@ def test_create_conversation_with_parent_pointer_and_title(
     conversation_store: SqlAlchemyConversationStore,
 ) -> None:
     """Setting ``parent_conversation_id`` + ``title`` round-trips through the row."""
-    parent = conversation_store.create_conversation()
+    parent = _create_snapshot_parent(conversation_store)
     child = conversation_store.create_conversation(
         kind="sub_agent",
         title="coder:auth",
@@ -2037,7 +2204,7 @@ def test_create_duplicate_title_under_same_parent_raises(
     """The app-level ``(parent, title)`` check rejects sibling duplicates."""
     from omnigent.stores.conversation_store import NameAlreadyExistsError
 
-    parent = conversation_store.create_conversation()
+    parent = _create_snapshot_parent(conversation_store)
     conversation_store.create_conversation(
         kind="sub_agent",
         title="coder:auth",
@@ -2059,8 +2226,8 @@ def test_create_same_title_under_different_parents_succeeds(
     conversation_store: SqlAlchemyConversationStore,
 ) -> None:
     """Uniqueness is per-parent — ``(p1, "auth")`` and ``(p2, "auth")`` coexist."""
-    p1 = conversation_store.create_conversation()
-    p2 = conversation_store.create_conversation()
+    p1 = _create_snapshot_parent(conversation_store)
+    p2 = _create_snapshot_parent(conversation_store)
     conversation_store.create_conversation(
         kind="sub_agent", title="coder:auth", parent_conversation_id=p1.id
     )
@@ -2102,8 +2269,8 @@ def test_list_conversations_filtered_by_parent_returns_children_only(
     conversation_store: SqlAlchemyConversationStore,
 ) -> None:
     """``parent_conversation_id`` filter scopes results to one parent's sub-tree."""
-    parent_a = conversation_store.create_conversation()
-    parent_b = conversation_store.create_conversation()
+    parent_a = _create_snapshot_parent(conversation_store)
+    parent_b = _create_snapshot_parent(conversation_store)
     conversation_store.create_conversation(
         kind="sub_agent", title="coder:auth", parent_conversation_id=parent_a.id
     )
@@ -2129,7 +2296,7 @@ def test_list_conversations_filtered_by_title(
     conversation_store: SqlAlchemyConversationStore,
 ) -> None:
     """``title`` filter returns only children with an exact title match."""
-    parent = conversation_store.create_conversation()
+    parent = _create_snapshot_parent(conversation_store)
     conversation_store.create_conversation(
         kind="sub_agent", title="coder:auth", parent_conversation_id=parent.id
     )
@@ -2167,8 +2334,8 @@ def test_list_child_conversation_ids_by_parent_groups_direct_subagents(
     (``kind`` is derived from parent-nullness), so every parented row here
     is a direct child of its parent.
     """
-    parent_a = conversation_store.create_conversation()
-    parent_b = conversation_store.create_conversation()
+    parent_a = _create_snapshot_parent(conversation_store)
+    parent_b = _create_snapshot_parent(conversation_store)
     child_a1 = conversation_store.create_conversation(
         kind="sub_agent", title="coder:auth", parent_conversation_id=parent_a.id
     )
@@ -2226,16 +2393,22 @@ def test_list_conversations_filtered_by_agent_id_returns_matching_only(
     alpha = agent_store.create(
         agent_id="f1e73205d3a559f97d5e9021d95832d2",
         name="alpha",
-        bundle_location="f1e73205d3a559f97d5e9021d95832d2/h",
+        bundle_location="f1e73205d3a559f97d5e9021d95832d2/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
     beta = agent_store.create(
         agent_id="c796e62af763f9d951301fead40d20de",
         name="beta",
-        bundle_location="c796e62af763f9d951301fead40d20de/h",
+        bundle_location="c796e62af763f9d951301fead40d20de/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    conv1 = conversation_store.create_conversation(agent_id=alpha.id)
-    conv2 = conversation_store.create_conversation(agent_id=alpha.id)
-    conv3 = conversation_store.create_conversation(agent_id=beta.id)
+    conv1 = conversation_store.create_conversation(
+        agent_id=alpha.id, **_bundle_snapshot_kwargs(alpha.id)
+    )
+    conv2 = conversation_store.create_conversation(
+        agent_id=alpha.id, **_bundle_snapshot_kwargs(alpha.id)
+    )
+    conv3 = conversation_store.create_conversation(
+        agent_id=beta.id, **_bundle_snapshot_kwargs(beta.id)
+    )
     _ = conv3  # ensure conv3 exists but is not returned
 
     page = conversation_store.list_conversations(agent_id=alpha.id)
@@ -2262,9 +2435,11 @@ def test_list_conversations_agent_id_none_disables_filter(
     alpha = agent_store.create(
         agent_id="1b8cb3bf470399f2dab62adfc4e0a47e",
         name="alpha2",
-        bundle_location="1b8cb3bf470399f2dab62adfc4e0a47e/h",
+        bundle_location="1b8cb3bf470399f2dab62adfc4e0a47e/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    conv_with_agent = conversation_store.create_conversation(agent_id=alpha.id)
+    conv_with_agent = conversation_store.create_conversation(
+        agent_id=alpha.id, **_bundle_snapshot_kwargs(alpha.id)
+    )
     conv_without_agent = conversation_store.create_conversation()
 
     page = conversation_store.list_conversations()
@@ -2292,9 +2467,11 @@ def test_list_conversations_filter_distinct_by_agent_id(
     alpha = agent_store.create(
         agent_id="088b0cf9ba41af7589984807d30c5789",
         name="alpha3",
-        bundle_location="088b0cf9ba41af7589984807d30c5789/h",
+        bundle_location="088b0cf9ba41af7589984807d30c5789/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    conv = conversation_store.create_conversation(agent_id=alpha.id)
+    conv = conversation_store.create_conversation(
+        agent_id=alpha.id, **_bundle_snapshot_kwargs(alpha.id)
+    )
 
     page = conversation_store.list_conversations(agent_id=alpha.id)
     assert [c.id for c in page.data] == [conv.id]
@@ -2324,15 +2501,19 @@ def test_list_conversations_filter_orders_by_sort_by(
     alpha = agent_store.create(
         agent_id="56d6facd8237c8523d783d591fa43baa",
         name="alpha4",
-        bundle_location="56d6facd8237c8523d783d591fa43baa/h",
+        bundle_location="56d6facd8237c8523d783d591fa43baa/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
 
     # Create two conversations at distinct timestamps so
     # ``updated_at`` differs.
     monkeypatch.setattr(store_mod, "now_epoch", lambda: 100)
-    older = conversation_store.create_conversation(agent_id=alpha.id)
+    older = conversation_store.create_conversation(
+        agent_id=alpha.id, **_bundle_snapshot_kwargs(alpha.id)
+    )
     monkeypatch.setattr(store_mod, "now_epoch", lambda: 200)
-    newer = conversation_store.create_conversation(agent_id=alpha.id)
+    newer = conversation_store.create_conversation(
+        agent_id=alpha.id, **_bundle_snapshot_kwargs(alpha.id)
+    )
     _ = newer  # both created; newer has later created_at
 
     # Bump older's updated_at so it becomes the most recently updated.
@@ -2368,7 +2549,7 @@ def test_cascade_delete_removes_descendants(
     """Deleting a parent recursively removes children + grandchildren (FK CASCADE)."""
     import asyncio
 
-    parent = conversation_store.create_conversation()
+    parent = _create_snapshot_parent(conversation_store)
     child = conversation_store.create_conversation(
         kind="sub_agent", title="coder:auth", parent_conversation_id=parent.id
     )
@@ -2726,7 +2907,7 @@ def test_create_session_with_agent_records_workspace(
     created = conversation_store.create_session_with_agent(
         agent_id="28373c2f7c4d68719e6dbc4b9599b9b0",
         agent_name="cli-test-agent",
-        agent_bundle_location="28373c2f7c4d68719e6dbc4b9599b9b0/bundle1",
+        agent_bundle_location="28373c2f7c4d68719e6dbc4b9599b9b0/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         agent_description=None,
         workspace="/Users/corey/projects/cli-launch",
     )
@@ -2752,7 +2933,7 @@ def test_create_session_with_agent_workspace_defaults_to_none(
     created = conversation_store.create_session_with_agent(
         agent_id="f8ec0ed35d503406f640ae51bf44c7f7",
         agent_name="no-ws-agent",
-        agent_bundle_location="f8ec0ed35d503406f640ae51bf44c7f7/bundle1",
+        agent_bundle_location="f8ec0ed35d503406f640ae51bf44c7f7/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         agent_description=None,
     )
     fetched = conversation_store.get_conversation(created.conversation.id)
@@ -2776,7 +2957,7 @@ def test_create_session_with_agent_records_terminal_launch_args(
     created = conversation_store.create_session_with_agent(
         agent_id="df7e0acd3e245704fe6b286dbfd4ded9",
         agent_name="cli-test-agent",
-        agent_bundle_location="df7e0acd3e245704fe6b286dbfd4ded9/bundle1",
+        agent_bundle_location="df7e0acd3e245704fe6b286dbfd4ded9/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         agent_description=None,
         terminal_launch_args=["--dangerously-skip-permissions", "--model", "opus"],
     )
@@ -2807,7 +2988,7 @@ def test_create_session_with_agent_terminal_launch_args_defaults_to_none(
     created = conversation_store.create_session_with_agent(
         agent_id="a4b69df8a4ccfd0bea607c33acb68493",
         agent_name="no-tla-agent",
-        agent_bundle_location="a4b69df8a4ccfd0bea607c33acb68493/bundle1",
+        agent_bundle_location="a4b69df8a4ccfd0bea607c33acb68493/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         agent_description=None,
     )
     fetched = conversation_store.get_conversation(created.conversation.id)
@@ -2817,6 +2998,7 @@ def test_create_session_with_agent_terminal_launch_args_defaults_to_none(
 
 def test_create_session_with_agent_links_parent_and_inherits_root(
     conversation_store: SqlAlchemyConversationStore,
+    agent_store: SqlAlchemyAgentStore,
 ) -> None:
     """
     Verify create_session_with_agent with parent_conversation_id creates
@@ -2829,11 +3011,22 @@ def test_create_session_with_agent_links_parent_and_inherits_root(
     matches on ``root_conversation_id``) and runner co-location would
     silently break for bundle-created children.
     """
-    parent = conversation_store.create_conversation(runner_id="runner_swa1")
+    parent_agent_id = "7ee8de79e43440fc83011a42ce1dcc8d"
+    parent_digest = hashlib.sha256(parent_agent_id.encode()).hexdigest()
+    agent_store.create(
+        agent_id=parent_agent_id,
+        name="bundle-parent-agent",
+        bundle_location=f"{parent_agent_id}/{parent_digest}",
+    )
+    parent = conversation_store.create_conversation(
+        agent_id=parent_agent_id,
+        runner_id="runner_swa1",
+        **_bundle_snapshot_kwargs(parent_agent_id),
+    )
     created = conversation_store.create_session_with_agent(
         agent_id="9d05fc5310e5daf30deff6eaf5ecfbc8",
         agent_name="bundle-child-agent",
-        agent_bundle_location="9d05fc5310e5daf30deff6eaf5ecfbc8/bundle1",
+        agent_bundle_location="9d05fc5310e5daf30deff6eaf5ecfbc8/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         agent_description=None,
         parent_conversation_id=parent.id,
         runner_id=parent.runner_id,
@@ -2864,7 +3057,7 @@ def test_create_session_with_agent_top_level_unchanged(
     created = conversation_store.create_session_with_agent(
         agent_id="8d0934d981d62b34d0e1fe28b44c55e4",
         agent_name="top-level-agent",
-        agent_bundle_location="8d0934d981d62b34d0e1fe28b44c55e4/bundle1",
+        agent_bundle_location="8d0934d981d62b34d0e1fe28b44c55e4/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         agent_description=None,
     )
     fetched = conversation_store.get_conversation(created.conversation.id)
@@ -2893,7 +3086,7 @@ def test_create_session_with_agent_missing_parent_fails_loud(
         conversation_store.create_session_with_agent(
             agent_id="bcde8586d4addf002f0c904bbd000dad",
             agent_name="orphan-agent",
-            agent_bundle_location="bcde8586d4addf002f0c904bbd000dad/bundle1",
+            agent_bundle_location="bcde8586d4addf002f0c904bbd000dad/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             agent_description=None,
             parent_conversation_id="1d0b12236c77f69f5073a53583de1a3f",
         )
@@ -2960,7 +3153,7 @@ def test_update_conversation_replaces_terminal_launch_args(
     created = conversation_store.create_session_with_agent(
         agent_id="1e86f0ad04829bc03ee95dfa02291e33",
         agent_name="update-agent",
-        agent_bundle_location="1e86f0ad04829bc03ee95dfa02291e33/bundle1",
+        agent_bundle_location="1e86f0ad04829bc03ee95dfa02291e33/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         agent_description=None,
         terminal_launch_args=["--model", "opus"],
     )
@@ -2996,7 +3189,7 @@ def test_update_conversation_terminal_launch_args_empty_list_distinct_from_none(
     created = conversation_store.create_session_with_agent(
         agent_id="85f2913caabe8215094e0d0cba22ad57",
         agent_name="empty-agent",
-        agent_bundle_location="85f2913caabe8215094e0d0cba22ad57/bundle1",
+        agent_bundle_location="85f2913caabe8215094e0d0cba22ad57/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         agent_description=None,
         terminal_launch_args=["--model", "opus"],
     )
@@ -3219,11 +3412,12 @@ def test_fork_conversation_copies_items(
     agent_store.create(
         agent_id="971f31bb0aac3f2d93931ee788150527",
         name="fork-test",
-        bundle_location="971f31bb0aac3f2d93931ee788150527/fakehash",
+        bundle_location="971f31bb0aac3f2d93931ee788150527/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
     source = conversation_store.create_conversation(
         agent_id="971f31bb0aac3f2d93931ee788150527",
         title="Original",
+        **_bundle_snapshot_kwargs("971f31bb0aac3f2d93931ee788150527"),
     )
     conversation_store.append(
         source.id,
@@ -3256,6 +3450,9 @@ def test_fork_conversation_copies_items(
     assert fork.title == "My Fork"
     # Agent binding is copied from the source.
     assert fork.agent_id == "971f31bb0aac3f2d93931ee788150527"
+    assert fork.agent_bundle_version == source.agent_bundle_version
+    assert fork.agent_bundle_digest == source.agent_bundle_digest
+    assert fork.agent_bundle_location == source.agent_bundle_location
 
     # Items are deep-copied — same count, different IDs, same data.
     fork_items = conversation_store.list_items(fork.id)
@@ -3327,9 +3524,12 @@ def test_fork_conversation_preserves_created_by(
     agent_store.create(
         agent_id="3d56c2bb70655f419c942112eaa0e339",
         name="fork-attr",
-        bundle_location="3d56c2bb70655f419c942112eaa0e339/fakehash",
+        bundle_location="3d56c2bb70655f419c942112eaa0e339/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="3d56c2bb70655f419c942112eaa0e339")
+    source = conversation_store.create_conversation(
+        agent_id="3d56c2bb70655f419c942112eaa0e339",
+        **_bundle_snapshot_kwargs("3d56c2bb70655f419c942112eaa0e339"),
+    )
     conversation_store.append(
         source.id,
         [
@@ -3369,11 +3569,12 @@ def test_fork_conversation_default_title(
     agent_store.create(
         agent_id="909c5b9f4c8a48c5d3ea9f34e6a6cc47",
         name="fork-title",
-        bundle_location="909c5b9f4c8a48c5d3ea9f34e6a6cc47/fakehash",
+        bundle_location="909c5b9f4c8a48c5d3ea9f34e6a6cc47/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
     source = conversation_store.create_conversation(
         agent_id="909c5b9f4c8a48c5d3ea9f34e6a6cc47",
         title="Chat about Python",
+        **_bundle_snapshot_kwargs("909c5b9f4c8a48c5d3ea9f34e6a6cc47"),
     )
     fork = conversation_store.fork_conversation(source.id)
 
@@ -3388,9 +3589,12 @@ def test_fork_conversation_empty_source(
     agent_store.create(
         agent_id="bd68e16fae506630f309e6e4a0674c0d",
         name="fork-empty",
-        bundle_location="bd68e16fae506630f309e6e4a0674c0d/fakehash",
+        bundle_location="bd68e16fae506630f309e6e4a0674c0d/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="bd68e16fae506630f309e6e4a0674c0d")
+    source = conversation_store.create_conversation(
+        agent_id="bd68e16fae506630f309e6e4a0674c0d",
+        **_bundle_snapshot_kwargs("bd68e16fae506630f309e6e4a0674c0d"),
+    )
     fork = conversation_store.fork_conversation(source.id)
 
     fork_items = conversation_store.list_items(fork.id)
@@ -3414,9 +3618,12 @@ def test_fork_conversation_copies_labels(
     agent_store.create(
         agent_id="f1afc45b190c3da9cec1acf12aa3600f",
         name="fork-labels",
-        bundle_location="f1afc45b190c3da9cec1acf12aa3600f/fakehash",
+        bundle_location="f1afc45b190c3da9cec1acf12aa3600f/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="f1afc45b190c3da9cec1acf12aa3600f")
+    source = conversation_store.create_conversation(
+        agent_id="f1afc45b190c3da9cec1acf12aa3600f",
+        **_bundle_snapshot_kwargs("f1afc45b190c3da9cec1acf12aa3600f"),
+    )
     conversation_store.set_labels(source.id, {"sensitivity": "high", "dept": "eng"})
 
     fork = conversation_store.fork_conversation(source.id)
@@ -3451,9 +3658,12 @@ def test_fork_conversation_drops_instance_scoped_labels(
     agent_store.create(
         agent_id="f88a23d7428c44557a974c2e07787713",
         name="fork-instance",
-        bundle_location="f88a23d7428c44557a974c2e07787713/fakehash",
+        bundle_location="f88a23d7428c44557a974c2e07787713/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="f88a23d7428c44557a974c2e07787713")
+    source = conversation_store.create_conversation(
+        agent_id="f88a23d7428c44557a974c2e07787713",
+        **_bundle_snapshot_kwargs("f88a23d7428c44557a974c2e07787713"),
+    )
     conversation_store.set_labels(
         source.id,
         {
@@ -3498,9 +3708,12 @@ def test_fork_conversation_stamps_source_external_session_id(
     agent_store.create(
         agent_id="f27f858bf73f99ab4bdef6152e0f8729",
         name="fork-ext",
-        bundle_location="f27f858bf73f99ab4bdef6152e0f8729/fakehash",
+        bundle_location="f27f858bf73f99ab4bdef6152e0f8729/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="f27f858bf73f99ab4bdef6152e0f8729")
+    source = conversation_store.create_conversation(
+        agent_id="f27f858bf73f99ab4bdef6152e0f8729",
+        **_bundle_snapshot_kwargs("f27f858bf73f99ab4bdef6152e0f8729"),
+    )
     conversation_store.set_external_session_id(source.id, "claude-uuid-abc")
 
     fork = conversation_store.fork_conversation(source.id)
@@ -3527,9 +3740,12 @@ def test_fork_conversation_no_external_session_id_no_directive(
     agent_store.create(
         agent_id="51b730ece6dd86c0b9d83180634d3eb9",
         name="fork-noext",
-        bundle_location="51b730ece6dd86c0b9d83180634d3eb9/fakehash",
+        bundle_location="51b730ece6dd86c0b9d83180634d3eb9/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="51b730ece6dd86c0b9d83180634d3eb9")
+    source = conversation_store.create_conversation(
+        agent_id="51b730ece6dd86c0b9d83180634d3eb9",
+        **_bundle_snapshot_kwargs("51b730ece6dd86c0b9d83180634d3eb9"),
+    )
 
     fork = conversation_store.fork_conversation(source.id)
 
@@ -3591,9 +3807,12 @@ def test_fork_conversation_up_to_response_truncates_items(
     agent_store.create(
         agent_id="1e63c4993591d0eed8605bac4927a143",
         name="fork-trunc",
-        bundle_location="1e63c4993591d0eed8605bac4927a143/fakehash",
+        bundle_location="1e63c4993591d0eed8605bac4927a143/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="1e63c4993591d0eed8605bac4927a143")
+    source = conversation_store.create_conversation(
+        agent_id="1e63c4993591d0eed8605bac4927a143",
+        **_bundle_snapshot_kwargs("1e63c4993591d0eed8605bac4927a143"),
+    )
     _append_three_responses(conversation_store, source.id)
 
     fork = conversation_store.fork_conversation(source.id, up_to_response_id="resp_002")
@@ -3633,9 +3852,12 @@ def test_fork_conversation_truncated_drops_external_session_directive(
     agent_store.create(
         agent_id="ab940db594b0b58507f706fa30a355b9",
         name="fork-trunc-ext",
-        bundle_location="ab940db594b0b58507f706fa30a355b9/fakehash",
+        bundle_location="ab940db594b0b58507f706fa30a355b9/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="ab940db594b0b58507f706fa30a355b9")
+    source = conversation_store.create_conversation(
+        agent_id="ab940db594b0b58507f706fa30a355b9",
+        **_bundle_snapshot_kwargs("ab940db594b0b58507f706fa30a355b9"),
+    )
     conversation_store.set_external_session_id(source.id, "claude-uuid-trunc")
     _append_three_responses(conversation_store, source.id)
 
@@ -3675,9 +3897,12 @@ def test_fork_conversation_cross_family_drops_external_session_directive(
     agent_store.create(
         agent_id="203798a08983a6a0d0290e53cf717e65",
         name="fork-xfam",
-        bundle_location="203798a08983a6a0d0290e53cf717e65/fakehash",
+        bundle_location="203798a08983a6a0d0290e53cf717e65/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="203798a08983a6a0d0290e53cf717e65")
+    source = conversation_store.create_conversation(
+        agent_id="203798a08983a6a0d0290e53cf717e65",
+        **_bundle_snapshot_kwargs("203798a08983a6a0d0290e53cf717e65"),
+    )
     # A codex thread id on the source: resumable only by a codex target.
     conversation_store.set_external_session_id(source.id, "codex-thread-xfam")
     _append_three_responses(conversation_store, source.id)
@@ -3715,9 +3940,12 @@ def test_fork_conversation_up_to_last_response_keeps_external_directive(
     agent_store.create(
         agent_id="c774126dd8d6bf6ca0d1baba1893dec2",
         name="fork-trunc-last",
-        bundle_location="c774126dd8d6bf6ca0d1baba1893dec2/fakehash",
+        bundle_location="c774126dd8d6bf6ca0d1baba1893dec2/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="c774126dd8d6bf6ca0d1baba1893dec2")
+    source = conversation_store.create_conversation(
+        agent_id="c774126dd8d6bf6ca0d1baba1893dec2",
+        **_bundle_snapshot_kwargs("c774126dd8d6bf6ca0d1baba1893dec2"),
+    )
     conversation_store.set_external_session_id(source.id, "claude-uuid-last")
     _append_three_responses(conversation_store, source.id)
 
@@ -3744,9 +3972,12 @@ def test_fork_conversation_up_to_unknown_response_raises(
     agent_store.create(
         agent_id="8114524af82a012591d6af5a76e7773c",
         name="fork-trunc-bad",
-        bundle_location="8114524af82a012591d6af5a76e7773c/fakehash",
+        bundle_location="8114524af82a012591d6af5a76e7773c/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="8114524af82a012591d6af5a76e7773c")
+    source = conversation_store.create_conversation(
+        agent_id="8114524af82a012591d6af5a76e7773c",
+        **_bundle_snapshot_kwargs("8114524af82a012591d6af5a76e7773c"),
+    )
     _append_three_responses(conversation_store, source.id)
 
     with pytest.raises(ValueError, match="resp_nope"):
@@ -3767,19 +3998,25 @@ def test_fork_clone_agent_is_session_scoped(
     agent_store.create(
         agent_id="2f9e296b0ecfc976c94f8630a80881f8",
         name="claude-native-ui",
-        bundle_location="2f9e296b0ecfc976c94f8630a80881f8/hash",
+        bundle_location="2f9e296b0ecfc976c94f8630a80881f8/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="2f9e296b0ecfc976c94f8630a80881f8")
+    source = conversation_store.create_conversation(
+        agent_id="2f9e296b0ecfc976c94f8630a80881f8",
+        **_bundle_snapshot_kwargs("2f9e296b0ecfc976c94f8630a80881f8"),
+    )
 
     fork = conversation_store.fork_conversation(
         source.id,
         agent_id="42176d50dd2adf7a0ad796da46b94968",
         cloned_agent_name="claude-native-ui (fork 267eeb019e971bf79ab32a875543d2ed)",
-        cloned_agent_bundle_location="2f9e296b0ecfc976c94f8630a80881f8/hash",
+        cloned_agent_bundle_location="2f9e296b0ecfc976c94f8630a80881f8/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         cloned_agent_description=None,
     )
 
     assert fork.agent_id == "42176d50dd2adf7a0ad796da46b94968"
+    assert fork.agent_bundle_version == source.agent_bundle_version
+    assert fork.agent_bundle_digest == source.agent_bundle_digest
+    assert fork.agent_bundle_location == source.agent_bundle_location
     cloned = agent_store.get("42176d50dd2adf7a0ad796da46b94968")
     assert cloned is not None
     assert cloned.session_id == fork.id, "clone must be bound to the fork session"
@@ -3788,6 +4025,275 @@ def test_fork_clone_agent_is_session_scoped(
     builtin_ids = {a.id for a in agent_store.list(limit=100).data}
     assert "42176d50dd2adf7a0ad796da46b94968" not in builtin_ids
     assert "2f9e296b0ecfc976c94f8630a80881f8" in builtin_ids
+
+
+def test_same_agent_clone_fork_captures_legacy_session_agent_snapshot(
+    db_uri: str,
+    conversation_store: SqlAlchemyConversationStore,
+    agent_store: SqlAlchemyAgentStore,
+) -> None:
+    """A legacy Root fork snapshots its current session-scoped Agent."""
+    source_agent_id = "d5e29c91f6694e93bd06d63d683d8032"
+    new_agent_id = "6a26c687a9534160a72650841e31e118"
+    digest = "c" * 64
+    location = f"{source_agent_id}/{digest}"
+    source = conversation_store.create_session_with_agent(
+        agent_id=source_agent_id,
+        agent_name="legacy-session-source",
+        agent_bundle_location=location,
+        agent_description=None,
+    ).conversation
+    _clear_bundle_snapshot(db_uri, source.id)
+    source_agent = agent_store.get(source_agent_id)
+    assert source_agent is not None and source_agent.session_id == source.id
+
+    fork = conversation_store.fork_conversation(
+        source.id,
+        agent_id=new_agent_id,
+        cloned_agent_name="legacy-session-source (fork)",
+        cloned_agent_bundle_location=location,
+        cloned_agent_description=None,
+    )
+
+    assert fork.agent_bundle_version == source_agent.version
+    assert fork.agent_bundle_digest == digest
+    assert fork.agent_bundle_location == location
+
+
+@pytest.mark.parametrize("snapshot_state", ["partial", "invalid"])
+def test_same_agent_clone_fork_rejects_corrupt_source_snapshot_before_mutation(
+    db_uri: str,
+    conversation_store: SqlAlchemyConversationStore,
+    snapshot_state: str,
+) -> None:
+    """A corrupt source snapshot cannot be copied into a new Root."""
+    source_agent_id = "62b8975b71074b35b5b9d3b6395f8de0"
+    source_digest = "d" * 64
+    source_location = f"{source_agent_id}/{source_digest}"
+    source = conversation_store.create_session_with_agent(
+        agent_id=source_agent_id,
+        agent_name="corrupt-fork-source",
+        agent_bundle_location=source_location,
+        agent_description=None,
+    ).conversation
+    if snapshot_state == "partial":
+        _set_bundle_snapshot(
+            db_uri,
+            source.id,
+            version=1,
+            digest=None,
+            location=None,
+        )
+    else:
+        _set_bundle_snapshot(
+            db_uri,
+            source.id,
+            version=1,
+            digest=source_digest,
+            location=f"{source_agent_id}/{'e' * 64}",
+        )
+    state_before = _fork_persistence_state(db_uri)
+
+    with pytest.raises(ValueError, match="agent bundle snapshot"):
+        conversation_store.fork_conversation(
+            source.id,
+            agent_id="41eae88548a84c41b31a1f583974c6b5",
+            cloned_agent_name="must-not-exist",
+            cloned_agent_bundle_location=source_location,
+            cloned_agent_description=None,
+        )
+
+    assert _fork_persistence_state(db_uri) == state_before
+
+
+def test_fork_rejects_session_scoped_bundle_source_before_mutation(
+    conversation_store: SqlAlchemyConversationStore,
+    agent_store: SqlAlchemyAgentStore,
+) -> None:
+    """Only a template Agent may supply a switching fork's Bundle snapshot."""
+    source_agent_id = "05ba84fb07f447f29dc44d7a2be23348"
+    bundle_source_agent_id = "cb8d6a1dacfc497bb0508495bd79ba10"
+    new_agent_id = "22cad5db1b7e463b9407a86657321bd2"
+    target_digest = "b" * 64
+    target_bundle_location = f"{bundle_source_agent_id}/{target_digest}"
+    agent_store.create(
+        agent_id=source_agent_id,
+        name="fork-source-template",
+        bundle_location=f"{source_agent_id}/{'a' * 64}",
+    )
+    source = conversation_store.create_conversation(
+        agent_id=source_agent_id,
+        **_bundle_snapshot_kwargs(source_agent_id),
+    )
+    _append_three_responses(conversation_store, source.id)
+    target = conversation_store.create_session_with_agent(
+        agent_id=bundle_source_agent_id,
+        agent_name="session-only-bundle-source",
+        agent_bundle_location=target_bundle_location,
+        agent_description=None,
+    ).conversation
+    conversation_store.append(
+        target.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="resp_target",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "unchanged"}],
+                ),
+            )
+        ],
+    )
+
+    source_agent_before = agent_store.get(source_agent_id)
+    bundle_source_before = agent_store.get(bundle_source_agent_id)
+    assert source_agent_before is not None and source_agent_before.session_id is None
+    assert bundle_source_before is not None and bundle_source_before.session_id == target.id
+    conversations_before = conversation_store.list_conversations(limit=100, kind=None).data
+    items_before = {
+        conversation.id: conversation_store.list_items(conversation.id).data
+        for conversation in conversations_before
+    }
+
+    with pytest.raises(ValueError, match=r"bundle source Agent.*template"):
+        conversation_store.fork_conversation(
+            source.id,
+            agent_id=new_agent_id,
+            cloned_agent_name="must-not-be-created",
+            cloned_agent_bundle_location=target_bundle_location,
+            bundle_source_agent_id=bundle_source_agent_id,
+        )
+
+    assert agent_store.get(source_agent_id) == source_agent_before
+    assert agent_store.get(bundle_source_agent_id) == bundle_source_before
+    assert agent_store.get(new_agent_id) is None
+    conversations_after = conversation_store.list_conversations(limit=100, kind=None).data
+    assert conversations_after == conversations_before
+    assert {
+        conversation.id: conversation_store.list_items(conversation.id).data
+        for conversation in conversations_after
+    } == items_before
+
+
+def test_fork_rejects_existing_session_agent_before_mutation(
+    db_uri: str,
+    conversation_store: SqlAlchemyConversationStore,
+    agent_store: SqlAlchemyAgentStore,
+) -> None:
+    """The existing-agent fork path may bind only a template Agent."""
+    source_agent_id = "e3189e847e8e42ae8103dc075d2f8bfc"
+    target_agent_id = "e061873642ca4be99033aaeb49114b22"
+    target_digest = "d" * 64
+    agent_store.create(
+        agent_id=source_agent_id,
+        name="existing-agent-fork-source",
+        bundle_location=f"{source_agent_id}/{'c' * 64}",
+    )
+    source = conversation_store.create_conversation(
+        agent_id=source_agent_id,
+        **_bundle_snapshot_kwargs(source_agent_id),
+    )
+    _append_three_responses(conversation_store, source.id)
+    target = conversation_store.create_session_with_agent(
+        agent_id=target_agent_id,
+        agent_name="existing-session-target",
+        agent_bundle_location=f"{target_agent_id}/{target_digest}",
+        agent_description=None,
+    )
+    assert target.agent.session_id == target.conversation.id
+
+    state_before = _fork_persistence_state(db_uri)
+    fork_error: Exception | None = None
+    try:
+        conversation_store.fork_conversation(source.id, agent_id=target_agent_id)
+    except Exception as exc:  # Capture the actual pre-fix behavior.
+        fork_error = exc
+    state_after = _fork_persistence_state(db_uri)
+
+    problems: list[str] = []
+    if not isinstance(fork_error, ValueError) or not (
+        "target Agent" in str(fork_error) and "template" in str(fork_error)
+    ):
+        problems.append(f"unexpected fork error: {fork_error!r}")
+    if state_after != state_before:
+        problems.append(f"persistence mutated: before={state_before!r}, after={state_after!r}")
+    assert problems == []
+
+
+def test_fork_accepts_existing_template_agent(
+    conversation_store: SqlAlchemyConversationStore,
+    agent_store: SqlAlchemyAgentStore,
+) -> None:
+    """The existing-agent path still binds a same-workspace template."""
+    source_agent_id = "dc44da15907947a29c073e02cb289843"
+    target_agent_id = "9c98ba6113ca4780ba09a8eb730d2f56"
+    target_digest = "e" * 64
+    agent_store.create(
+        agent_id=source_agent_id,
+        name="existing-template-source",
+        bundle_location=f"{source_agent_id}/{'d' * 64}",
+    )
+    target = agent_store.create(
+        agent_id=target_agent_id,
+        name="existing-template-target",
+        bundle_location=f"{target_agent_id}/{target_digest}",
+    )
+    source = conversation_store.create_conversation(
+        agent_id=source_agent_id,
+        **_bundle_snapshot_kwargs(source_agent_id),
+    )
+
+    fork = conversation_store.fork_conversation(source.id, agent_id=target_agent_id)
+
+    assert fork.agent_id == target_agent_id
+    assert fork.agent_bundle_version == target.version
+    assert fork.agent_bundle_digest == target_digest
+    assert fork.agent_bundle_location == target.bundle_location
+
+
+def test_fork_existing_agent_lookup_is_workspace_scoped_and_non_mutating(
+    db_uri: str,
+    conversation_store: SqlAlchemyConversationStore,
+    agent_store: SqlAlchemyAgentStore,
+) -> None:
+    """An Agent in another workspace is unknown and cannot affect either scope."""
+    from omnigent.db.db_models import workspace_scope
+
+    remote_workspace = 701
+    local_workspace = 702
+    remote_agent_id = "282d4b3449a94ba6ad4dcfd157375833"
+    with workspace_scope(remote_workspace):
+        remote = conversation_store.create_session_with_agent(
+            agent_id=remote_agent_id,
+            agent_name="remote-session-agent",
+            agent_bundle_location=f"{remote_agent_id}/{'f' * 64}",
+            agent_description=None,
+        )
+        assert remote.agent.session_id == remote.conversation.id
+        remote_before = _fork_persistence_state(db_uri, remote_workspace)
+
+    with workspace_scope(local_workspace):
+        source_agent_id = "468a6ff451264d0696ea3c5d12cf3183"
+        agent_store.create(
+            agent_id=source_agent_id,
+            name="local-template-source",
+            bundle_location=f"{source_agent_id}/{'a' * 64}",
+        )
+        source = conversation_store.create_conversation(
+            agent_id=source_agent_id,
+            **_bundle_snapshot_kwargs(source_agent_id),
+        )
+        _append_three_responses(conversation_store, source.id)
+        local_before = _fork_persistence_state(db_uri, local_workspace)
+
+        with pytest.raises(LookupError, match="agent not found"):
+            conversation_store.fork_conversation(source.id, agent_id=remote_agent_id)
+
+        assert _fork_persistence_state(db_uri, local_workspace) == local_before
+
+    with workspace_scope(remote_workspace):
+        assert _fork_persistence_state(db_uri, remote_workspace) == remote_before
 
 
 def test_fork_clone_agent_failure_leaves_no_orphan(
@@ -3805,9 +4311,12 @@ def test_fork_clone_agent_failure_leaves_no_orphan(
     agent_store.create(
         agent_id="778757750ea50dc358d584451281795d",
         name="codex-native-ui",
-        bundle_location="778757750ea50dc358d584451281795d/hash",
+        bundle_location="778757750ea50dc358d584451281795d/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="778757750ea50dc358d584451281795d")
+    source = conversation_store.create_conversation(
+        agent_id="778757750ea50dc358d584451281795d",
+        **_bundle_snapshot_kwargs("778757750ea50dc358d584451281795d"),
+    )
     _append_three_responses(conversation_store, source.id)
 
     before = {a.id for a in agent_store.list(limit=100).data}
@@ -3816,7 +4325,7 @@ def test_fork_clone_agent_failure_leaves_no_orphan(
             source.id,
             agent_id="77511ca47f5b6c6085061ccf10622eb5",
             cloned_agent_name="codex-native-ui (fork 267eeb019e971bf79ab32a875543d2ed)",
-            cloned_agent_bundle_location="778757750ea50dc358d584451281795d/hash",
+            cloned_agent_bundle_location="778757750ea50dc358d584451281795d/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             up_to_response_id="resp_nope",
         )
 
@@ -3855,9 +4364,12 @@ def test_fork_conversation_copies_reasoning_effort(
     agent_store.create(
         agent_id="1452a86e49ece29f759b09f04d96c57b",
         name="fork-reasoning",
-        bundle_location="1452a86e49ece29f759b09f04d96c57b/fakehash",
+        bundle_location="1452a86e49ece29f759b09f04d96c57b/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="1452a86e49ece29f759b09f04d96c57b")
+    source = conversation_store.create_conversation(
+        agent_id="1452a86e49ece29f759b09f04d96c57b",
+        **_bundle_snapshot_kwargs("1452a86e49ece29f759b09f04d96c57b"),
+    )
     conversation_store.update_conversation(source.id, reasoning_effort="high")
 
     fork = conversation_store.fork_conversation(source.id)
@@ -3876,9 +4388,12 @@ def test_fork_conversation_copies_terminal_launch_args(
     agent_store.create(
         agent_id="864e495d9e1b288de879148957c0ae9a",
         name="fork-tla",
-        bundle_location="864e495d9e1b288de879148957c0ae9a/fakehash",
+        bundle_location="864e495d9e1b288de879148957c0ae9a/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="864e495d9e1b288de879148957c0ae9a")
+    source = conversation_store.create_conversation(
+        agent_id="864e495d9e1b288de879148957c0ae9a",
+        **_bundle_snapshot_kwargs("864e495d9e1b288de879148957c0ae9a"),
+    )
     conversation_store.update_conversation(
         source.id,
         terminal_launch_args=["--dangerously-skip-permissions"],
@@ -3910,9 +4425,12 @@ def test_fork_conversation_copy_model_settings_false_resets(
     agent_store.create(
         agent_id="6bfca10f1de66d54bdff530d697d1b68",
         name="fork-cms",
-        bundle_location="6bfca10f1de66d54bdff530d697d1b68/fakehash",
+        bundle_location="6bfca10f1de66d54bdff530d697d1b68/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="6bfca10f1de66d54bdff530d697d1b68")
+    source = conversation_store.create_conversation(
+        agent_id="6bfca10f1de66d54bdff530d697d1b68",
+        **_bundle_snapshot_kwargs("6bfca10f1de66d54bdff530d697d1b68"),
+    )
     conversation_store.update_conversation(
         source.id, reasoning_effort="high", model_override="claude-opus-4"
     )
@@ -3956,9 +4474,12 @@ def test_fork_conversation_carry_history_into_native_stamps_label(
     agent_store.create(
         agent_id="69ca49f61d21b0fe5219340e39afecf4",
         name="fork-carry",
-        bundle_location="69ca49f61d21b0fe5219340e39afecf4/fakehash",
+        bundle_location="69ca49f61d21b0fe5219340e39afecf4/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="69ca49f61d21b0fe5219340e39afecf4")
+    source = conversation_store.create_conversation(
+        agent_id="69ca49f61d21b0fe5219340e39afecf4",
+        **_bundle_snapshot_kwargs("69ca49f61d21b0fe5219340e39afecf4"),
+    )
 
     carried = conversation_store.fork_conversation(source.id, carry_history_into_native=True)
     assert carried.labels.get(FORK_CARRY_HISTORY_LABEL_KEY) == "1", (
@@ -3982,14 +4503,21 @@ def test_fork_conversation_agent_id_override(
     agent_store.create(
         agent_id="6239422fb5e1335506bb6dedf0f5e8cb",
         name="original-agent",
-        bundle_location="6239422fb5e1335506bb6dedf0f5e8cb/fakehash",
+        bundle_location="6239422fb5e1335506bb6dedf0f5e8cb/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
     agent_store.create(
         agent_id="ef45a1fbab40c51165f0fe615492ef91",
         name="cloned-agent",
-        bundle_location="6239422fb5e1335506bb6dedf0f5e8cb/fakehash",
+        bundle_location="ef45a1fbab40c51165f0fe615492ef91/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="6239422fb5e1335506bb6dedf0f5e8cb")
+    agent_store.update(
+        "ef45a1fbab40c51165f0fe615492ef91",
+        "ef45a1fbab40c51165f0fe615492ef91/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
+    source = conversation_store.create_conversation(
+        agent_id="6239422fb5e1335506bb6dedf0f5e8cb",
+        **_bundle_snapshot_kwargs("6239422fb5e1335506bb6dedf0f5e8cb"),
+    )
 
     fork = conversation_store.fork_conversation(
         source.id,
@@ -3999,11 +4527,15 @@ def test_fork_conversation_agent_id_override(
     assert fork.agent_id == "ef45a1fbab40c51165f0fe615492ef91", (
         "Fork should use the overridden agent_id, not the source's"
     )
+    assert fork.agent_bundle_version == 2
+    assert fork.agent_bundle_digest == "b" * 64
+    assert fork.agent_bundle_location == ("ef45a1fbab40c51165f0fe615492ef91/" + "b" * 64)
 
 
 def test_switch_conversation_agent_cross_family_resets_and_relabels(
     conversation_store: SqlAlchemyConversationStore,
     agent_store: SqlAlchemyAgentStore,
+    db_uri: str,
 ) -> None:
     """In-place switch deletes the old agent, binds the new, and on a
     cross-family switch resets model settings, clears the native session
@@ -4029,10 +4561,11 @@ def test_switch_conversation_agent_cross_family_resets_and_relabels(
     created = conversation_store.create_session_with_agent(
         agent_id="af75a9579488e3520ba6842699e43323",
         agent_name="claude (switch src)",
-        agent_bundle_location="af75a9579488e3520ba6842699e43323/hash",
+        agent_bundle_location="af75a9579488e3520ba6842699e43323/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         agent_description="old",
     )
     conv_id = created.conversation.id
+    _clear_bundle_snapshot(db_uri, conv_id)
     # Give the session model settings, a native session id, and labels that a
     # switch must touch (instance-scoped stopped marker + the old harness's
     # ui/wrapper) so we can assert they're handled correctly.
@@ -4071,7 +4604,7 @@ def test_switch_conversation_agent_cross_family_resets_and_relabels(
         conv_id,
         new_agent_id="9d2c8d5e342b7da390dc38351c49fb72",
         new_agent_name="codex (switch new)",
-        new_agent_bundle_location="9d2c8d5e342b7da390dc38351c49fb72/hash",
+        new_agent_bundle_location="9d2c8d5e342b7da390dc38351c49fb72/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         new_agent_description="new",
         copy_model_settings=False,  # cross-family
         carry_history_into_native=True,  # native target
@@ -4112,6 +4645,7 @@ def test_switch_conversation_agent_cross_family_resets_and_relabels(
 def test_switch_conversation_agent_same_family_keeps_model_settings(
     conversation_store: SqlAlchemyConversationStore,
     agent_store: SqlAlchemyAgentStore,
+    db_uri: str,
 ) -> None:
     """A same-family switch keeps model settings; an SDK target (empty
     presentation labels) drops the old ui/wrapper labels and does not stamp
@@ -4130,10 +4664,11 @@ def test_switch_conversation_agent_same_family_keeps_model_settings(
     created = conversation_store.create_session_with_agent(
         agent_id="06efca8dd5c2e87b8cfed1aae99cc239",
         agent_name="claude-native-ui",
-        agent_bundle_location="06efca8dd5c2e87b8cfed1aae99cc239/hash",
+        agent_bundle_location="06efca8dd5c2e87b8cfed1aae99cc239/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         agent_description=None,
     )
     conv_id = created.conversation.id
+    _clear_bundle_snapshot(db_uri, conv_id)
     conversation_store.update_conversation(
         conv_id, model_override="claude-opus-4-7", reasoning_effort="high"
     )
@@ -4151,7 +4686,7 @@ def test_switch_conversation_agent_same_family_keeps_model_settings(
         conv_id,
         new_agent_id="6b49de4c1bc8cb4d4c02a933f68bd3b1",
         new_agent_name="claude (switch new)",
-        new_agent_bundle_location="6b49de4c1bc8cb4d4c02a933f68bd3b1/hash",
+        new_agent_bundle_location="6b49de4c1bc8cb4d4c02a933f68bd3b1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         new_agent_description=None,
         copy_model_settings=True,  # same family (anthropic native → sdk)
         carry_history_into_native=False,  # SDK target rebuilds nothing
@@ -4170,6 +4705,47 @@ def test_switch_conversation_agent_same_family_keeps_model_settings(
     # Stale previous-builtin pointer dropped (None passed → not re-stamped),
     # so a later "switch back" can't offer a wrong target.
     assert SWITCH_PREVIOUS_BUILTIN_LABEL_KEY not in updated.labels
+
+
+def test_switch_conversation_agent_rejects_pinned_session_without_mutation(
+    conversation_store: SqlAlchemyConversationStore,
+    agent_store: SqlAlchemyAgentStore,
+) -> None:
+    """The store cannot bypass a pinned Session's immutable Bundle binding."""
+    old_agent_id = "3be0133c773ad95361933ecb4534f439"
+    new_agent_id = "51d28d7ff478a59d0ef838345b8ac105"
+    created = conversation_store.create_session_with_agent(
+        agent_id=old_agent_id,
+        agent_name="old session agent",
+        agent_bundle_location=f"{old_agent_id}/{'a' * 64}",
+        agent_description="old",
+    )
+    before = conversation_store.get_conversation(created.conversation.id)
+    old_agent_before = agent_store.get(old_agent_id)
+    assert before is not None
+    assert old_agent_before is not None
+
+    with pytest.raises(ValueError, match=r"Bundle is immutable.*[Ff]ork"):
+        conversation_store.switch_conversation_agent(
+            created.conversation.id,
+            new_agent_id=new_agent_id,
+            new_agent_name="new session agent",
+            new_agent_bundle_location=f"{new_agent_id}/{'b' * 64}",
+            new_agent_description="new",
+            copy_model_settings=False,
+            carry_history_into_native=False,
+            presentation_labels={},
+            previous_builtin_id=None,
+        )
+
+    after = conversation_store.get_conversation(created.conversation.id)
+    assert after is not None
+    assert after.agent_id == before.agent_id
+    assert after.agent_bundle_version == before.agent_bundle_version
+    assert after.agent_bundle_digest == before.agent_bundle_digest
+    assert after.agent_bundle_location == before.agent_bundle_location
+    assert agent_store.get(old_agent_id) == old_agent_before
+    assert agent_store.get(new_agent_id) is None
 
 
 def test_get_session_connectivity_batches_runner_and_host(
@@ -4633,9 +5209,12 @@ def test_fork_seeds_next_position_from_copied_items(
     agent_store.create(
         agent_id="ff3484a650590e134422ae11acaae3ac",
         name="fork-pos",
-        bundle_location="ff3484a650590e134422ae11acaae3ac/h",
+        bundle_location="ff3484a650590e134422ae11acaae3ac/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="ff3484a650590e134422ae11acaae3ac")
+    source = conversation_store.create_conversation(
+        agent_id="ff3484a650590e134422ae11acaae3ac",
+        **_bundle_snapshot_kwargs("ff3484a650590e134422ae11acaae3ac"),
+    )
     conversation_store.append(
         source.id, [_user_message(f"s{i}", response_id="resp_1") for i in range(3)]
     )
@@ -4657,9 +5236,12 @@ def test_truncated_fork_seeds_next_position_from_copied_items(
     agent_store.create(
         agent_id="1e63c4993591d0eed8605bac4927a143",
         name="fork-trunc",
-        bundle_location="1e63c4993591d0eed8605bac4927a143/h",
+        bundle_location="1e63c4993591d0eed8605bac4927a143/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     )
-    source = conversation_store.create_conversation(agent_id="1e63c4993591d0eed8605bac4927a143")
+    source = conversation_store.create_conversation(
+        agent_id="1e63c4993591d0eed8605bac4927a143",
+        **_bundle_snapshot_kwargs("1e63c4993591d0eed8605bac4927a143"),
+    )
     conversation_store.append(
         source.id,
         [_user_message("a", "resp_1"), _user_message("b", "resp_1")],

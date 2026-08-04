@@ -8,17 +8,304 @@ the stores.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import pytest
 import pytest_asyncio
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from omnigent.db.utils import generate_agent_id
+from omnigent.entities import Agent, AgentBundleSnapshot, Conversation, PagedList
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.routes import sessions as sessions_module
+from omnigent.server.routes._session_create_validation import pin_session_agent_bundle
+from omnigent.server.routes._sessions import orchestration as session_orchestration
+from omnigent.server.routes.sessions import create_sessions_router
+from omnigent.server.routes.sessions import routes_core as sessions_core
+from omnigent.server.schemas import SessionCreateMetadata, SessionCreateRequest
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
+
+
+def _snapshot_kwargs(agent: Agent) -> dict[str, object]:
+    snapshot = AgentBundleSnapshot.from_agent(agent)
+    return {
+        "agent_bundle_version": snapshot.bundle_version,
+        "agent_bundle_digest": snapshot.bundle_digest,
+        "agent_bundle_location": snapshot.bundle_location,
+    }
+
+
+class _FirstReadConversationStore:
+    """Minimal store that records list/watch auxiliary reads."""
+
+    def __init__(self, conversations: list[Conversation], calls: list[str]) -> None:
+        self._conversations = conversations
+        self._by_id = {conversation.id: conversation for conversation in conversations}
+        self._calls = calls
+
+    def list_conversations(self, **kwargs: object) -> PagedList[Conversation]:
+        del kwargs
+        return PagedList(
+            data=self._conversations,
+            first_id=self._conversations[0].id,
+            last_id=self._conversations[-1].id,
+            has_more=False,
+        )
+
+    def get_conversations(self, conversation_ids: list[str]) -> dict[str, Conversation]:
+        return {
+            conversation_id: self._by_id[conversation_id]
+            for conversation_id in conversation_ids
+            if conversation_id in self._by_id
+        }
+
+    def list_child_conversation_ids_by_parent(
+        self, conversation_ids: list[str]
+    ) -> dict[str, list[str]]:
+        self._calls.append("children")
+        return {conversation_id: [] for conversation_id in conversation_ids}
+
+
+class _FirstReadAgentStore:
+    """Minimal Agent store that records bulk name reads."""
+
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    def get_names(self, agent_ids: list[str]) -> dict[str, str]:
+        self._calls.append("agent_names")
+        return dict.fromkeys(agent_ids, "agent")
+
+
+class _FirstReadCommentStore:
+    """Minimal comment store that records fingerprint reads."""
+
+    def __init__(self, calls: list[str]) -> None:
+        self._calls = calls
+
+    def get_comments_fingerprints(self, conversation_ids: list[str]) -> dict[str, object]:
+        del conversation_ids
+        self._calls.append("comments")
+        return {}
+
+
+def _first_read_app(
+    conversations: list[Conversation],
+    calls: list[str],
+    *,
+    liveness_lookup: Any | None = None,
+) -> FastAPI:
+    """Build a list/watch app whose auxiliary reads are observable."""
+    app = FastAPI()
+
+    @app.exception_handler(OmnigentError)
+    async def _handle_omnigent_error(
+        request: Request,
+        exc: OmnigentError,
+    ) -> JSONResponse:
+        del request
+        return JSONResponse(
+            status_code=exc.http_status,
+            content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
+    app.include_router(
+        create_sessions_router(
+            conversation_store=_FirstReadConversationStore(conversations, calls),  # type: ignore[arg-type]
+            agent_store=_FirstReadAgentStore(calls),  # type: ignore[arg-type]
+            comment_store=_FirstReadCommentStore(calls),  # type: ignore[arg-type]
+            liveness_lookup=liveness_lookup,
+        ),
+        prefix="/v1",
+    )
+    return app
+
+
+def test_session_projections_expose_bundle_identity_but_not_location() -> None:
+    digest = "a" * 64
+    conversation = Conversation(
+        id="conv_projection",
+        created_at=10,
+        updated_at=11,
+        root_conversation_id="conv_projection",
+        agent_id="agent_projection",
+        agent_bundle_version=5,
+        agent_bundle_digest=digest,
+        agent_bundle_location=f"agent_projection/{digest}",
+    )
+
+    snapshot = sessions_module._build_session_response(  # type: ignore[attr-defined]
+        conversation,
+        [],
+        "idle",
+    ).model_dump()
+    list_item = sessions_module._build_session_list_item(  # type: ignore[attr-defined]
+        conversation,
+        agent_names_by_id={"agent_projection": "projection"},
+        grants=[],
+        user_id=None,
+        user_is_admin=False,
+        permissions_enabled=False,
+        pending_count=0,
+        child_session_ids=[],
+        comments_fingerprint=None,
+    ).model_dump()
+
+    for projection in (snapshot, list_item):
+        assert projection["agent_bundle_version"] == 5
+        assert projection["agent_bundle_digest"] == digest
+        assert "agent_bundle_location" not in projection
+
+
+def test_child_validation_uses_parent_pinned_bundle() -> None:
+    pinned_digest = "a" * 64
+    current_digest = "b" * 64
+    agent = Agent(
+        id="agent_child",
+        created_at=1,
+        name="child",
+        version=9,
+        bundle_location=f"agent_child/{current_digest}",
+    )
+    parent = Conversation(
+        id="conv_parent",
+        created_at=2,
+        updated_at=2,
+        root_conversation_id="conv_parent",
+        agent_id="agent_parent",
+        agent_bundle_version=3,
+        agent_bundle_digest=pinned_digest,
+        agent_bundle_location=f"agent_parent/{pinned_digest}",
+    )
+
+    pinned_agent, snapshot = pin_session_agent_bundle(agent, parent)
+
+    assert pinned_agent.version == 3
+    assert pinned_agent.bundle_location == f"agent_parent/{pinned_digest}"
+    assert snapshot.bundle_version == 3
+    assert snapshot.bundle_digest == pinned_digest
+
+
+def test_child_validation_rejects_legacy_parent_snapshot() -> None:
+    digest = "a" * 64
+    agent = Agent(
+        id="agent_child",
+        created_at=1,
+        name="child",
+        bundle_location=f"agent_child/{digest}",
+    )
+    legacy_parent = Conversation(
+        id="conv_legacy_parent",
+        created_at=2,
+        updated_at=2,
+        root_conversation_id="conv_legacy_parent",
+        agent_id="agent_parent",
+    )
+
+    with pytest.raises(OmnigentError) as exc_info:
+        pin_session_agent_bundle(agent, legacy_parent)
+
+    assert exc_info.value.code == ErrorCode.CONFLICT
+
+
+@pytest.mark.parametrize(
+    ("version", "digest", "location"),
+    [
+        (1, None, None),
+        (1, "a" * 64, f"{'1' * 32}/{'b' * 64}"),
+    ],
+    ids=["partial", "invalid-complete"],
+)
+async def test_json_child_validates_parent_before_target_agent_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+    version: int | None,
+    digest: str | None,
+    location: str | None,
+) -> None:
+    """A corrupt JSON Parent blocks target-Agent I/O before mutation."""
+    agent_id = "1" * 32
+    parent = Conversation(
+        id="2" * 32,
+        created_at=1,
+        updated_at=1,
+        root_conversation_id="2" * 32,
+        agent_id=agent_id,
+        agent_bundle_version=version,
+        agent_bundle_digest=digest,
+        agent_bundle_location=location,
+    )
+    agent_calls: list[str] = []
+
+    class _ConversationStore:
+        @staticmethod
+        def get_conversation(conversation_id: str) -> Conversation | None:
+            return parent if conversation_id == parent.id else None
+
+    async def _record_validate_session_agent(**kwargs: object) -> Agent:
+        agent_calls.append(str(kwargs["agent_id"]))
+        return Agent(
+            id=agent_id,
+            created_at=1,
+            name="target",
+            bundle_location=f"{agent_id}/{'c' * 64}",
+        )
+
+    monkeypatch.setattr(
+        session_orchestration,
+        "validate_session_agent",
+        _record_validate_session_agent,
+    )
+
+    with pytest.raises(OmnigentError) as exc_info:
+        await session_orchestration._create_session_from_existing_agent(
+            _ConversationStore(),  # type: ignore[arg-type]
+            object(),  # type: ignore[arg-type]
+            None,
+            SessionCreateRequest(agent_id=agent_id, parent_session_id=parent.id),
+            object(),  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.code == ErrorCode.CONFLICT
+    assert agent_calls == []
+
+
+def test_persist_stored_session_bundle_cleans_snapshot_value_error(
+    tmp_path: Any,
+) -> None:
+    """A Parent snapshot race cannot orphan an already-uploaded bundle."""
+    artifact_store = LocalArtifactStore(str(tmp_path / "artifacts"))
+    location = f"agent_child/{'a' * 64}"
+    artifact_store.put(location, b"bundle")
+
+    class _ConversationStore:
+        @staticmethod
+        def create_session_with_agent(**kwargs: object) -> None:
+            del kwargs
+            raise ValueError("parent conversation has no valid agent Bundle snapshot")
+
+    with pytest.raises(OmnigentError) as exc_info:
+        sessions_module._persist_stored_session_bundle(  # type: ignore[attr-defined]
+            _ConversationStore(),  # type: ignore[arg-type]
+            artifact_store,
+            SessionCreateMetadata(parent_session_id="conv_parent"),
+            agent_id="agent_child",
+            agent_name="child",
+            agent_bundle_location=location,
+            agent_description=None,
+        )
+
+    assert exc_info.value.code == ErrorCode.CONFLICT
+    with pytest.raises(KeyError):
+        artifact_store.get(location)
 
 
 @pytest_asyncio.fixture()
@@ -27,8 +314,12 @@ async def session_id(db_uri: str) -> str:
     agent_store = SqlAlchemyAgentStore(db_uri)
     conv_store = SqlAlchemyConversationStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="test-agent", bundle_location="test:///bundle")
-    conv = conv_store.create_conversation(agent_id=agent_id)
+    agent = agent_store.create(
+        agent_id,
+        name="test-agent",
+        bundle_location=f"{agent_id}/{'a' * 64}",
+    )
+    conv = conv_store.create_conversation(agent_id=agent_id, **_snapshot_kwargs(agent))
     return conv.id
 
 
@@ -64,14 +355,121 @@ async def test_list_sessions_pagination(
     agent_store = SqlAlchemyAgentStore(db_uri)
     conv_store = SqlAlchemyConversationStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="pag-agent", bundle_location="test:///bundle")
-    conv_store.create_conversation(agent_id=agent_id)
-    conv_store.create_conversation(agent_id=agent_id)
+    agent = agent_store.create(
+        agent_id,
+        name="pag-agent",
+        bundle_location=f"{agent_id}/{'a' * 64}",
+    )
+    conv_store.create_conversation(agent_id=agent_id, **_snapshot_kwargs(agent))
+    conv_store.create_conversation(agent_id=agent_id, **_snapshot_kwargs(agent))
 
     resp = await client.get("/v1/sessions?limit=1")
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["data"]) == 1
+
+
+def test_list_sessions_validates_full_batch_before_auxiliary_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A corrupt later row blocks every list projection helper."""
+    agent_id = "1" * 32
+    digest = "2" * 64
+    valid = Conversation(
+        id="3" * 32,
+        created_at=1,
+        updated_at=1,
+        root_conversation_id="3" * 32,
+        agent_id=agent_id,
+        agent_bundle_version=1,
+        agent_bundle_digest=digest,
+        agent_bundle_location=f"{agent_id}/{digest}",
+    )
+    corrupt = Conversation(
+        id="4" * 32,
+        created_at=2,
+        updated_at=2,
+        root_conversation_id="4" * 32,
+        agent_id=agent_id,
+        agent_bundle_version=1,
+    )
+    calls: list[str] = []
+    original_builder = sessions_core._build_session_list_item
+
+    def _record_builder(*args: object, **kwargs: object) -> object:
+        calls.append("status")
+        return original_builder(*args, **kwargs)  # type: ignore[arg-type]
+
+    def _record_pending(conversation_ids: list[str]) -> dict[str, int]:
+        del conversation_ids
+        calls.append("pending")
+        return {}
+
+    monkeypatch.setattr(sessions_core, "_build_session_list_item", _record_builder)
+    monkeypatch.setattr(sessions_core.pending_elicitations, "counts_for", _record_pending)
+
+    response = TestClient(_first_read_app([valid, corrupt], calls)).get("/v1/sessions")
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "conflict"
+    assert calls == []
+
+
+def test_watch_validates_full_batch_before_auxiliary_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A corrupt later watched row closes before projection or liveness."""
+    agent_id = "5" * 32
+    digest = "6" * 64
+    valid = Conversation(
+        id="7" * 32,
+        created_at=1,
+        updated_at=1,
+        root_conversation_id="7" * 32,
+        agent_id=agent_id,
+        agent_bundle_version=1,
+        agent_bundle_digest=digest,
+        agent_bundle_location=f"{agent_id}/{digest}",
+    )
+    corrupt = Conversation(
+        id="8" * 32,
+        created_at=2,
+        updated_at=2,
+        root_conversation_id="8" * 32,
+        agent_id=agent_id,
+        agent_bundle_version=1,
+        agent_bundle_digest="9" * 64,
+        agent_bundle_location=f"{agent_id}/{'a' * 64}",
+    )
+    calls: list[str] = []
+    original_builder = sessions_core._build_session_list_item
+
+    def _record_builder(*args: object, **kwargs: object) -> object:
+        calls.append("status")
+        return original_builder(*args, **kwargs)  # type: ignore[arg-type]
+
+    def _record_pending(conversation_ids: list[str]) -> dict[str, int]:
+        del conversation_ids
+        calls.append("pending")
+        return {}
+
+    def _record_liveness(conversation_ids: list[str]) -> dict[str, object]:
+        del conversation_ids
+        calls.append("liveness")
+        return {}
+
+    monkeypatch.setattr(sessions_core, "_build_session_list_item", _record_builder)
+    monkeypatch.setattr(sessions_core.pending_elicitations, "counts_for", _record_pending)
+    app = _first_read_app([valid, corrupt], calls, liveness_lookup=_record_liveness)
+
+    with TestClient(app).websocket_connect("/v1/sessions/updates") as websocket:
+        websocket.send_text(
+            '{"type":"watch","session_ids":["' + valid.id + '","' + corrupt.id + '"]}'
+        )
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_text()
+
+    assert calls == []
 
 
 # ── GET /v1/sessions/{id} (get snapshot) ────────────────────────────
@@ -295,9 +693,13 @@ async def test_list_sessions_filtered_by_project(
     # GET /v1/sessions filters has_agent_id=True, so bind the conversations to
     # a seeded agent — otherwise the list comes back empty.
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="project-agent", bundle_location="test:///bundle")
-    filed = conv_store.create_conversation(agent_id=agent_id)
-    conv_store.create_conversation(agent_id=agent_id)  # unfiled
+    agent = agent_store.create(
+        agent_id,
+        name="project-agent",
+        bundle_location=f"{agent_id}/{'a' * 64}",
+    )
+    filed = conv_store.create_conversation(agent_id=agent_id, **_snapshot_kwargs(agent))
+    conv_store.create_conversation(agent_id=agent_id, **_snapshot_kwargs(agent))  # unfiled
     conv_store.set_labels(filed.id, {"omni_project": "X"})
 
     resp = await client.get("/v1/sessions?project=X")
@@ -314,9 +716,13 @@ async def test_list_sessions_empty_project_returns_unfiled(
     agent_store = SqlAlchemyAgentStore(db_uri)
     conv_store = SqlAlchemyConversationStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="project-agent", bundle_location="test:///bundle")
-    filed = conv_store.create_conversation(agent_id=agent_id)
-    unfiled = conv_store.create_conversation(agent_id=agent_id)
+    agent = agent_store.create(
+        agent_id,
+        name="project-agent",
+        bundle_location=f"{agent_id}/{'a' * 64}",
+    )
+    filed = conv_store.create_conversation(agent_id=agent_id, **_snapshot_kwargs(agent))
+    unfiled = conv_store.create_conversation(agent_id=agent_id, **_snapshot_kwargs(agent))
     conv_store.set_labels(filed.id, {"omni_project": "X"})
 
     resp = await client.get("/v1/sessions?project=")
@@ -448,10 +854,17 @@ async def test_list_sessions_pinned_filter(
     agent_store = SqlAlchemyAgentStore(db_uri)
     conv_store = SqlAlchemyConversationStore(db_uri)
     agent_id = generate_agent_id()
-    agent_store.create(agent_id, name="pin-agent", bundle_location="test:///bundle")
-    pinned = conv_store.create_conversation(agent_id=agent_id)
-    plain = conv_store.create_conversation(agent_id=agent_id)
-    other_user_pin = conv_store.create_conversation(agent_id=agent_id)
+    agent = agent_store.create(
+        agent_id,
+        name="pin-agent",
+        bundle_location=f"{agent_id}/{'a' * 64}",
+    )
+    pinned = conv_store.create_conversation(agent_id=agent_id, **_snapshot_kwargs(agent))
+    plain = conv_store.create_conversation(agent_id=agent_id, **_snapshot_kwargs(agent))
+    other_user_pin = conv_store.create_conversation(
+        agent_id=agent_id,
+        **_snapshot_kwargs(agent),
+    )
     # This client is unauthenticated ⇒ the ``local`` identity. Pin one session
     # under the caller's key and one under a different user's key.
     conv_store.set_labels(pinned.id, {pinned_label_key(None): "1721760000000"})

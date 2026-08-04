@@ -38,7 +38,7 @@ import io
 import json
 import tarfile
 from collections.abc import AsyncIterator, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -908,6 +908,9 @@ async def test_on_runner_connect_restarts_relay_via_router(
         def raise_for_status(self) -> None:
             return None
 
+        def json(self) -> dict[str, bool]:
+            return {"ready": True}
+
     class _StubClient:
         async def post(self, *args: Any, **kwargs: Any) -> _StubResponse:
             return _StubResponse()
@@ -1043,8 +1046,8 @@ async def _reconnect_fires_connect_hook(
     ap_app: FastAPI,
     fake_pm: Any,
     *,
-    wait_for_recover: str,
-) -> AsyncIterator[list[str]]:
+    wait_for_recover: str | None,
+) -> AsyncIterator[dict[str, list[str]]]:
     """Drive a real tunnel disconnect/reconnect so ``_on_runner_connect`` fires.
 
     Deregisters ``_RUNNER_ID`` then opens a fresh WS + hello, which is
@@ -1071,6 +1074,9 @@ async def _reconnect_fires_connect_hook(
         def raise_for_status(self) -> None:
             return None
 
+        def json(self) -> dict[str, bool]:
+            return {"ready": True}
+
     class _StubClient:
         async def post(self, *args: Any, **kwargs: Any) -> _StubResponse:
             return _StubResponse()
@@ -1082,9 +1088,11 @@ async def _reconnect_fires_connect_hook(
     router.client_for_session_resources = _spy_resolver  # type: ignore[method-assign]
 
     real_ensure = sessions_routes._ensure_runner_relay
+    relay_calls: list[str] = []
 
     def _stub_ensure(sid, rid, client, store=None):  # type: ignore[no-untyped-def]
-        return None
+        relay_calls.append(sid)
+        return
 
     sessions_routes._ensure_runner_relay = _stub_ensure  # type: ignore[assignment]
 
@@ -1126,20 +1134,24 @@ async def _reconnect_fires_connect_hook(
             name="tunnel-recover-reconnect-forwarder",
         )
 
-        async def _recovered() -> None:
-            while wait_for_recover not in recovered_calls:
-                await asyncio.sleep(0.02)
+        if wait_for_recover is not None:
 
-        try:
-            await asyncio.wait_for(_recovered(), timeout=5.0)
-        except asyncio.TimeoutError:
-            raise AssertionError(
-                "Reconnect did not drive _on_runner_connect to call "
-                f"_publish_runner_recovered_status for {wait_for_recover!r} "
-                f"within 5s. recovered_calls={recovered_calls}"
-            ) from None
+            async def _recovered() -> None:
+                while wait_for_recover not in recovered_calls:
+                    await asyncio.sleep(0.02)
 
-        yield recovered_calls
+            try:
+                await asyncio.wait_for(_recovered(), timeout=5.0)
+            except asyncio.TimeoutError:
+                raise AssertionError(
+                    "Reconnect did not drive _on_runner_connect to call "
+                    f"_publish_runner_recovered_status for {wait_for_recover!r} "
+                    f"within 5s. recovered_calls={recovered_calls}"
+                ) from None
+        else:
+            await asyncio.sleep(0.1)
+
+        yield {"relay": relay_calls, "recovered": recovered_calls}
     finally:
         router.client_for_session_resources = real_resolver  # type: ignore[method-assign]
         sessions_routes._ensure_runner_relay = real_ensure  # type: ignore[assignment]
@@ -1319,6 +1331,119 @@ async def test_on_runner_connect_preserves_genuine_failure_on_reconnect(
                 "message": "Turn failed: agent raised.",
             }
     finally:
+        sessions_module._session_status_cache.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_isolated_session_status_cache")
+async def test_on_runner_connect_corrupt_snapshot_skips_relay_and_recovery(
+    tunnel_three_layer_stack: _TunnelStack,
+) -> None:
+    """A corrupt reconnect row cannot continue into relay/pending/recovery work."""
+    from omnigent.runtime import get_conversation_store
+    from omnigent.server.routes import sessions as sessions_module
+
+    ap_client = tunnel_three_layer_stack.ap_client
+    ap_app = tunnel_three_layer_stack.ap_app
+    fake_pm = tunnel_three_layer_stack.fake_pm
+    session_id = await _bind_failed_session(
+        ap_client,
+        error_code="runner_disconnected",
+        error_message="Runner disconnected unexpectedly.",
+    )
+    store = get_conversation_store()
+    original_list = store.list_conversations_by_runner_id
+
+    def _corrupt_list(runner_id: str):  # type: ignore[no-untyped-def]
+        return [
+            replace(conversation, agent_bundle_digest=None)
+            for conversation in original_list(runner_id)
+        ]
+
+    store.list_conversations_by_runner_id = _corrupt_list  # type: ignore[method-assign]
+    try:
+        async with _reconnect_fires_connect_hook(
+            ap_app,
+            fake_pm,
+            wait_for_recover=None,
+        ) as calls:
+            assert calls == {"relay": [], "recovered": []}
+            assert sessions_module._session_status_cache.get(session_id) == "failed"
+            persisted = store.get_conversation(session_id)
+            assert persisted is not None
+            assert sessions_module._last_task_error_from_labels(persisted.labels) == {
+                "code": "runner_disconnected",
+                "message": "Runner disconnected unexpectedly.",
+            }
+    finally:
+        store.list_conversations_by_runner_id = original_list  # type: ignore[method-assign]
+        sessions_module._session_status_cache.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("current_agent_state", ["missing", "invalid"])
+@pytest.mark.usefixtures("_isolated_session_status_cache")
+async def test_on_runner_connect_legacy_invalid_current_agent_skips_side_effects(
+    tunnel_three_layer_stack: _TunnelStack,
+    current_agent_state: str,
+) -> None:
+    """A legacy row without a valid current Agent cannot continue recovery."""
+    from omnigent.runtime import get_agent_store, get_conversation_store
+    from omnigent.server import session_live_state
+    from omnigent.server.routes import sessions as sessions_module
+
+    ap_client = tunnel_three_layer_stack.ap_client
+    ap_app = tunnel_three_layer_stack.ap_app
+    fake_pm = tunnel_three_layer_stack.fake_pm
+    session_id = await _bind_failed_session(
+        ap_client,
+        error_code="runner_disconnected",
+        error_message="Runner disconnected unexpectedly.",
+    )
+    store = get_conversation_store()
+    agent_store = get_agent_store()
+    original_list = store.list_conversations_by_runner_id
+    original_agent_get = agent_store.get
+    original_persist_pending_count = session_live_state.persist_pending_count
+    pending_calls: list[str] = []
+
+    def _legacy_list(runner_id: str):  # type: ignore[no-untyped-def]
+        return [
+            replace(
+                conversation,
+                agent_bundle_version=None,
+                agent_bundle_digest=None,
+                agent_bundle_location=None,
+            )
+            for conversation in original_list(runner_id)
+        ]
+
+    def _current_agent(agent_id: str):  # type: ignore[no-untyped-def]
+        agent = original_agent_get(agent_id)
+        if current_agent_state == "missing":
+            return None
+        assert agent is not None
+        return replace(agent, bundle_location="not-content-addressed")
+
+    def _persist_pending_count(sid: str, _count: int) -> None:
+        pending_calls.append(sid)
+
+    store.list_conversations_by_runner_id = _legacy_list  # type: ignore[method-assign]
+    agent_store.get = _current_agent  # type: ignore[method-assign]
+    session_live_state.persist_pending_count = _persist_pending_count
+    try:
+        async with _reconnect_fires_connect_hook(
+            ap_app,
+            fake_pm,
+            wait_for_recover=None,
+        ) as calls:
+            assert calls == {"relay": [], "recovered": []}
+            assert pending_calls == []
+            assert sessions_module._session_status_cache.get(session_id) == "failed"
+    finally:
+        session_live_state.persist_pending_count = original_persist_pending_count
+        agent_store.get = original_agent_get  # type: ignore[method-assign]
+        store.list_conversations_by_runner_id = original_list  # type: ignore[method-assign]
         sessions_module._session_status_cache.pop(session_id, None)
 
 

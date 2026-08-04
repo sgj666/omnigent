@@ -6,7 +6,7 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from omnigent.entities import Conversation
+from omnigent.entities import Agent, AgentBundleSnapshot, Conversation
 
 SessionInitProtocolVersion: TypeAlias = Literal[2]
 SESSION_INIT_PROTOCOL_VERSION: SessionInitProtocolVersion = 2
@@ -41,6 +41,9 @@ class RunnerSessionInitEnvelope(BaseModel):  # type: ignore[explicit-any]  # Pyd
     server_version: str
     session_id: str
     agent_id: str
+    bundle_version: int
+    bundle_digest: str
+    bundle_location: str
     sub_agent_name: str | None = None
     snapshot: RunnerSessionInitSnapshot
     # When True the runner must skip crash-recovery turn detection on this
@@ -56,15 +59,41 @@ def build_runner_session_init_payload(
     *,
     server_version: str,
     suppress_recovery_turn: bool = False,
+    agent: Agent | None = None,
 ) -> dict[str, object]:
     """Build the versioned initialization fields appended to the legacy body."""
     if conversation.agent_id is None:
         raise ValueError("runner session initialization requires an agent_id")
+    bundle_fields = (
+        conversation.agent_bundle_version,
+        conversation.agent_bundle_digest,
+        conversation.agent_bundle_location,
+    )
+    if all(value is None for value in bundle_fields):
+        if agent is None or agent.id != conversation.agent_id:
+            raise ValueError(
+                "legacy runner session initialization requires the current bound Agent"
+            )
+        bundle_snapshot = AgentBundleSnapshot.from_agent(agent)
+    else:
+        if any(value is None for value in bundle_fields):
+            raise ValueError(
+                "runner session initialization requires a complete agent bundle snapshot"
+            )
+        bundle_snapshot = AgentBundleSnapshot(
+            agent_id=conversation.agent_id,
+            bundle_version=conversation.agent_bundle_version,
+            bundle_digest=conversation.agent_bundle_digest,
+            bundle_location=conversation.agent_bundle_location,
+        )
     envelope = RunnerSessionInitEnvelope(
         protocol_version=SESSION_INIT_PROTOCOL_VERSION,
         server_version=server_version,
         session_id=conversation.id,
         agent_id=conversation.agent_id,
+        bundle_version=bundle_snapshot.bundle_version,
+        bundle_digest=bundle_snapshot.bundle_digest,
+        bundle_location=bundle_snapshot.bundle_location,
         sub_agent_name=conversation.sub_agent_name,
         suppress_recovery_turn=suppress_recovery_turn,
         snapshot=RunnerSessionInitSnapshot(

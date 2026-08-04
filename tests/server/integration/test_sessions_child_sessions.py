@@ -26,13 +26,17 @@ from typing import Any, NoReturn
 
 import httpx
 import pytest
+import sqlalchemy as sa
 import yaml
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
+from omnigent.db.utils import get_or_create_engine
 from omnigent.entities import Conversation
 from omnigent.entities.conversation import MessageData, NewConversationItem
 from omnigent.server.routes import sessions as sessions_module
 from omnigent.server.routes.sessions import routes_events as routes_events_module
 from omnigent.session_lifecycle import CLOSED_LABEL_KEY, CLOSED_LABEL_VALUE
+from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
@@ -1616,6 +1620,78 @@ async def test_non_native_subagent_session_has_no_terminal_ui_labels(
 
 
 # ── Multipart (bundled) child creates ────────────────────
+
+
+@pytest.mark.parametrize("snapshot_state", ["legacy", "partial", "invalid"])
+async def test_multipart_child_rejects_invalid_parent_snapshot_before_bundle_io(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    snapshot_state: str,
+) -> None:
+    """A child cannot read or store its bundle before Parent validation."""
+    parent = await _create_parent_session(
+        client,
+        agent_name=f"multipart-{snapshot_state}-parent",
+    )
+    digest = "a" * 64
+    values: tuple[int | None, str | None, str | None]
+    if snapshot_state == "legacy":
+        values = (None, None, None)
+    elif snapshot_state == "partial":
+        values = (3, None, None)
+    else:
+        values = (3, digest, f"{parent['agent_id']}/{'b' * 64}")
+    engine = get_or_create_engine(db_uri)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "UPDATE conversations SET agent_bundle_version = :version, "
+                "agent_bundle_digest = :digest, agent_bundle_location = :location "
+                "WHERE id = :session_id"
+            ),
+            {
+                "version": values[0],
+                "digest": values[1],
+                "location": values[2],
+                "session_id": bytes.fromhex(parent["id"]),
+            },
+        )
+
+    events: list[str] = []
+    original_read = StarletteUploadFile.read
+    original_put = LocalArtifactStore.put
+
+    async def _read(upload: StarletteUploadFile, size: int = -1) -> bytes:
+        events.append("bundle.read")
+        return await original_read(upload, size)
+
+    def _put(store: LocalArtifactStore, key: str, data: bytes) -> None:
+        events.append("artifact_store.put")
+        original_put(store, key, data)
+
+    monkeypatch.setattr(StarletteUploadFile, "read", _read)
+    monkeypatch.setattr(LocalArtifactStore, "put", _put)
+    artifact_root = tmp_path / "artifacts"
+    before_artifacts = {path for path in artifact_root.rglob("*") if path.is_file()}
+
+    response = await client.post(
+        "/v1/sessions",
+        data={"metadata": json.dumps({"parent_session_id": parent["id"]})},
+        files={
+            "bundle": (
+                "agent.tar.gz",
+                build_agent_bundle(name=f"multipart-{snapshot_state}-child"),
+                "application/gzip",
+            )
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert events == []
+    after_artifacts = {path for path in artifact_root.rglob("*") if path.is_file()}
+    assert after_artifacts == before_artifacts
 
 
 async def test_multipart_create_with_parent_links_child(

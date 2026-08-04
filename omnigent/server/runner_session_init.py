@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
-from omnigent.entities import Conversation
+from omnigent.entities import Agent, Conversation
 from omnigent.runner.session_init_protocol import build_runner_session_init_payload
 
 if TYPE_CHECKING:
@@ -32,6 +32,7 @@ class RunnerSessionInitializer:
         *,
         timeout: float,
         suppress_recovery_turn: bool = False,
+        agent: Agent | None = None,
     ) -> httpx.Response:
         """Initialize once for the current connection and persisted snapshot."""
         runner_id = conversation.runner_id
@@ -59,6 +60,7 @@ class RunnerSessionInitializer:
                         conversation,
                         server_version=self._server_version,
                         suppress_recovery_turn=suppress_recovery_turn,
+                        agent=agent,
                     ),
                     timeout=timeout,
                 ),

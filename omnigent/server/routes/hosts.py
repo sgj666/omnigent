@@ -485,10 +485,17 @@ async def _resolve_agent_spec_cwd(
     """
     if conv.agent_id is None:
         return None
-    agent = await asyncio.to_thread(agent_store.get, conv.agent_id)
+    from omnigent.server.routes._session_create_validation import load_session_agent_view
+
+    agent = await asyncio.to_thread(load_session_agent_view, conv, agent_store)
     if agent is None or agent.bundle_location is None:
         return None
-    loaded = await asyncio.to_thread(agent_cache.load, agent.id, agent.bundle_location)
+    loaded = await asyncio.to_thread(
+        agent_cache.load,
+        agent.id,
+        agent.bundle_location,
+        expand_env=agent.session_id is None,
+    )
     os_env = getattr(loaded.spec, "os_env", None)
     return getattr(os_env, "cwd", None) if os_env is not None else None
 
@@ -515,10 +522,17 @@ async def _resolve_agent_harness(
     """
     if conv.agent_id is None:
         return None
-    agent = await asyncio.to_thread(agent_store.get, conv.agent_id)
+    from omnigent.server.routes._session_create_validation import load_session_agent_view
+
+    agent = await asyncio.to_thread(load_session_agent_view, conv, agent_store)
     if agent is None or agent.bundle_location is None:
         return None
-    loaded = await asyncio.to_thread(agent_cache.load, agent.id, agent.bundle_location)
+    loaded = await asyncio.to_thread(
+        agent_cache.load,
+        agent.id,
+        agent.bundle_location,
+        expand_env=agent.session_id is None,
+    )
     return canonicalize_harness(loaded.spec.executor.harness_kind)
 
 

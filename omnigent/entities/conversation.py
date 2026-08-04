@@ -57,6 +57,13 @@ class Conversation:
     :param agent_id: Foreign key to the agent bound to this
         conversation at creation time. ``None`` only for legacy
         rows or callers that cannot bind a conversation.
+    :param agent_bundle_version: Immutable version of the Agent Bundle
+        captured when this Session tree was created. ``None`` only for
+        legacy or non-Agent-bound conversations.
+    :param agent_bundle_digest: SHA-256 digest of the captured Agent
+        Bundle. ``None`` only for legacy or non-Agent-bound conversations.
+    :param agent_bundle_location: Internal artifact-store location of the
+        captured Agent Bundle. Never exposed through public Session schemas.
     :param runner_id: Runner the conversation is pinned to (hard
         affinity per ``designs/RUNNER.md`` §5). ``None`` until
         the first dispatch claims a runner; thereafter every
@@ -205,6 +212,9 @@ class Conversation:
     kind: str = "default"
     parent_conversation_id: str | None = None
     agent_id: str | None = None
+    agent_bundle_version: int | None = None
+    agent_bundle_digest: str | None = None
+    agent_bundle_location: str | None = None
     runner_id: str | None = None
     host_id: str | None = None
     labels: dict[str, str] = field(default_factory=dict)

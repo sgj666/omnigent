@@ -71,6 +71,10 @@ from omnigent.server.routes._auth_helpers import (
     require_user as _require_user,
 )
 from omnigent.server.routes._errors import session_not_found as _session_not_found
+from omnigent.server.routes._session_create_validation import (
+    load_session_agent_view,
+    validate_session_agent_bundle_snapshot,
+)
 from omnigent.server.routes._sessions.common import *
 from omnigent.server.routes._sessions.common import (
     get_server_runner_router,
@@ -232,6 +236,7 @@ def register_events_routes(
             conv = await asyncio.to_thread(conversation_store.get_conversation, session_id)
             if conv is None:
                 raise _session_not_found()
+        validate_session_agent_bundle_snapshot(conv)
         created_by = _attribution_user(user_id)
         body_created_by = _attribution_user(body.created_by)
         if body_created_by is not None:
@@ -1289,6 +1294,7 @@ def register_events_routes(
                 conversation_store,
                 initializer=getattr(request.app.state, "runner_session_initializer", None),
                 suppress_recovery_turn=True,
+                agent_store=agent_store,
             )
         await _ensure_runner_relay_ready(
             session_id,
@@ -1296,7 +1302,7 @@ def register_events_routes(
             runner_client,
             conversation_store,
         )
-        _agent = agent_store.get(conv.agent_id) if conv.agent_id else None
+        _agent = await asyncio.to_thread(load_session_agent_view, conv, agent_store)
         # Determine whether the agent has MCP servers so the runner's
         # proxy_stream handler knows to initialise ProxyMcpManager.
         # agent_cache.load() is O(1) on a warm in-memory cache; the

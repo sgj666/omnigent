@@ -25,10 +25,14 @@ from typing import Any
 import pytest
 
 from omnigent.db.db_models import current_workspace_id
-from omnigent.entities import ScheduledTask
+from omnigent.entities import Agent, ScheduledTask
 from omnigent.server.auth import LEVEL_OWNER, RESERVED_USER_LOCAL
 from omnigent.server.scheduled import fire as fire_mod
 from omnigent.server.scheduled.fire import FireDeps, build_on_fire, build_run_now
+from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from omnigent.stores.conversation_store.sqlalchemy_store import (
+    SqlAlchemyConversationStore,
+)
 
 # ── Fakes ──────────────────────────────────────────────────────────────────
 
@@ -42,18 +46,18 @@ class _FakeConversation:
     git_branch: str | None = None
 
 
-@dataclass
-class _FakeAgent:
-    id: str
-    bundle_location: str | None = None
-    session_id: str | None = None
-
-
 class FakeAgentStore:
-    def __init__(self, agents: dict[str, _FakeAgent] | None = None) -> None:
-        self.agents = agents or {"ag_1": _FakeAgent("ag_1")}
+    def __init__(self, agents: dict[str, Agent] | None = None) -> None:
+        self.agents = agents or {
+            "ag_1": Agent(
+                id="ag_1",
+                created_at=1,
+                name="fake-agent",
+                bundle_location=f"ag_1/{'a' * 64}",
+            )
+        }
 
-    def get(self, agent_id: str) -> _FakeAgent | None:
+    def get(self, agent_id: str) -> Agent | None:
         return self.agents.get(agent_id)
 
 
@@ -334,6 +338,138 @@ async def test_active_creates_session_grant_and_run() -> None:
     assert len(store.runs) == 1
     assert any("last_run_at" in u for u in store.updates)
     assert any("last_run_conversation_id" in u for u in store.updates)
+
+
+@pytest.mark.asyncio
+async def test_real_store_fire_persists_root_agent_bundle_snapshot(db_uri: str) -> None:
+    """A scheduled Root captures the current Agent identity transactionally."""
+    agent_id = "1" * 32
+    digest = "a" * 64
+    location = f"{agent_id}/{digest}"
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    agent = agent_store.create(agent_id, name="scheduled-real", bundle_location=location)
+    conversation_store = SqlAlchemyConversationStore(db_uri)
+    task_store = FakeScheduledTaskStore(
+        rows={"task_1": _task(agent_id=agent_id, host_id="4" * 32)}
+    )
+    launched: list[str] = []
+
+    async def _launch(conv: Any, task: Any) -> None:
+        del task
+        launched.append(conv.id)
+
+    on_fire = build_on_fire(
+        _deps(
+            task_store,
+            agent_store=agent_store,
+            conversation_store=conversation_store,
+            permission_store=None,
+        ),
+        launch_dispatch=_launch,
+    )
+    await on_fire(0, "task_1")
+    await _drain()
+
+    page = conversation_store.list_conversations(agent_id=agent_id, limit=10)
+    assert len(page.data) == 1
+    conv = page.data[0]
+    assert launched == [conv.id]
+    assert conv.agent_bundle_version == agent.version
+    assert conv.agent_bundle_digest == digest
+    assert conv.agent_bundle_location == location
+
+
+@pytest.mark.asyncio
+async def test_fire_pins_the_same_agent_view_that_passed_validation() -> None:
+    """A mutable Agent cannot change between validation and Root snapshot capture."""
+    agent_a = Agent(
+        id="ag_1",
+        created_at=1,
+        name="scheduled-sequence",
+        version=1,
+        bundle_location=f"ag_1/{'a' * 64}",
+    )
+    agent_b = Agent(
+        id="ag_1",
+        created_at=1,
+        name="scheduled-sequence",
+        version=2,
+        bundle_location=f"ag_1/{'b' * 64}",
+    )
+
+    class _SequencedAgentStore:
+        def __init__(self) -> None:
+            self.get_calls = 0
+
+        def get(self, agent_id: str) -> Agent:
+            assert agent_id == "ag_1"
+            self.get_calls += 1
+            return agent_a if self.get_calls == 1 else agent_b
+
+    agent_store = _SequencedAgentStore()
+    conversation_store = FakeConversationStore()
+    task_store = FakeScheduledTaskStore(rows={"task_1": _task()})
+    on_fire = build_on_fire(
+        _deps(
+            task_store,
+            agent_store=agent_store,
+            conversation_store=conversation_store,
+        ),
+        launch_dispatch=lambda conv, task: asyncio.sleep(0),
+    )
+
+    await on_fire(0, "task_1")
+    await _drain()
+
+    assert agent_store.get_calls == 1
+    assert len(conversation_store.created) == 1
+    created = conversation_store.created[0]
+    assert created["agent_bundle_version"] == 1
+    assert created["agent_bundle_digest"] == "a" * 64
+    assert created["agent_bundle_location"] == agent_a.bundle_location
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_id", "bundle_location", "expected_code"),
+    [
+        ("2" * 32, None, "not_found"),
+        ("3" * 32, "not-content-addressed", "internal_error"),
+    ],
+    ids=["missing", "invalid-bundle"],
+)
+async def test_real_store_fire_records_agent_snapshot_validation_failure(
+    db_uri: str,
+    agent_id: str,
+    bundle_location: str | None,
+    expected_code: str,
+) -> None:
+    """A missing or invalid Agent records a failed run and creates no Root."""
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    if bundle_location is not None:
+        agent_store.create(agent_id, name="scheduled-invalid", bundle_location=bundle_location)
+    conversation_store = SqlAlchemyConversationStore(db_uri)
+    task_store = FakeScheduledTaskStore(rows={"task_1": _task(agent_id=agent_id)})
+
+    async def _launch(conv: Any, task: Any) -> None:
+        raise AssertionError(f"invalid scheduled fire launched: {conv!r} {task!r}")
+
+    on_fire = build_on_fire(
+        _deps(
+            task_store,
+            agent_store=agent_store,
+            conversation_store=conversation_store,
+            permission_store=None,
+        ),
+        launch_dispatch=_launch,
+    )
+    await on_fire(0, "task_1")
+    await _drain()
+
+    assert conversation_store.list_conversations(agent_id=agent_id, limit=10).data == []
+    assert len(task_store.runs) == 1
+    assert task_store.runs[0]["status"] == "failed"
+    assert task_store.runs[0]["error_code"] == expected_code
 
 
 @pytest.mark.asyncio
@@ -825,8 +961,8 @@ async def test_defaulted_workspace_is_boundary_validated(
         seen["validate_workspace"] = validate_workspace
         seen["workspace"] = task.workspace
         if validate_workspace:
-            return ("workspace is outside the agent boundary", "invalid_input")
-        return None
+            return None, ("workspace is outside the agent boundary", "invalid_input")
+        raise AssertionError("expected resolved workspace validation")
 
     monkeypatch.setattr(fire_mod, "_resolve_default_workspace", _fake_resolve)
     monkeypatch.setattr(fire_mod, "_validate_fire_session_inputs", _fake_validate)

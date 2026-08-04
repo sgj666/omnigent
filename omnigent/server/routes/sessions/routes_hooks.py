@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, NamedTuple
 
@@ -55,6 +56,7 @@ from omnigent.server.routes._codex_elicitation import parse_codex_elicitation_re
 from omnigent.server.routes._content_type import (
     require_json_content_type,
 )
+from omnigent.server.routes._session_create_validation import load_session_agent_view
 from omnigent.server.routes._sessions.common import *
 from omnigent.server.routes._sessions.common import (
     get_server_runner_router,
@@ -653,6 +655,7 @@ def register_hooks_routes(
                 f"Session {session_id!r} not found.",
                 code=ErrorCode.NOT_FOUND,
             )
+        agent = await asyncio.to_thread(load_session_agent_view, conv, agent_store)
         # Dedup the native request-phase gate. A native session's
         # ``UserPromptSubmit`` hook posts ``PHASE_REQUEST`` here for *every*
         # prompt, but a web-UI prompt was already gated server-side by
@@ -669,7 +672,6 @@ def register_hooks_routes(
                 content=json.dumps({"result": "POLICY_ACTION_ALLOW"}),
                 media_type="application/json",
             )
-        agent = agent_store.get(conv.agent_id) if conv.agent_id else None
         if agent is None:
             # No agent — no policies. Return unspecified (pass-through).
             return Response(

@@ -38,6 +38,7 @@ class _AgentStore:
         :param agents: Map from agent ID to Agent entity.
         """
         self._agents: dict[str, Agent] = dict(agents or {})
+        self.get_calls: list[str] = []
         self.create_calls: list[dict[str, Any]] = []
 
     def get(self, agent_id: str) -> Agent | None:
@@ -47,6 +48,7 @@ class _AgentStore:
         :param agent_id: Agent ID to look up.
         :returns: The Agent if found, else None.
         """
+        self.get_calls.append(agent_id)
         return self._agents.get(agent_id)
 
     def create(
@@ -120,6 +122,32 @@ class _ConversationStore:
         """
         return self._convs.get(conversation_id)
 
+    def list_conversations(
+        self,
+        limit: int = 20,
+        after: str | None = None,
+        kind: str | None = "default",
+        root_conversation_id: str | None = None,
+        **kwargs: Any,
+    ) -> PagedList[Conversation]:
+        """Return the small in-memory set for subtree-usage snapshot reads."""
+        del after, kwargs
+        conversations = [
+            conversation
+            for conversation in self._convs.values()
+            if (kind is None or conversation.kind == kind)
+            and (
+                root_conversation_id is None
+                or conversation.root_conversation_id == root_conversation_id
+            )
+        ][:limit]
+        return PagedList(
+            data=conversations,
+            first_id=conversations[0].id if conversations else None,
+            last_id=conversations[-1].id if conversations else None,
+            has_more=False,
+        )
+
     def fork_conversation(
         self,
         source_conversation_id: str,
@@ -129,6 +157,7 @@ class _ConversationStore:
         cloned_agent_name: str | None = None,
         cloned_agent_bundle_location: str | None = None,
         cloned_agent_description: str | None = None,
+        bundle_source_agent_id: str | None = None,
         copy_model_settings: bool = True,
         copy_terminal_launch_args: bool = True,
         carry_history_into_native: bool = False,
@@ -148,6 +177,8 @@ class _ConversationStore:
         :param cloned_agent_bundle_location: Bundle the fork clones into
             a session-scoped agent row created atomically in the store.
         :param cloned_agent_description: Optional clone description.
+        :param bundle_source_agent_id: Target template Agent whose current
+            Bundle identity is captured when this fork switches Agent.
         :param copy_model_settings: Whether the source's model settings
             carry over (route passes ``False`` on a cross-family switch).
         :param copy_terminal_launch_args: Whether the source's launch args
@@ -178,6 +209,7 @@ class _ConversationStore:
                 "cloned_agent_name": cloned_agent_name,
                 "cloned_agent_bundle_location": cloned_agent_bundle_location,
                 "cloned_agent_description": cloned_agent_description,
+                "bundle_source_agent_id": bundle_source_agent_id,
                 "copy_model_settings": copy_model_settings,
                 "copy_terminal_launch_args": copy_terminal_launch_args,
                 "carry_history_into_native": carry_history_into_native,
@@ -198,6 +230,11 @@ class _ConversationStore:
                 f"{source_conversation_id!r}: {up_to_response_id!r}"
             )
         effective_agent_id = agent_id if agent_id is not None else src.agent_id
+        bundle_fields = (
+            src.agent_bundle_version,
+            src.agent_bundle_digest,
+            src.agent_bundle_location,
+        )
         # Also store items under the fork ID so list_items returns
         # the copied items (mirrors real store behavior, including the
         # up-to-and-including-last-item-of-the-response truncation).
@@ -218,6 +255,9 @@ class _ConversationStore:
             root_conversation_id=fork_id,
             title=title or f"Fork of {src.title}",
             agent_id=effective_agent_id,
+            agent_bundle_version=bundle_fields[0],
+            agent_bundle_digest=bundle_fields[1],
+            agent_bundle_location=bundle_fields[2],
         )
 
     def list_items(
@@ -257,6 +297,8 @@ def _make_conversation(
     agent_id: str | None = "087b7cb7ac30abf4debfaa578d052ec6",
     title: str = "Source Chat",
     kind: str = "default",
+    *,
+    pinned: bool = False,
 ) -> Conversation:
     """
     Build a minimal Conversation entity for testing.
@@ -266,6 +308,7 @@ def _make_conversation(
     :param title: Title string.
     :param kind: Conversation kind, e.g. ``"default"`` or
         ``"sub_agent"``.
+    :param pinned: Whether to include an immutable Bundle snapshot.
     :returns: A Conversation.
     """
     return Conversation(
@@ -276,6 +319,9 @@ def _make_conversation(
         agent_id=agent_id,
         title=title,
         kind=kind,
+        agent_bundle_version=3 if pinned else None,
+        agent_bundle_digest="c" * 64 if pinned else None,
+        agent_bundle_location=f"{agent_id}/{'c' * 64}" if pinned else None,
     )
 
 
@@ -304,6 +350,7 @@ def _make_item(item_id: str, text: str, response_id: str = "resp_001") -> Conver
 def _build_app(
     store: _ConversationStore,
     agent_store: _AgentStore | None = None,
+    agent_cache: Any | None = None,
 ) -> FastAPI:
     """
     Build a FastAPI app with the sessions router and error handler.
@@ -332,6 +379,7 @@ def _build_app(
     router = create_sessions_router(
         conversation_store=store,  # type: ignore[arg-type]
         agent_store=agent_store,  # type: ignore[arg-type]
+        agent_cache=agent_cache,
     )
     app = FastAPI()
 
@@ -352,6 +400,284 @@ def _build_app(
 
 
 # ── Tests ────────────────────────────────────────────────────────
+
+
+def test_same_agent_fork_uses_source_pinned_bundle_snapshot() -> None:
+    """A same-Agent fork cannot reload the source Agent's mutable Bundle."""
+    source = _make_conversation(pinned=True)
+    conv_store = _ConversationStore(conversations={source.id: source})
+    client = TestClient(_build_app(conv_store))
+
+    response = client.post(f"/v1/sessions/{source.id}/fork", json={})
+
+    assert response.status_code == 201, response.text
+    call = conv_store.fork_calls[0]
+    assert call["bundle_source_agent_id"] is None
+    assert call["cloned_agent_bundle_location"] == source.agent_bundle_location
+    body = response.json()
+    assert body["agent_bundle_version"] == source.agent_bundle_version
+    assert body["agent_bundle_digest"] == source.agent_bundle_digest
+
+
+def test_same_agent_fork_helpers_use_source_pinned_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mutable template update cannot change an old Session's fork harness."""
+    agent_id = "087b7cb7ac30abf4debfaa578d052ec6"
+    pinned_digest = "1" * 64
+    current_digest = "2" * 64
+    pinned_location = f"{agent_id}/{pinned_digest}"
+    current_location = f"{agent_id}/{current_digest}"
+    source = _make_conversation()
+    source.agent_bundle_version = 1
+    source.agent_bundle_digest = pinned_digest
+    source.agent_bundle_location = pinned_location
+    conv_store = _ConversationStore(conversations={source.id: source})
+    agent_store = _AgentStore(
+        agents={
+            agent_id: Agent(
+                id=agent_id,
+                created_at=1,
+                name="updated-template",
+                bundle_location=current_location,
+                version=2,
+            )
+        }
+    )
+    cache = _BundleAwareAgentCache(
+        {
+            pinned_location: "claude-native",
+            current_location: "claude_sdk",
+        }
+    )
+    monkeypatch.setattr("omnigent.server.routes.sessions.get_agent_cache", lambda: cache)
+    client = TestClient(_build_app(conv_store, agent_store=agent_store))
+
+    response = client.post(f"/v1/sessions/{source.id}/fork", json={})
+
+    assert response.status_code == 201, response.text
+    call = conv_store.fork_calls[0]
+    assert call["cloned_agent_bundle_location"] == pinned_location
+    assert call["copy_model_settings"] is True
+    assert call["carry_history_into_native"] is True
+    assert call["resume_source_native_session"] is True
+    assert call["presentation_labels"] is None
+    assert cache.load_calls
+    assert {location for _, location in cache.load_calls} == {pinned_location}
+
+
+def test_switch_provider_comparison_uses_source_pinned_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A switch compares the target against the source Session's pinned provider."""
+    source_agent_id = "087b7cb7ac30abf4debfaa578d052ec6"
+    target_agent_id = "280d725b404d2915f9e9d6cccce91303"
+    pinned_location = f"{source_agent_id}/{'3' * 64}"
+    current_location = f"{source_agent_id}/{'4' * 64}"
+    target_location = f"{target_agent_id}/{'5' * 64}"
+    source = _make_conversation()
+    source.agent_bundle_version = 1
+    source.agent_bundle_digest = "3" * 64
+    source.agent_bundle_location = pinned_location
+    conv_store = _ConversationStore(conversations={source.id: source})
+    agent_store = _AgentStore(
+        agents={
+            source_agent_id: Agent(
+                id=source_agent_id,
+                created_at=1,
+                name="updated-source",
+                bundle_location=current_location,
+                version=2,
+            ),
+            target_agent_id: Agent(
+                id=target_agent_id,
+                created_at=1,
+                name="target-native",
+                bundle_location=target_location,
+                version=1,
+            ),
+        }
+    )
+    cache = _BundleAwareAgentCache(
+        {
+            pinned_location: "claude_sdk",
+            current_location: "openai-agents",
+            target_location: "claude-native",
+        }
+    )
+    monkeypatch.setattr("omnigent.server.routes.sessions.get_agent_cache", lambda: cache)
+    client = TestClient(_build_app(conv_store, agent_store=agent_store))
+
+    response = client.post(
+        f"/v1/sessions/{source.id}/fork",
+        json={"agent_id": target_agent_id},
+    )
+
+    assert response.status_code == 201, response.text
+    call = conv_store.fork_calls[0]
+    assert call["copy_model_settings"] is True
+    assert call["resume_source_native_session"] is True
+    assert call["cloned_agent_bundle_location"] == target_location
+    assert call["presentation_labels"] == {
+        "omnigent.ui": "terminal",
+        "omnigent.wrapper": "claude-code-native-ui",
+    }
+    assert (source_agent_id, pinned_location) in cache.load_calls
+    assert (source_agent_id, current_location) not in cache.load_calls
+
+
+@pytest.mark.parametrize(
+    ("version", "digest", "location"),
+    [
+        (3, None, None),
+        (None, "6" * 64, None),
+        (None, None, "087b7cb7ac30abf4debfaa578d052ec6/" + "6" * 64),
+        (3, "6" * 64, None),
+        (3, None, "087b7cb7ac30abf4debfaa578d052ec6/" + "6" * 64),
+        (None, "6" * 64, "087b7cb7ac30abf4debfaa578d052ec6/" + "6" * 64),
+    ],
+    ids=[
+        "version-only",
+        "digest-only",
+        "location-only",
+        "version-digest",
+        "version-location",
+        "digest-location",
+    ],
+)
+def test_fork_partial_bundle_snapshot_fails_before_helpers_or_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    version: int | None,
+    digest: str | None,
+    location: str | None,
+) -> None:
+    """Every partial snapshot is corrupt and must not fall back to current Bundle."""
+    agent_id = "087b7cb7ac30abf4debfaa578d052ec6"
+    current_location = f"{agent_id}/{'7' * 64}"
+    source = _make_conversation()
+    source.agent_bundle_version = version
+    source.agent_bundle_digest = digest
+    source.agent_bundle_location = location
+    conv_store = _ConversationStore(conversations={source.id: source})
+    agent_store = _AgentStore(
+        agents={
+            agent_id: Agent(
+                id=agent_id,
+                created_at=1,
+                name="current-template",
+                bundle_location=current_location,
+                version=9,
+            )
+        }
+    )
+    cache = _BundleAwareAgentCache({current_location: "claude_sdk"})
+    monkeypatch.setattr("omnigent.server.routes.sessions.get_agent_cache", lambda: cache)
+    client = TestClient(_build_app(conv_store, agent_store=agent_store))
+
+    response = client.post(f"/v1/sessions/{source.id}/fork", json={})
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "conflict"
+    assert agent_store.get_calls == []
+    assert cache.load_calls == []
+    assert conv_store.fork_calls == []
+
+
+def test_fork_invalid_complete_snapshot_fails_before_agent_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A digest/location mismatch blocks AgentStore before fork mutation."""
+    agent_id = "087b7cb7ac30abf4debfaa578d052ec6"
+    current_location = f"{agent_id}/{'7' * 64}"
+    source = _make_conversation()
+    source.agent_bundle_version = 3
+    source.agent_bundle_digest = "6" * 64
+    source.agent_bundle_location = f"{agent_id}/{'5' * 64}"
+    conv_store = _ConversationStore(conversations={source.id: source})
+    agent_store = _AgentStore(
+        agents={
+            agent_id: Agent(
+                id=agent_id,
+                created_at=1,
+                name="current-template",
+                bundle_location=current_location,
+                version=9,
+            )
+        }
+    )
+    cache = _BundleAwareAgentCache({current_location: "claude_sdk"})
+    monkeypatch.setattr("omnigent.server.routes.sessions.get_agent_cache", lambda: cache)
+    client = TestClient(_build_app(conv_store, agent_store=agent_store))
+
+    response = client.post(f"/v1/sessions/{source.id}/fork", json={})
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "conflict"
+    assert agent_store.get_calls == []
+    assert cache.load_calls == []
+    assert conv_store.fork_calls == []
+
+
+def test_fork_legacy_null_snapshot_uses_current_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A legacy three-NULL snapshot retains the current-Bundle compatibility path."""
+    agent_id = "087b7cb7ac30abf4debfaa578d052ec6"
+    current_location = f"{agent_id}/{'8' * 64}"
+    source = _make_conversation()
+    conv_store = _ConversationStore(conversations={source.id: source})
+    agent_store = _AgentStore(
+        agents={
+            agent_id: Agent(
+                id=agent_id,
+                created_at=1,
+                name="legacy-template",
+                bundle_location=current_location,
+                version=4,
+            )
+        }
+    )
+    cache = _BundleAwareAgentCache({current_location: "claude-native"})
+    monkeypatch.setattr("omnigent.server.routes.sessions.get_agent_cache", lambda: cache)
+    client = TestClient(_build_app(conv_store, agent_store=agent_store))
+
+    response = client.post(f"/v1/sessions/{source.id}/fork", json={})
+
+    assert response.status_code == 201, response.text
+    call = conv_store.fork_calls[0]
+    assert call["cloned_agent_bundle_location"] == current_location
+    assert call["carry_history_into_native"] is True
+    assert cache.load_calls
+    assert {loaded_location for _, loaded_location in cache.load_calls} == {current_location}
+
+
+def test_get_session_partial_snapshot_does_not_load_current_bundle() -> None:
+    """Snapshot projection rejects a partial pin before AgentCache fallback."""
+    agent_id = "087b7cb7ac30abf4debfaa578d052ec6"
+    current_location = f"{agent_id}/{'9' * 64}"
+    source = _make_conversation()
+    source.agent_bundle_version = 3
+    conv_store = _ConversationStore(conversations={source.id: source})
+    agent_store = _AgentStore(
+        agents={
+            agent_id: Agent(
+                id=agent_id,
+                created_at=1,
+                name="partial-template",
+                bundle_location=current_location,
+                version=9,
+            )
+        }
+    )
+    cache = _BundleAwareAgentCache({current_location: "claude_sdk"})
+    client = TestClient(_build_app(conv_store, agent_store=agent_store, agent_cache=cache))
+
+    response = client.get(f"/v1/sessions/{source.id}")
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "conflict"
+    assert cache.load_calls == []
+    assert conv_store.fork_calls == []
 
 
 @pytest.mark.asyncio
@@ -657,6 +983,25 @@ class _StubAgentCache:
         return _StubLoadedAgent(self._harness[agent_id])
 
 
+class _BundleAwareAgentCache:
+    """Cache stub that distinguishes immutable Bundle locations."""
+
+    def __init__(self, harness_by_location: dict[str, str]) -> None:
+        self._harness = harness_by_location
+        self.load_calls: list[tuple[str, str]] = []
+
+    def load(
+        self,
+        agent_id: str,
+        bundle_location: str,
+        *,
+        expand_env: bool = False,
+    ) -> _StubLoadedAgent:
+        del expand_env
+        self.load_calls.append((agent_id, bundle_location))
+        return _StubLoadedAgent(self._harness[bundle_location])
+
+
 def _switch_agent_store() -> _AgentStore:
     """Build an agent store with a source agent and switchable targets.
 
@@ -731,6 +1076,7 @@ async def test_fork_switch_binds_target_agent_bundle() -> None:
     # TARGET agent's bundle (not ag_test/hash) — not a separate create call.
     assert len(agent_store.create_calls) == 0
     fork_call = conv_store.fork_calls[0]
+    assert fork_call["bundle_source_agent_id"] == "44b4151dd6cdfed6ee19430832398e05"
     assert fork_call["cloned_agent_bundle_location"] == "44b4151dd6cdfed6ee19430832398e05/hash", (
         "Switch must clone the target agent's bundle; cloning the source's "
         "bundle would launch the wrong harness."

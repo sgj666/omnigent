@@ -8,11 +8,13 @@ rows land in the right database.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import sqlite3
 from pathlib import Path
 
 import pytest
 
+from omnigent.entities import Conversation
 from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
@@ -54,6 +56,33 @@ def _col(db: Path, table: str, col: str, where: str = "") -> list:
         return [v.hex() if isinstance(v, bytes) else v for v in rows]
 
 
+def _columns(db: Path, table: str) -> set[str]:
+    with sqlite3.connect(str(db)) as conn:
+        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _bundle_snapshot_kwargs(agent_id: str) -> dict[str, object]:
+    digest = hashlib.sha256(agent_id.encode()).hexdigest()
+    return {
+        "agent_bundle_version": 1,
+        "agent_bundle_digest": digest,
+        "agent_bundle_location": f"{agent_id}/{digest}",
+    }
+
+
+def _create_snapshot_parent(
+    store: SqlAlchemyConversationStore,
+    *,
+    title: str,
+) -> Conversation:
+    agent_id = "f" * 32
+    return store.create_conversation(
+        agent_id=agent_id,
+        title=title,
+        **_bundle_snapshot_kwargs(agent_id),
+    )
+
+
 # ── Table placement ────────────────────────────────────
 
 
@@ -84,27 +113,40 @@ def test_tables_live_in_correct_db(
 def test_create_conversation_rows_land_in_correct_db(
     omnigent_db: Path, conv_db: Path, store: SqlAlchemyConversationStore
 ) -> None:
-    store.create_conversation(
+    agent_id = "a" * 32
+    created = store.create_conversation(
         kind="default",
         title="hello",
+        agent_id=agent_id,
         runner_id="runner_abc",
         workspace="/tmp/proj",
+        **_bundle_snapshot_kwargs(agent_id),
     )
 
     # AP DB: title, agent binding
     assert _count(conv_db, "conversations") == 1
     assert _col(conv_db, "conversations", "title") == ["hello"]
+    assert _col(conv_db, "conversations", "agent_bundle_version") == [1]
+    assert _col(conv_db, "conversations", "agent_bundle_digest") == [created.agent_bundle_digest]
+    assert _col(conv_db, "conversations", "agent_bundle_location") == [
+        created.agent_bundle_location
+    ]
 
     # Omnigent DB: operational fields
     assert _count(omnigent_db, "omnigent_conversation_metadata") == 1
     assert _col(omnigent_db, "omnigent_conversation_metadata", "runner_id") == ["runner_abc"]
     assert _col(omnigent_db, "omnigent_conversation_metadata", "workspace") == ["/tmp/proj"]
+    assert not {
+        "agent_bundle_version",
+        "agent_bundle_digest",
+        "agent_bundle_location",
+    } & _columns(omnigent_db, "omnigent_conversation_metadata")
 
 
 def test_create_sub_agent_conversation(
     omnigent_db: Path, conv_db: Path, store: SqlAlchemyConversationStore
 ) -> None:
-    parent = store.create_conversation(kind="default", title="parent")
+    parent = _create_snapshot_parent(store, title="parent")
     child = store.create_conversation(
         kind="sub_agent",
         title="child",
@@ -114,6 +156,9 @@ def test_create_sub_agent_conversation(
 
     assert child.kind == "sub_agent"
     assert child.parent_conversation_id == parent.id
+    assert child.agent_bundle_version == parent.agent_bundle_version
+    assert child.agent_bundle_digest == parent.agent_bundle_digest
+    assert child.agent_bundle_location == parent.agent_bundle_location
     # kind lives in metadata
     kind_code = _col(omnigent_db, "omnigent_conversation_metadata", "kind", f"id=X'{child.id}'")
     assert kind_code == [2]
@@ -145,7 +190,7 @@ def test_get_conversations_bulk(store: SqlAlchemyConversationStore) -> None:
 
 def test_list_conversations_kind_filter_crosses_dbs(store: SqlAlchemyConversationStore) -> None:
     store.create_conversation(kind="default", title="top")
-    parent = store.create_conversation(kind="default", title="parent2")
+    parent = _create_snapshot_parent(store, title="parent2")
     store.create_conversation(kind="sub_agent", title="child", parent_conversation_id=parent.id)
 
     defaults = store.list_conversations(kind="default")
@@ -175,7 +220,7 @@ def test_kind_derived_from_parent_nullness_not_metadata(
     before the Omnigent metadata row: deleting the metadata row must not flip a
     child's kind back to ``"default"``.
     """
-    parent = store.create_conversation(title="parent")
+    parent = _create_snapshot_parent(store, title="parent")
     child = store.create_conversation(
         kind="sub_agent", title="coder:child", parent_conversation_id=parent.id
     )
@@ -207,7 +252,7 @@ def test_child_listing_does_not_prefetch_workspace_wide(
     parent-scoped page fetch opens the Omnigent pool at most once (page-metadata
     merge), never twice (prefetch + merge).
     """
-    parent = store.create_conversation(title="parent")
+    parent = _create_snapshot_parent(store, title="parent")
     for i in range(3):
         store.create_conversation(
             kind="sub_agent", title=f"coder:c{i}", parent_conversation_id=parent.id
@@ -398,7 +443,7 @@ def test_delete_conversation_cleans_both_dbs(
 def test_delete_conversation_subtree_cleans_both_dbs(
     omnigent_db: Path, conv_db: Path, store: SqlAlchemyConversationStore
 ) -> None:
-    parent = store.create_conversation(title="parent")
+    parent = _create_snapshot_parent(store, title="parent")
     store.create_conversation(kind="sub_agent", title="child", parent_conversation_id=parent.id)
     assert _count(conv_db, "conversations") == 2
     assert _count(omnigent_db, "omnigent_conversation_metadata") == 2
@@ -479,7 +524,7 @@ def test_agent_store_resolves_session_id_across_dbs(
     created = store.create_session_with_agent(
         agent_id="112c4ebea353b873df12de9d02f539ab",
         agent_name="session-agent",
-        agent_bundle_location="112c4ebea353b873df12de9d02f539ab/bundle",
+        agent_bundle_location=f"112c4ebea353b873df12de9d02f539ab/{'a' * 64}",
         agent_description=None,
         title="split session",
     )
@@ -497,7 +542,8 @@ def test_agent_store_resolves_session_id_across_dbs(
     assert agent.session_id == created.conversation.id
 
     updated = agent_store.update(
-        "112c4ebea353b873df12de9d02f539ab", "112c4ebea353b873df12de9d02f539ab/bundle2"
+        "112c4ebea353b873df12de9d02f539ab",
+        f"112c4ebea353b873df12de9d02f539ab/{'b' * 64}",
     )
     assert updated is not None
     assert updated.session_id == created.conversation.id
@@ -518,7 +564,7 @@ def test_update_conversation_archives_without_metadata_row(
     even without a metadata row — and ``kind`` stays correct (derived from the
     parent pointer), never silently reporting ``archived=False``.
     """
-    parent = store.create_conversation(title="orphan parent")
+    parent = _create_snapshot_parent(store, title="orphan parent")
     child = store.create_conversation(
         kind="sub_agent",
         title="orphan child",
@@ -564,7 +610,7 @@ def test_delete_conversation_deletes_session_scoped_agent(
     created = store.create_session_with_agent(
         agent_id="d6f21846ee961735d477aae06247b99c",
         agent_name="del-agent",
-        agent_bundle_location="d6f21846ee961735d477aae06247b99c/bundle",
+        agent_bundle_location=f"d6f21846ee961735d477aae06247b99c/{'a' * 64}",
         agent_description=None,
         title="del session",
     )
@@ -590,9 +636,13 @@ def test_delete_conversation_keeps_template_agent(
     template = agent_store.create(
         "191cbf904e3223e9e00ac9a1abfe79a5",
         "shared-template",
-        "191cbf904e3223e9e00ac9a1abfe79a5/bundle",
+        f"191cbf904e3223e9e00ac9a1abfe79a5/{'a' * 64}",
     )
-    conv = store.create_conversation(title="uses template", agent_id=template.id)
+    conv = store.create_conversation(
+        title="uses template",
+        agent_id=template.id,
+        **_bundle_snapshot_kwargs(template.id),
+    )
 
     asyncio.run(store.delete_conversation(conv.id))
     assert _col(omnigent_db, "agents", "id") == ["191cbf904e3223e9e00ac9a1abfe79a5"]

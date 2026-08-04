@@ -4,21 +4,225 @@ from __future__ import annotations
 
 import io
 import tarfile
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+import sqlalchemy as sa
 import yaml
 
+from omnigent.server.bundles import bundle_location
 from omnigent.server.routes import session_mcp_servers as mcp_routes
+from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from omnigent.stores.artifact_store.local import LocalArtifactStore
 from tests.server.helpers import create_test_session
 
 pytestmark = pytest.mark.asyncio
 
 
-async def test_create_mcp_server_updates_agent_bundle(client: httpx.AsyncClient) -> None:
+async def test_list_mcp_servers_uses_pinned_bundle_after_agent_update(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    tmp_path: Path,
+) -> None:
+    """GET reads the Session snapshot instead of the mutable Agent bundle."""
+    bundle_a = _single_yaml_bundle(
+        """\
+spec_version: 1
+name: pinned-mcp-agent
+executor:
+  config:
+    harness: claude-sdk
+""",
+        filename="config.yaml",
+    )
+    created = await client.post(
+        "/v1/sessions",
+        data={"metadata": "{}"},
+        files={"bundle": ("agent.tar.gz", bundle_a, "application/gzip")},
+    )
+    assert created.status_code == 201, created.text
+    session_id = created.json()["session_id"]
+    created_agent_id = created.json()["agent_id"]
+
+    bundle_b = _single_yaml_bundle(
+        """\
+spec_version: 1
+name: pinned-mcp-agent
+executor:
+  config:
+    harness: claude-sdk
+tools:
+  mutable-only:
+    type: mcp
+    transport: http
+    url: https://example.com/mutable
+""",
+        filename="config.yaml",
+    )
+    location_b = bundle_location(created_agent_id, bundle_b)
+    LocalArtifactStore(str(tmp_path / "artifacts")).put(location_b, bundle_b)
+    updated = SqlAlchemyAgentStore(db_uri).update(created_agent_id, location_b)
+    assert updated is not None and updated.version == 2
+
+    response = await client.get(f"/v1/sessions/{session_id}/agent/mcp-servers")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"] == []
+
+
+@pytest.mark.parametrize(
+    ("method", "suffix", "payload"),
+    [
+        (
+            "POST",
+            "",
+            {
+                "name": "new-server",
+                "transport": "http",
+                "url": "https://example.com/new",
+            },
+        ),
+        (
+            "PUT",
+            "/existing",
+            {
+                "name": "renamed",
+                "transport": "http",
+                "url": "https://example.com/renamed",
+            },
+        ),
+        ("DELETE", "/existing", None),
+    ],
+    ids=["post", "put", "delete"],
+)
+async def test_pinned_session_rejects_mcp_mutation_before_side_effects(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    suffix: str,
+    payload: dict[str, Any] | None,
+) -> None:
+    """Pinned Session MCP declarations are immutable in place."""
+    bundle = _single_yaml_bundle(
+        """\
+spec_version: 1
+name: pinned-mcp-write
+executor:
+  config:
+    harness: claude-sdk
+tools:
+  existing:
+    type: mcp
+    transport: http
+    url: https://example.com/existing
+""",
+        filename="config.yaml",
+    )
+    created = await client.post(
+        "/v1/sessions",
+        data={"metadata": "{}"},
+        files={"bundle": ("agent.tar.gz", bundle, "application/gzip")},
+    )
+    assert created.status_code == 201, created.text
+    session_id = created.json()["session_id"]
+    agent_id = created.json()["agent_id"]
+    before = SqlAlchemyAgentStore(db_uri).get(agent_id)
+    assert before is not None
+    side_effects: list[str] = []
+
+    async def _reset(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        side_effects.append("cache-reset")
+
+    def _publish(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        side_effects.append("sse")
+
+    monkeypatch.setattr(mcp_routes, "_reset_runner_session_agent_cache", _reset)
+    monkeypatch.setattr(mcp_routes, "_publish_agent_changed", _publish)
+
+    response = await client.request(
+        method,
+        f"/v1/sessions/{session_id}/agent/mcp-servers{suffix}",
+        json=payload,
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "conflict"
+    assert SqlAlchemyAgentStore(db_uri).get(agent_id) == before
+    assert side_effects == []
+
+
+async def test_partial_snapshot_rejects_mcp_write_before_agent_read(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A partial Session pin fails before mutable Agent lookup or mutation."""
+    session = await create_test_session(client, name="mcp-partial-snapshot")
+    session_id = session["id"]
+    engine = sa.create_engine(db_uri)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text("UPDATE conversations SET agent_bundle_digest = NULL WHERE id = :id"),
+                {"id": bytes.fromhex(session_id)},
+            )
+    finally:
+        engine.dispose()
+    reads: list[str] = []
+    original_get = SqlAlchemyAgentStore.get
+
+    def _get(store: SqlAlchemyAgentStore, agent_id: str):
+        reads.append(agent_id)
+        return original_get(store, agent_id)
+
+    monkeypatch.setattr(SqlAlchemyAgentStore, "get", _get)
+
+    response = await client.post(
+        f"/v1/sessions/{session_id}/agent/mcp-servers",
+        json={
+            "name": "blocked",
+            "transport": "http",
+            "url": "https://example.com/blocked",
+        },
+    )
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "conflict"
+    assert reads == []
+
+
+async def test_legacy_all_null_session_mcp_mutation_remains_editable(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Legacy Sessions without a snapshot retain mutable MCP compatibility."""
+    session = await create_test_session(client, name="mcp-legacy-edit")
+    _clear_agent_snapshot(db_uri, session["id"])
+
+    response = await client.post(
+        f"/v1/sessions/{session['id']}/agent/mcp-servers",
+        json={
+            "name": "legacy-server",
+            "transport": "http",
+            "url": "https://example.com/legacy",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "legacy-server"
+
+
+async def test_create_mcp_server_updates_agent_bundle(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
     """POST creates an MCP YAML file and the session agent reports it."""
-    session = await create_test_session(client, name="mcp-agent")
+    session = await _create_legacy_session(client, db_uri, name="mcp-agent")
     session_id = session["id"]
 
     resp = await client.post(
@@ -58,6 +262,7 @@ async def test_create_mcp_server_updates_agent_bundle(client: httpx.AsyncClient)
 
 async def test_mcp_server_mutations_reset_bound_runner_agent_cache(
     client: httpx.AsyncClient,
+    db_uri: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """MCP server mutations invalidate stale runner-side agent caches."""
@@ -71,7 +276,7 @@ async def test_mcp_server_mutations_reset_bound_runner_agent_cache(
         calls.append((session_id, agent_id, runner_router))
 
     monkeypatch.setattr(mcp_routes, "_reset_runner_session_agent_cache", _fake_reset)
-    session = await create_test_session(client, name="mcp-reset-agent")
+    session = await _create_legacy_session(client, db_uri, name="mcp-reset-agent")
     session_id = session["id"]
 
     resp = await client.post(
@@ -110,9 +315,10 @@ async def test_mcp_server_mutations_reset_bound_runner_agent_cache(
 
 async def test_update_mcp_server_can_rename_and_change_transport(
     client: httpx.AsyncClient,
+    db_uri: str,
 ) -> None:
     """PUT replaces the existing declaration and validates transport fields."""
-    session = await create_test_session(client, name="mcp-update-agent")
+    session = await _create_legacy_session(client, db_uri, name="mcp-update-agent")
     session_id = session["id"]
     create = await client.post(
         f"/v1/sessions/{session_id}/agent/mcp-servers",
@@ -144,9 +350,12 @@ async def test_update_mcp_server_can_rename_and_change_transport(
     assert [server["name"] for server in agent_resp.json()["mcp_servers"]] == ["local-search"]
 
 
-async def test_delete_mcp_server_removes_it_from_agent(client: httpx.AsyncClient) -> None:
+async def test_delete_mcp_server_removes_it_from_agent(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
     """DELETE removes the MCP declaration from the stored bundle."""
-    session = await create_test_session(client, name="mcp-delete-agent")
+    session = await _create_legacy_session(client, db_uri, name="mcp-delete-agent")
     session_id = session["id"]
     create = await client.post(
         f"/v1/sessions/{session_id}/agent/mcp-servers",
@@ -162,9 +371,12 @@ async def test_delete_mcp_server_removes_it_from_agent(client: httpx.AsyncClient
     assert agent_resp.json()["mcp_servers"] == []
 
 
-async def test_create_mcp_server_rejects_duplicate_name(client: httpx.AsyncClient) -> None:
+async def test_create_mcp_server_rejects_duplicate_name(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
     """Creating the same MCP server twice returns 409."""
-    session = await create_test_session(client, name="mcp-dup-agent")
+    session = await _create_legacy_session(client, db_uri, name="mcp-dup-agent")
     session_id = session["id"]
     payload = {"name": "github", "transport": "http", "url": "https://example.com/sse"}
     first = await client.post(f"/v1/sessions/{session_id}/agent/mcp-servers", json=payload)
@@ -175,7 +387,10 @@ async def test_create_mcp_server_rejects_duplicate_name(client: httpx.AsyncClien
     assert second.status_code == 409, second.text
 
 
-async def test_create_mcp_server_supports_single_yaml_bundle(client: httpx.AsyncClient) -> None:
+async def test_create_mcp_server_supports_single_yaml_bundle(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
     """Single-file omnigent YAML bundles are updated inline."""
     create_session = await client.post(
         "/v1/sessions",
@@ -198,6 +413,7 @@ executor:
     )
     assert create_session.status_code == 201, create_session.text
     session_id = create_session.json()["session_id"]
+    _clear_agent_snapshot(db_uri, session_id)
 
     resp = await client.post(
         f"/v1/sessions/{session_id}/agent/mcp-servers",
@@ -211,9 +427,10 @@ executor:
 
 async def test_update_mcp_server_preserves_headers_on_redacted_roundtrip(
     client: httpx.AsyncClient,
+    db_uri: str,
 ) -> None:
     """Editing a server while sending [REDACTED] header values must not overwrite secrets."""
-    session = await create_test_session(client, name="mcp-headers-agent")
+    session = await _create_legacy_session(client, db_uri, name="mcp-headers-agent")
     session_id = session["id"]
 
     # Create server with a real Authorization header.
@@ -250,9 +467,10 @@ async def test_update_mcp_server_preserves_headers_on_redacted_roundtrip(
 
 async def test_update_mcp_server_clears_headers_when_empty_dict_sent(
     client: httpx.AsyncClient,
+    db_uri: str,
 ) -> None:
     """Sending headers={} on update must remove all headers from the bundle."""
-    session = await create_test_session(client, name="mcp-clear-headers-agent")
+    session = await _create_legacy_session(client, db_uri, name="mcp-clear-headers-agent")
     session_id = session["id"]
 
     create = await client.post(
@@ -291,6 +509,35 @@ async def _agent_bundle(client: httpx.AsyncClient, session_id: str) -> bytes:
     return resp.content
 
 
+async def _create_legacy_session(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    *,
+    name: str,
+) -> dict[str, Any]:
+    """Create a Session and explicitly opt the test into legacy mutability."""
+    session = await create_test_session(client, name=name)
+    _clear_agent_snapshot(db_uri, session["id"])
+    return session
+
+
+def _clear_agent_snapshot(db_uri: str, session_id: str) -> None:
+    """Convert one test Session to the three-NULL legacy representation."""
+    engine = sa.create_engine(db_uri)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "UPDATE conversations SET agent_bundle_version = NULL, "
+                    "agent_bundle_digest = NULL, agent_bundle_location = NULL "
+                    "WHERE id = :id"
+                ),
+                {"id": bytes.fromhex(session_id)},
+            )
+    finally:
+        engine.dispose()
+
+
 def _mcp_file_from_bundle(bundle: bytes, filename: str) -> dict[str, Any]:
     """Read one MCP YAML file from a bundle by basename."""
     with tarfile.open(fileobj=io.BytesIO(bundle), mode="r:gz") as tf:
@@ -302,12 +549,12 @@ def _mcp_file_from_bundle(bundle: bytes, filename: str) -> dict[str, Any]:
     return data
 
 
-def _single_yaml_bundle(yaml_text: str) -> bytes:
+def _single_yaml_bundle(yaml_text: str, *, filename: str = "agent.yaml") -> bytes:
     """Build a tar.gz bundle containing one omnigent YAML file."""
     buf = io.BytesIO()
     data = yaml_text.encode()
     with tarfile.open(fileobj=buf, mode="w:gz") as tf:
-        info = tarfile.TarInfo(name="agent.yaml")
+        info = tarfile.TarInfo(name=filename)
         info.size = len(data)
         tf.addfile(info, io.BytesIO(data))
     return buf.getvalue()

@@ -272,6 +272,7 @@ async def _initialize_codex_goal_runner(
     session_id: str,
     runner_client: httpx.AsyncClient,
     conversation_store: ConversationStore,
+    agent_store: Any,
 ) -> None:
     """
     Run the session-init handshake before retrying a goal RPC.
@@ -295,7 +296,11 @@ async def _initialize_codex_goal_runner(
             code=ErrorCode.NOT_FOUND,
         )
     await _ensure_runner_session_initialized(
-        session_id, refreshed_conv, runner_client, conversation_store
+        session_id,
+        refreshed_conv,
+        runner_client,
+        conversation_store,
+        agent_store=agent_store,
     )
 
 
@@ -370,7 +375,12 @@ async def _launch_runner_for_codex_goal(
     )
     if runner_client is None:
         return None
-    await _initialize_codex_goal_runner(session_id, runner_client, conversation_store)
+    await _initialize_codex_goal_runner(
+        session_id,
+        runner_client,
+        conversation_store,
+        getattr(request.app.state, "agent_store", None),
+    )
     return runner_client
 
 

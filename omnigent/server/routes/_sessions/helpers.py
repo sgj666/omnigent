@@ -102,7 +102,9 @@ from omnigent.server.routes._auth_helpers import (
 )
 from omnigent.server.routes._host_worktree import CreatedWorktree
 from omnigent.server.routes._session_create_validation import (
+    load_session_agent_view,
     validate_existing_host_workspace,
+    validate_session_agent_bundle_snapshot,
 )
 
 # Shared constants, state, and small dataclasses live in the _sessions.common
@@ -1540,7 +1542,9 @@ def _resolve_llm_model(conv: Conversation | None) -> str | None:
 
         if _agent_store is None:
             return None
-        agent = _agent_store.get(conv.agent_id)
+        from omnigent.server.routes._session_create_validation import load_session_agent_view
+
+        agent = load_session_agent_view(conv, _agent_store)
         if agent is None:
             return None
         loaded = agent_cache.load(
@@ -1595,7 +1599,9 @@ def _resolve_harness_impl(conv: Conversation | None) -> str | None:
 
         if _agent_store is None:
             return None
-        agent = _agent_store.get(conv.agent_id)
+        from omnigent.server.routes._session_create_validation import load_session_agent_view
+
+        agent = load_session_agent_view(conv, _agent_store)
         if agent is None:
             return None
         loaded = get_agent_cache().load(
@@ -6093,7 +6099,9 @@ async def _run_compact_locked(
                 "Cannot compact while a turn is running; cancel or wait for it to finish first",
                 code=ErrorCode.CONFLICT,
             )
-        agent = await asyncio.to_thread(agent_store.get, conv.agent_id)
+        from omnigent.server.routes._session_create_validation import load_session_agent_view
+
+        agent = await asyncio.to_thread(load_session_agent_view, conv, agent_store)
         if agent is None or agent.bundle_location is None:
             raise OmnigentError(
                 f"Agent not found: {conv.agent_id!r}",
@@ -6347,7 +6355,9 @@ def _load_agent_spec_for_session_impl(
     # are blocking DB/IO, so each is run under asyncio.to_thread.
     if conv.agent_id is None:
         return None
-    agent = agent_store.get(conv.agent_id)
+    from omnigent.server.routes._session_create_validation import load_session_agent_view
+
+    agent = load_session_agent_view(conv, agent_store)
     if agent is None:
         return None
     agent_cache = cast(AgentCache, get_agent_cache())
@@ -7743,6 +7753,15 @@ def _persist_stored_session_bundle(
             f"session agent write failed integrity checks: {exc.orig}",
             code=ErrorCode.ALREADY_EXISTS,
         ) from exc
+    except ValueError as exc:
+        _delete_stored_session_bundle_after_failure(
+            artifact_store,
+            agent_bundle_location,
+        )
+        raise OmnigentError(
+            f"session agent bundle snapshot conflict: {exc}",
+            code=ErrorCode.CONFLICT,
+        ) from exc
     except SQLAlchemyError:
         _delete_stored_session_bundle_after_failure(
             artifact_store,
@@ -7794,7 +7813,7 @@ async def _authorize_bundled_parent_and_inherit_runner(
     permission_store: PermissionStore | None,
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
-) -> str | None:
+) -> tuple[Conversation, str | None]:
     """
     Authorize a bundled create's parent link and resolve runner affinity.
 
@@ -7814,8 +7833,9 @@ async def _authorize_bundled_parent_and_inherit_runner(
     :param conversation_store: Store for the parent-conversation read.
     :param runner_router: Router for the runner-ownership check;
         ``None`` skips it.
-    :returns: The inherited runner id, or ``None`` when the parent has
-        no runner binding or ownership disallows inheritance.
+    :returns: The authorized parent and inherited runner id. The runner
+        element is ``None`` when the parent has no binding or ownership
+        disallows inheritance.
     :raises OmnigentError: 403/404 when the caller may not access the
         parent session.
     """
@@ -7831,13 +7851,16 @@ async def _authorize_bundled_parent_and_inherit_runner(
         parent_session_id,
     )
     if parent_conv is None:
-        return None
+        raise OmnigentError(
+            "Conversation not found",
+            code=ErrorCode.NOT_FOUND,
+        )
     inherited_runner_id = parent_conv.runner_id
     if inherited_runner_id is not None and user_id is not None and runner_router is not None:
         runner_owner = runner_router.runner_owner(inherited_runner_id)
         if runner_owner is not None and runner_owner != user_id:
-            return None
-    return inherited_runner_id
+            inherited_runner_id = None
+    return parent_conv, inherited_runner_id
 
 
 async def _notify_runner_of_bundled_child(
@@ -8143,6 +8166,7 @@ async def _handle_advise_models_mcp(
             rpc_id, json.dumps({"error": "tasks must be a list", "router_on": False})
         )
 
+    validate_session_agent_bundle_snapshot(conv)
     caps = get_caps()
     routing_client = caps.routing_client
     if routing_client is None:
@@ -8164,7 +8188,7 @@ async def _handle_advise_models_mcp(
     # Resolve the parent agent spec to look up sub-agent harnesses.
     spec: Any | None = None
     if conv.agent_id is not None:
-        agent_obj = await asyncio.to_thread(agent_store.get, conv.agent_id)
+        agent_obj = await asyncio.to_thread(load_session_agent_view, conv, agent_store)
         if agent_obj is not None:
             try:
                 spec = (

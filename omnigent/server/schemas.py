@@ -1609,6 +1609,10 @@ class SessionResponse(BaseModel):
         e.g. ``"research-agent"``. Loaded from the agent row at
         snapshot-build time. ``None`` when the agent row cannot
         be found (deleted or orphaned session).
+    :param agent_bundle_version: Immutable captured Agent Bundle version.
+        ``None`` only for legacy sessions.
+    :param agent_bundle_digest: SHA-256 digest of the captured bundle.
+        The internal artifact location is intentionally not exposed.
     :param status: Session lifecycle status. One of
         ``"idle"`` (no loop running), ``"running"`` (loop
         executing), ``"waiting"`` (loop parked on background
@@ -1834,6 +1838,8 @@ class SessionResponse(BaseModel):
     id: str
     agent_id: str
     agent_name: str | None = None
+    agent_bundle_version: int | None = None
+    agent_bundle_digest: str | None = None
     status: Literal["idle", "running", "waiting", "failed"]
     background_task_count: int | None = None
     created_at: int
@@ -2203,6 +2209,9 @@ class SessionListItem(BaseModel):
     :param agent_name: Human-readable name of the bound agent,
         e.g. ``"research-agent"``. ``None`` when the agent row
         cannot be found.
+    :param agent_bundle_version: Immutable captured Agent Bundle version.
+    :param agent_bundle_digest: SHA-256 digest of the captured bundle.
+        The internal artifact location is intentionally not exposed.
     :param status: Derived session lifecycle status.
     :param created_at: Unix epoch seconds of creation.
     :param updated_at: Unix epoch seconds of last update.
@@ -2299,6 +2308,8 @@ class SessionListItem(BaseModel):
     id: str
     agent_id: str
     agent_name: str | None = None
+    agent_bundle_version: int | None = None
+    agent_bundle_digest: str | None = None
     status: Literal["idle", "running", "waiting", "failed"]
     created_at: int
     updated_at: int

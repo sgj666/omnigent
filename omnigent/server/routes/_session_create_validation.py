@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from typing import Any
 
+from omnigent.entities import Agent, AgentBundleSnapshot, Conversation
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.model_override import validate_model_override
 from omnigent.reasoning_effort import EFFORT_VALUES, validate_effort
@@ -21,6 +23,110 @@ from omnigent.server.routes._auth_helpers import require_access
 from omnigent.stores import AgentStore, ConversationStore, PermissionStore
 
 _logger = logging.getLogger(__name__)
+
+
+def validate_session_agent_bundle_snapshot(
+    session: Conversation,
+) -> AgentBundleSnapshot | None:
+    """Validate *session*'s persisted Bundle snapshot without store reads."""
+    fields = (
+        session.agent_bundle_version,
+        session.agent_bundle_digest,
+        session.agent_bundle_location,
+    )
+    if all(value is None for value in fields):
+        return None
+    if any(value is None for value in fields):
+        raise OmnigentError(
+            "session has a partial agent bundle snapshot",
+            code=ErrorCode.CONFLICT,
+        )
+    try:
+        return AgentBundleSnapshot(
+            agent_id=session.agent_id or "",
+            bundle_version=session.agent_bundle_version,
+            bundle_digest=session.agent_bundle_digest,
+            bundle_location=session.agent_bundle_location,
+        )
+    except ValueError as exc:
+        raise OmnigentError(
+            f"session has an invalid agent bundle snapshot: {exc}",
+            code=ErrorCode.CONFLICT,
+        ) from exc
+
+
+def resolve_session_agent_view(agent: Agent, session: Conversation) -> Agent:
+    """Return the Agent view pinned by *session*, with legacy fallback.
+
+    A complete three-field snapshot replaces the mutable Agent version and
+    Bundle location. A legacy three-NULL snapshot uses the current Agent. Any
+    partial or invalid persisted snapshot fails closed before Bundle loading.
+    """
+    snapshot = validate_session_agent_bundle_snapshot(session)
+    if snapshot is None:
+        return agent
+    return replace(
+        agent,
+        version=snapshot.bundle_version,
+        bundle_location=snapshot.bundle_location,
+    )
+
+
+def load_session_agent_view(
+    session: Conversation,
+    agent_store: AgentStore,
+) -> Agent | None:
+    """Load the bound Agent only after validating the persisted Session pin."""
+    snapshot = validate_session_agent_bundle_snapshot(session)
+    if session.agent_id is None:
+        return None
+    agent = agent_store.get(session.agent_id)
+    if agent is None or snapshot is None:
+        return agent
+    return replace(
+        agent,
+        version=snapshot.bundle_version,
+        bundle_location=snapshot.bundle_location,
+    )
+
+
+def pin_session_agent_bundle(
+    agent: Agent,
+    parent: Conversation | None = None,
+) -> tuple[Agent, AgentBundleSnapshot]:
+    """Capture a root Bundle or bind a child to its parent's snapshot."""
+    try:
+        if parent is None:
+            snapshot = AgentBundleSnapshot.from_agent(agent)
+        else:
+            if (
+                parent.agent_bundle_version is None
+                or parent.agent_bundle_digest is None
+                or parent.agent_bundle_location is None
+            ):
+                raise OmnigentError(
+                    "parent session has no pinned agent bundle snapshot",
+                    code=ErrorCode.CONFLICT,
+                )
+            snapshot = AgentBundleSnapshot(
+                agent_id=agent.id,
+                bundle_version=parent.agent_bundle_version,
+                bundle_digest=parent.agent_bundle_digest,
+                bundle_location=parent.agent_bundle_location,
+            )
+    except ValueError as exc:
+        raise OmnigentError(
+            f"agent has no valid content-addressed bundle snapshot: {exc}",
+            code=ErrorCode.INTERNAL_ERROR,
+        ) from exc
+    return (
+        replace(
+            agent,
+            version=snapshot.bundle_version,
+            bundle_location=snapshot.bundle_location,
+        ),
+        snapshot,
+    )
 
 
 def validate_session_model_metadata(

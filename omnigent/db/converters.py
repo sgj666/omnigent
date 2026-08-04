@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from omnigent.db.db_models import SqlAgent
+from omnigent.db.db_models import SqlAgent, SqlConversation
 from omnigent.db.enum_codecs import AGENT_KIND
 from omnigent.entities import Agent
 
@@ -28,4 +28,15 @@ def sql_agent_to_entity(row: SqlAgent, session_id: str | None = None) -> Agent:
         description=row.description,
         updated_at=row.updated_at,
         session_id=None if row.kind == AGENT_KIND["template"] else session_id,
+    )
+
+
+def sql_conversation_bundle_fields(
+    row: SqlConversation,
+) -> tuple[int | None, str | None, str | None]:
+    """Project a conversation row's nullable pinned Bundle identity."""
+    return (
+        row.agent_bundle_version,
+        row.agent_bundle_digest,
+        row.agent_bundle_location,
     )

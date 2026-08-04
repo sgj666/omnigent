@@ -24,7 +24,7 @@ from sqlalchemy.orm import QueryableAttribute, Session, aliased, load_only
 from sqlalchemy.sql.selectable import Subquery
 
 from omnigent._wrapper_labels import UI_MODE_LABEL_KEY, WRAPPER_LABEL_KEY
-from omnigent.db.converters import sql_agent_to_entity
+from omnigent.db.converters import sql_agent_to_entity, sql_conversation_bundle_fields
 from omnigent.db.db_models import (
     LABEL_VALUE_MAX_LEN,
     SqlAgent,
@@ -66,6 +66,7 @@ from omnigent.db.utils import (
     strip_nul_bytes,
 )
 from omnigent.entities import (
+    AgentBundleSnapshot,
     Conversation,
     ConversationItem,
     NewConversationItem,
@@ -142,6 +143,78 @@ def _decode_session_overrides(raw: str | None) -> dict[str, str | None]:
     return {key: data.get(key) for key in _SESSION_OVERRIDE_KEYS}
 
 
+def _validate_root_agent_bundle_snapshot(
+    *,
+    agent_id: str | None,
+    agent_bundle_version: int | None,
+    agent_bundle_digest: str | None,
+    agent_bundle_location: str | None,
+) -> tuple[int | None, str | None, str | None]:
+    """Enforce complete snapshots for newly-created top-level bindings."""
+    values = (agent_bundle_version, agent_bundle_digest, agent_bundle_location)
+    if agent_id is None:
+        if any(value is not None for value in values):
+            raise ValueError("agent bundle snapshot requires an agent_id")
+        return values
+    if any(value is None for value in values):
+        raise ValueError("Agent-bound root conversation requires a complete agent bundle snapshot")
+    assert isinstance(agent_bundle_version, int)
+    assert isinstance(agent_bundle_digest, str)
+    assert isinstance(agent_bundle_location, str)
+    snapshot = AgentBundleSnapshot(
+        agent_id=agent_id,
+        bundle_version=agent_bundle_version,
+        bundle_digest=agent_bundle_digest,
+        bundle_location=agent_bundle_location,
+    )
+    return snapshot.bundle_version, snapshot.bundle_digest, snapshot.bundle_location
+
+
+def _inherit_parent_agent_bundle_snapshot(
+    parent: SqlConversation,
+    *,
+    agent_bundle_version: int | None = None,
+    agent_bundle_digest: str | None = None,
+    agent_bundle_location: str | None = None,
+) -> tuple[int, str, str]:
+    """Return a parent's complete snapshot, rejecting child Bundle switches."""
+    inherited = sql_conversation_bundle_fields(parent)
+    if any(value is None for value in inherited):
+        raise ValueError("parent conversation has no complete agent bundle snapshot")
+    requested = (agent_bundle_version, agent_bundle_digest, agent_bundle_location)
+    names = ("agent_bundle_version", "agent_bundle_digest", "agent_bundle_location")
+    for name, supplied, expected in zip(names, requested, inherited, strict=True):
+        if supplied is not None and supplied != expected:
+            raise ValueError(f"child {name} must match the parent snapshot")
+    version, digest, location = inherited
+    assert isinstance(version, int) and isinstance(digest, str) and isinstance(location, str)
+    return version, digest, location
+
+
+def _validate_fork_source_agent_bundle_snapshot(
+    source: SqlConversation,
+) -> tuple[int, str, str] | None:
+    """Validate a fork source snapshot, returning ``None`` for legacy rows."""
+    values = sql_conversation_bundle_fields(source)
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise ValueError("source agent bundle snapshot is partial")
+    version, digest, location = values
+    assert source.agent_id is not None
+    assert isinstance(version, int) and isinstance(digest, str) and isinstance(location, str)
+    try:
+        snapshot = AgentBundleSnapshot(
+            agent_id=source.agent_id,
+            bundle_version=version,
+            bundle_digest=digest,
+            bundle_location=location,
+        )
+    except ValueError as exc:
+        raise ValueError(f"source agent bundle snapshot is invalid: {exc}") from exc
+    return snapshot.bundle_version, snapshot.bundle_digest, snapshot.bundle_location
+
+
 def _to_conversation(
     row: SqlConversation,
     meta: SqlConversationMetadata | None = None,
@@ -175,6 +248,7 @@ def _to_conversation(
     if meta and meta.session_usage:
         session_usage = json.loads(meta.session_usage)
     overrides = _decode_session_overrides(row.session_overrides)
+    bundle_version, bundle_digest, bundle_location = sql_conversation_bundle_fields(row)
     return Conversation(
         id=row.id,
         created_at=row.created_at,
@@ -188,6 +262,9 @@ def _to_conversation(
         parent_conversation_id=row.parent_conversation_id,
         root_conversation_id=row.root_conversation_id,
         agent_id=row.agent_id,
+        agent_bundle_version=bundle_version,
+        agent_bundle_digest=bundle_digest,
+        agent_bundle_location=bundle_location,
         runner_id=meta.runner_id if meta else None,
         host_id=meta.host_id if meta else None,
         labels=labels if labels is not None else {},
@@ -228,6 +305,9 @@ def _new_session_conversation_row(
     parent_conversation_id: str | None = None,
     root_conversation_id: str | None = None,
     agent_id: str | None = None,
+    agent_bundle_version: int | None = None,
+    agent_bundle_digest: str | None = None,
+    agent_bundle_location: str | None = None,
     session_overrides: str | None = None,
 ) -> SqlConversation:
     """
@@ -248,6 +328,9 @@ def _new_session_conversation_row(
         when ``parent_conversation_id`` is set; ``None`` for
         top-level rows where the root mirrors the primary key.
     :param agent_id: Optional agent binding. ``None`` leaves it NULL.
+    :param agent_bundle_version: Immutable captured Bundle version.
+    :param agent_bundle_digest: Immutable captured Bundle digest.
+    :param agent_bundle_location: Immutable captured Bundle artifact key.
     :param session_overrides: Optional pre-encoded per-session override
         JSON blob (see :func:`_encode_session_overrides`). ``None`` leaves
         it NULL.
@@ -268,6 +351,9 @@ def _new_session_conversation_row(
         # root. Child rows inherit their parent's root.
         root_conversation_id=root_conversation_id or conversation_id,
         agent_id=agent_id,
+        agent_bundle_version=agent_bundle_version,
+        agent_bundle_digest=agent_bundle_digest,
+        agent_bundle_location=agent_bundle_location,
         session_overrides=session_overrides,
     )
 
@@ -835,6 +921,9 @@ class SqlAlchemyConversationStore(ConversationStore):
         git_branch: str | None = None,
         terminal_launch_args: list[str] | None = None,
         conversation_id: str | None = None,
+        agent_bundle_version: int | None = None,
+        agent_bundle_digest: str | None = None,
+        agent_bundle_location: str | None = None,
     ) -> Conversation:
         """
         Create a new conversation in the database.
@@ -883,6 +972,10 @@ class SqlAlchemyConversationStore(ConversationStore):
             terminal.
         :param conversation_id: Optional caller-supplied identifier.
             ``None`` generates a new random id.
+        :param agent_bundle_version: Captured Agent Bundle version for a
+            top-level binding. Children inherit the parent's value.
+        :param agent_bundle_digest: Captured Agent Bundle SHA-256 digest.
+        :param agent_bundle_location: Internal captured bundle artifact key.
         :returns: The newly created :class:`Conversation`.
         :raises NameAlreadyExistsError: If
             ``parent_conversation_id`` is set and a sibling row
@@ -914,6 +1007,27 @@ class SqlAlchemyConversationStore(ConversationStore):
                             f"parent conversation {parent_conversation_id!r} does not exist"
                         )
                     root_id = parent_row.root_conversation_id
+                    (
+                        agent_bundle_version,
+                        agent_bundle_digest,
+                        agent_bundle_location,
+                    ) = _inherit_parent_agent_bundle_snapshot(
+                        parent_row,
+                        agent_bundle_version=agent_bundle_version,
+                        agent_bundle_digest=agent_bundle_digest,
+                        agent_bundle_location=agent_bundle_location,
+                    )
+            else:
+                (
+                    agent_bundle_version,
+                    agent_bundle_digest,
+                    agent_bundle_location,
+                ) = _validate_root_agent_bundle_snapshot(
+                    agent_id=agent_id,
+                    agent_bundle_version=agent_bundle_version,
+                    agent_bundle_digest=agent_bundle_digest,
+                    agent_bundle_location=agent_bundle_location,
+                )
             if parent_conversation_id is not None and not title:
                 title = f"untitled:{new_id}"
             with self._conv_session() as ap_sess:
@@ -949,6 +1063,9 @@ class SqlAlchemyConversationStore(ConversationStore):
                     parent_conversation_id=parent_conversation_id,
                     root_conversation_id=root_id,
                     agent_id=agent_id,
+                    agent_bundle_version=agent_bundle_version,
+                    agent_bundle_digest=agent_bundle_digest,
+                    agent_bundle_location=agent_bundle_location,
                 )
                 ap_sess.add(row)
             meta = SqlConversationMetadata(
@@ -3237,9 +3354,25 @@ class SqlAlchemyConversationStore(ConversationStore):
 
         now = now_epoch()
 
+        agent_row = _new_session_agent_row(
+            agent_id=agent_id,
+            agent_name=agent_name,
+            agent_bundle_location=agent_bundle_location,
+            agent_description=agent_description,
+            now=now,
+        )
+        new_agent_snapshot = AgentBundleSnapshot.from_agent(
+            sql_agent_to_entity(agent_row, session_id=conversation_id)
+        )
+
         # Conversation + labels go to AP; agent + metadata go to Omnigent.
         # Get parent root_id from AP first.
         root_conversation_id: str | None = None
+        bundle_fields = (
+            new_agent_snapshot.bundle_version,
+            new_agent_snapshot.bundle_digest,
+            new_agent_snapshot.bundle_location,
+        )
         if parent_conversation_id is not None:
             with self._conv_session() as ap_sess:
                 parent_row = ap_sess.get(
@@ -3250,6 +3383,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                         f"parent conversation {parent_conversation_id!r} does not exist"
                     )
                 root_conversation_id = parent_row.root_conversation_id
+                bundle_fields = _inherit_parent_agent_bundle_snapshot(parent_row)
 
         conversation_row = _new_session_conversation_row(
             conversation_id,
@@ -3258,6 +3392,9 @@ class SqlAlchemyConversationStore(ConversationStore):
             parent_conversation_id=parent_conversation_id,
             root_conversation_id=root_conversation_id,
             agent_id=agent_id,
+            agent_bundle_version=bundle_fields[0],
+            agent_bundle_digest=bundle_fields[1],
+            agent_bundle_location=bundle_fields[2],
             session_overrides=_encode_session_overrides({"reasoning_effort": reasoning_effort}),
         )
         with self._conv_session() as ap_sess:
@@ -3265,13 +3402,6 @@ class SqlAlchemyConversationStore(ConversationStore):
             if labels:
                 _upsert_labels(ap_sess, conversation_id, labels, now)
 
-        agent_row = _new_session_agent_row(
-            agent_id=agent_id,
-            agent_name=agent_name,
-            agent_bundle_location=agent_bundle_location,
-            agent_description=agent_description,
-            now=now,
-        )
         meta_row = _new_session_metadata_row(
             conversation_id,
             parent_conversation_id=parent_conversation_id,
@@ -3295,6 +3425,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         cloned_agent_name: str | None = None,
         cloned_agent_bundle_location: str | None = None,
         cloned_agent_description: str | None = None,
+        bundle_source_agent_id: str | None = None,
         copy_model_settings: bool = True,
         copy_terminal_launch_args: bool = True,
         carry_history_into_native: bool = False,
@@ -3334,7 +3465,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             the fork inherits the source's ``agent_id``. With
             ``cloned_agent_bundle_location`` set, a fresh agent row is
             created with this id; otherwise it must name an existing
-            agent, whose ``session_id`` is repointed at the fork.
+            template Agent in the current workspace.
         :param cloned_agent_name: Name for the cloned agent row.
             Required when ``cloned_agent_bundle_location`` is set.
         :param cloned_agent_bundle_location: When set, clone this
@@ -3346,6 +3477,11 @@ class SqlAlchemyConversationStore(ConversationStore):
         :param cloned_agent_description: Optional description for the
             cloned agent row. Ignored unless
             ``cloned_agent_bundle_location`` is set.
+        :param bundle_source_agent_id: Existing target Agent whose current
+            Bundle snapshot is captured for an Agent-switching fork.
+            Must identify a template Agent; session-scoped Agents cannot be
+            reused as Bundle sources. ``None`` copies the source Conversation's
+            snapshot exactly when cloning its Agent.
         :param copy_model_settings: When ``True`` (default), copy the
             source's ``model_override`` and ``reasoning_effort``. When
             ``False``, both are left ``None`` so the fork falls back to
@@ -3396,6 +3532,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             cloned_agent_name=cloned_agent_name,
             cloned_agent_bundle_location=cloned_agent_bundle_location,
             cloned_agent_description=cloned_agent_description,
+            bundle_source_agent_id=bundle_source_agent_id,
             copy_model_settings=copy_model_settings,
             copy_terminal_launch_args=copy_terminal_launch_args,
             carry_history_into_native=carry_history_into_native,
@@ -3414,6 +3551,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         cloned_agent_name: str | None = None,
         cloned_agent_bundle_location: str | None = None,
         cloned_agent_description: str | None = None,
+        bundle_source_agent_id: str | None = None,
         copy_model_settings: bool = True,
         copy_terminal_launch_args: bool = True,
         carry_history_into_native: bool = False,
@@ -3430,10 +3568,45 @@ class SqlAlchemyConversationStore(ConversationStore):
 
         # Fetch source metadata (workspace, external_session_id, terminal_launch_args)
         # from the Omnigent DB before opening the AP session.
+        target_snapshot: AgentBundleSnapshot | None = None
         with self._session() as meta_sess:
             source_meta_ref: SqlConversationMetadata | None = meta_sess.get(
                 SqlConversationMetadata, (current_workspace_id(), source_conversation_id)
             )
+            if bundle_source_agent_id is not None:
+                target_agent_row = meta_sess.get(
+                    SqlAgent,
+                    (current_workspace_id(), bundle_source_agent_id),
+                )
+                if target_agent_row is None:
+                    raise LookupError(f"agent not found: {bundle_source_agent_id!r}")
+                if target_agent_row.kind != encode_agent_kind("template"):
+                    raise ValueError(
+                        f"bundle source Agent must be a template Agent: {bundle_source_agent_id!r}"
+                    )
+                target_snapshot = AgentBundleSnapshot.from_agent(
+                    sql_agent_to_entity(target_agent_row)
+                )
+                if cloned_agent_bundle_location != target_snapshot.bundle_location:
+                    raise ValueError(
+                        "cloned Agent bundle location does not match target Agent snapshot"
+                    )
+            elif agent_id is not None:
+                if cloned_agent_bundle_location is not None:
+                    if cloned_agent_name is None:
+                        raise ValueError("cloned_agent_name is required when cloning an agent")
+                else:
+                    target_agent_row = meta_sess.get(
+                        SqlAgent,
+                        (current_workspace_id(), agent_id),
+                    )
+                    if target_agent_row is None:
+                        raise LookupError(f"agent not found: {agent_id!r}")
+                    if target_agent_row.kind != encode_agent_kind("template"):
+                        raise ValueError(f"target Agent must be a template Agent: {agent_id!r}")
+                    target_snapshot = AgentBundleSnapshot.from_agent(
+                        sql_agent_to_entity(target_agent_row)
+                    )
 
         with self._conv_session() as session:
             source = session.get(SqlConversation, (current_workspace_id(), source_conversation_id))
@@ -3451,6 +3624,49 @@ class SqlAlchemyConversationStore(ConversationStore):
                 )
             )
             creating_clone = cloned_agent_bundle_location is not None
+            target_agent_id = agent_id if agent_id is not None else source.agent_id
+            if target_agent_id is None:
+                fork_bundle_fields: tuple[int | None, str | None, str | None] = (
+                    None,
+                    None,
+                    None,
+                )
+            elif (
+                agent_id is None
+                or agent_id == source.agent_id
+                or (cloned_agent_bundle_location is not None and bundle_source_agent_id is None)
+            ):
+                validated_source_snapshot = _validate_fork_source_agent_bundle_snapshot(source)
+                if validated_source_snapshot is None:
+                    assert source.agent_id is not None
+                    with self._session() as meta_sess:
+                        source_agent_row = meta_sess.get(
+                            SqlAgent,
+                            (current_workspace_id(), source.agent_id),
+                        )
+                        if source_agent_row is None:
+                            raise LookupError(f"agent not found: {source.agent_id!r}")
+                        source_agent_snapshot = AgentBundleSnapshot.from_agent(
+                            sql_agent_to_entity(
+                                source_agent_row,
+                                session_id=source_conversation_id,
+                            )
+                        )
+                    fork_bundle_fields = (
+                        source_agent_snapshot.bundle_version,
+                        source_agent_snapshot.bundle_digest,
+                        source_agent_snapshot.bundle_location,
+                    )
+                else:
+                    fork_bundle_fields = validated_source_snapshot
+            else:
+                if target_snapshot is None:
+                    raise ValueError("target Agent has no complete agent bundle snapshot")
+                fork_bundle_fields = (
+                    target_snapshot.bundle_version,
+                    target_snapshot.bundle_digest,
+                    target_snapshot.bundle_location,
+                )
             # Model-family-bound overrides (reasoning_effort, model_override, and
             # — same gate — harness_override) copy only when copy_model_settings.
             # cost_control_mode_override is intentionally never carried onto a fork.
@@ -3478,7 +3694,10 @@ class SqlAlchemyConversationStore(ConversationStore):
                 root_conversation_id=new_conv_id,
                 # An explicit agent_id (clone or existing) beats inheriting the
                 # source's binding.
-                agent_id=(agent_id if agent_id is not None else source.agent_id),
+                agent_id=target_agent_id,
+                agent_bundle_version=fork_bundle_fields[0],
+                agent_bundle_digest=fork_bundle_fields[1],
+                agent_bundle_location=fork_bundle_fields[2],
                 session_overrides=fork_overrides,
             )
             session.add(new_conv)
@@ -3697,6 +3916,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             ``None``.
         :returns: The updated :class:`Conversation`.
         :raises LookupError: If *conversation_id* does not exist.
+        :raises ValueError: If the Session has an immutable Agent Bundle
+            snapshot (including a partial/corrupt snapshot).
         """
         now = now_epoch()
         drop_keys = (
@@ -3723,6 +3944,18 @@ class SqlAlchemyConversationStore(ConversationStore):
             row = ap_sess.get(SqlConversation, (current_workspace_id(), conversation_id))
             if row is None:
                 raise LookupError(f"conversation not found: {conversation_id!r}")
+            if any(
+                value is not None
+                for value in (
+                    row.agent_bundle_version,
+                    row.agent_bundle_digest,
+                    row.agent_bundle_location,
+                )
+            ):
+                raise ValueError(
+                    "This Session's Agent Bundle is immutable. Fork the Session or "
+                    "create a new Session to use another Agent."
+                )
             old_agent_id = row.agent_id
             row.agent_id = new_agent_id
             overrides = _decode_session_overrides(row.session_overrides)

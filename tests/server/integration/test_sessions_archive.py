@@ -14,17 +14,24 @@ from __future__ import annotations
 
 import gzip
 import io
+import json
 import tarfile
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+import sqlalchemy as sa
 
+from omnigent.db.utils import generate_agent_id
+from omnigent.server.bundles import bundle_location
 from omnigent.server.routes import sessions as sessions_module
+from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store.sqlalchemy_store import (
     SqlAlchemyConversationStore,
 )
-from tests.server.helpers import create_test_session
+from tests.server.helpers import build_agent_bundle, create_test_session
 
 pytestmark = pytest.mark.asyncio
 
@@ -298,3 +305,136 @@ async def test_agent_contents_404_for_nonexistent_session(
     """GET /v1/sessions/{id}/agent/contents returns 404 for a missing session."""
     resp = await client.get("/v1/sessions/conv_nonexistent/agent/contents")
     assert resp.status_code == 404
+
+
+async def test_agent_contents_rejects_partial_snapshot_before_store_reads(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A corrupt pin fails closed before mutable Agent or artifact lookup."""
+    session = await create_test_session(client, name="contents-partial-snapshot")
+    session_id = session["id"]
+    engine = sa.create_engine(db_uri)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text("UPDATE conversations SET agent_bundle_digest = NULL WHERE id = :id"),
+                {"id": bytes.fromhex(session_id)},
+            )
+    finally:
+        engine.dispose()
+
+    agent_reads: list[str] = []
+    artifact_reads: list[str] = []
+    original_agent_get = SqlAlchemyAgentStore.get
+    original_artifact_get = LocalArtifactStore.get
+
+    def _agent_get(store: SqlAlchemyAgentStore, agent_id: str):
+        agent_reads.append(agent_id)
+        return original_agent_get(store, agent_id)
+
+    def _artifact_get(store: LocalArtifactStore, key: str) -> bytes:
+        artifact_reads.append(key)
+        return original_artifact_get(store, key)
+
+    monkeypatch.setattr(SqlAlchemyAgentStore, "get", _agent_get)
+    monkeypatch.setattr(LocalArtifactStore, "get", _artifact_get)
+
+    response = await client.get(f"/v1/sessions/{session_id}/agent/contents")
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "conflict"
+    assert agent_reads == []
+    assert artifact_reads == []
+
+
+async def test_agent_contents_rejects_tampered_pinned_bundle(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    tmp_path: Path,
+) -> None:
+    """Bytes at a pinned content-addressed key must match its SHA-256 digest."""
+    session = await create_test_session(client, name="contents-tampered-bundle")
+    session_id = session["id"]
+    conversation = SqlAlchemyConversationStore(db_uri).get_conversation(session_id)
+    assert conversation is not None
+    assert conversation.agent_bundle_location is not None
+    LocalArtifactStore(str(tmp_path / "artifacts")).put(
+        conversation.agent_bundle_location,
+        b"tampered bundle bytes",
+    )
+
+    response = await client.get(f"/v1/sessions/{session_id}/agent/contents")
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "conflict"
+
+
+async def test_pinned_session_agent_routes_keep_original_bundle_after_agent_update(
+    client: httpx.AsyncClient,
+    db_uri: str,
+    tmp_path: Path,
+) -> None:
+    """Contents, metadata, and PUT honor the Conversation's immutable pin."""
+    agent_id = generate_agent_id()
+    bundle_a = build_agent_bundle(name="pinned-template")
+    bundle_b = build_agent_bundle(
+        name="pinned-template",
+        executor={"type": "omnigent", "config": {"harness": "codex-native"}},
+    )
+    location_a = bundle_location(agent_id, bundle_a)
+    location_b = bundle_location(agent_id, bundle_b)
+    artifact_store = LocalArtifactStore(str(tmp_path / "artifacts"))
+    artifact_store.put(location_a, bundle_a)
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    agent_store.create(agent_id, name="pinned-template", bundle_location=location_a)
+
+    created = await client.post("/v1/sessions", json={"agent_id": agent_id})
+    assert created.status_code == 201, created.text
+    session_id = created.json()["id"]
+    artifact_store.put(location_b, bundle_b)
+    updated = agent_store.update(agent_id, location_b)
+    assert updated is not None and updated.version == 2
+
+    contents = await client.get(f"/v1/sessions/{session_id}/agent/contents")
+    assert contents.status_code == 200, contents.text
+    assert contents.content == bundle_a
+    assert contents.headers["X-Agent-Version"] == "1"
+    metadata = await client.get(f"/v1/sessions/{session_id}/agent")
+    assert metadata.status_code == 200, metadata.text
+    assert metadata.json()["version"] == 1
+    assert metadata.json()["harness"] == "claude-sdk"
+
+    rejected = await client.put(
+        f"/v1/sessions/{session_id}/agent",
+        files={"bundle": ("agent.tar.gz", bundle_b, "application/gzip")},
+    )
+    assert rejected.status_code == 409, rejected.text
+    assert agent_store.get(agent_id) == updated
+
+
+async def test_multipart_child_agent_contents_use_parent_pinned_bundle(
+    client: httpx.AsyncClient,
+) -> None:
+    """A multipart child serves its Parent snapshot, not its own mutable Agent row."""
+    bundle_a = build_agent_bundle(name="pinned-parent")
+    parent = await client.post(
+        "/v1/sessions",
+        data={"metadata": "{}"},
+        files={"bundle": ("parent.tar.gz", bundle_a, "application/gzip")},
+    )
+    assert parent.status_code == 201, parent.text
+    parent_id = parent.json()["session_id"]
+    bundle_b = build_agent_bundle(name="multipart-child")
+    child = await client.post(
+        "/v1/sessions",
+        data={"metadata": json.dumps({"parent_session_id": parent_id})},
+        files={"bundle": ("child.tar.gz", bundle_b, "application/gzip")},
+    )
+    assert child.status_code == 201, child.text
+
+    contents = await client.get(f"/v1/sessions/{child.json()['session_id']}/agent/contents")
+    assert contents.status_code == 200, contents.text
+    assert contents.content == bundle_a
+    assert contents.headers["X-Agent-Version"] == "1"

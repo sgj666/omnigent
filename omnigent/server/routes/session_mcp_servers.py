@@ -25,6 +25,10 @@ from omnigent.server.auth import LEVEL_EDIT, LEVEL_READ, AuthProvider, local_sin
 from omnigent.server.bundles import bundle_location, validate_agent_bundle
 from omnigent.server.routes._auth_helpers import get_user_id, require_access
 from omnigent.server.routes._errors import session_not_found
+from omnigent.server.routes._session_create_validation import (
+    load_session_agent_view,
+    validate_session_agent_bundle_snapshot,
+)
 from omnigent.server.schemas import (
     MCPServerSummary,
     SessionAgentChangedEvent,
@@ -68,6 +72,8 @@ def create_session_mcp_servers_router(
         request: Request,
         session_id: str,
         required_level: int,
+        *,
+        allow_pinned: bool = True,
     ) -> Agent:
         """Authorize the caller and return the session's bound agent."""
         user_id = get_user_id(request, auth_provider)
@@ -83,7 +89,13 @@ def create_session_mcp_servers_router(
             raise session_not_found()
         if conv.agent_id is None:
             raise OmnigentError("Session has no agent binding", code=ErrorCode.INVALID_INPUT)
-        agent = await asyncio.to_thread(agent_store.get, conv.agent_id)
+        snapshot = validate_session_agent_bundle_snapshot(conv)
+        if snapshot is not None and not allow_pinned:
+            raise OmnigentError(
+                "Pinned Session agents are immutable; fork the Session to change its Agent.",
+                code=ErrorCode.CONFLICT,
+            )
+        agent = await asyncio.to_thread(load_session_agent_view, conv, agent_store)
         if agent is None:
             raise OmnigentError("Agent not found", code=ErrorCode.NOT_FOUND)
         return agent
@@ -170,7 +182,12 @@ def create_session_mcp_servers_router(
 
     async def _editable_agent(request: Request, session_id: str) -> Agent:
         """Return an editable session-scoped agent."""
-        agent = await _bound_agent(request, session_id, LEVEL_EDIT)
+        agent = await _bound_agent(
+            request,
+            session_id,
+            LEVEL_EDIT,
+            allow_pinned=False,
+        )
         if agent.session_id is None:
             raise OmnigentError(
                 "Built-in agents are read-only through this endpoint.",

@@ -53,7 +53,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from omnigent.db.db_models import workspace_scope
-from omnigent.entities import Conversation, ScheduledTask
+from omnigent.entities import Agent, AgentBundleSnapshot, Conversation, ScheduledTask
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import LEVEL_OWNER, RESERVED_USER_LOCAL
 from omnigent.server.routes._session_create_validation import (
@@ -103,6 +103,12 @@ class _CannotLaunchScheduledFire(RuntimeError):
     def __init__(self, message: str, *, error_code: str) -> None:
         super().__init__(message)
         self.error_code = error_code
+
+
+@dataclass(frozen=True)
+class _ValidatedFireSessionInputs:
+    agent: Agent
+    snapshot: AgentBundleSnapshot
 
 
 @dataclass
@@ -393,7 +399,7 @@ async def _run_fire_for_task(
         # does — an agent that pins an absolute cwd outside HOME records a failed
         # run instead of silently launching outside its declared boundary.
         validate_workspace = preflight is not None and effective.workspace is not None
-        validation_error = await _validate_fire_session_inputs(
+        validated, validation_error = await _validate_fire_session_inputs(
             deps, effective, validate_workspace=validate_workspace
         )
         if validation_error is not None:
@@ -409,9 +415,10 @@ async def _run_fire_for_task(
                 error_code=error_code,
             )
             return
+        assert validated is not None
 
         try:
-            conv = await _create_session(deps, effective)
+            conv = await _create_session(deps, effective, validated.snapshot)
         except Exception:
             _logger.exception("scheduled fire: failed to create session for task %s", task.id)
             await _record_run(
@@ -583,7 +590,11 @@ async def _resolve_default_workspace(deps: FireDeps, host_id: str) -> str:
     return canonical
 
 
-async def _create_session(deps: FireDeps, task: ScheduledTask) -> Conversation:
+async def _create_session(
+    deps: FireDeps,
+    task: ScheduledTask,
+    snapshot: AgentBundleSnapshot,
+) -> Conversation:
     """Create a conversation bound to the task's agent, carrying the stored spec."""
     # Connected-host, existing-workspace runs create the conversation directly.
     # Future execution modes such as managed sandbox, branch selection, and
@@ -591,6 +602,9 @@ async def _create_session(deps: FireDeps, task: ScheduledTask) -> Conversation:
     conv: Conversation = await asyncio.to_thread(
         deps.conversation_store.create_conversation,
         agent_id=task.agent_id,
+        agent_bundle_version=snapshot.bundle_version,
+        agent_bundle_digest=snapshot.bundle_digest,
+        agent_bundle_location=snapshot.bundle_location,
         title=task.name,
         host_id=task.host_id,
         workspace=task.workspace,
@@ -605,6 +619,17 @@ async def _create_session(deps: FireDeps, task: ScheduledTask) -> Conversation:
         if updated is not None:
             conv = updated
     return conv
+
+
+def _scheduled_agent_bundle_snapshot(agent: Agent) -> AgentBundleSnapshot:
+    """Validate and capture the Agent identity used by a scheduled Root."""
+    try:
+        return AgentBundleSnapshot.from_agent(agent)
+    except ValueError as exc:
+        raise OmnigentError(
+            f"Scheduled task Agent has no valid content-addressed bundle snapshot: {exc}",
+            code=ErrorCode.INTERNAL_ERROR,
+        ) from exc
 
 
 async def _grant_owner(deps: FireDeps, task: ScheduledTask, conversation_id: str) -> None:
@@ -678,7 +703,7 @@ async def _validate_fire_session_inputs(
     task: ScheduledTask,
     *,
     validate_workspace: bool,
-) -> tuple[str, str] | None:
+) -> tuple[_ValidatedFireSessionInputs | None, tuple[str, str] | None]:
     """Validate stored task fields before creating a conversation."""
     try:
         owner = task.user_id
@@ -689,13 +714,14 @@ async def _validate_fire_session_inputs(
             permission_store=deps.permission_store,
             conversation_store=deps.conversation_store,
         )
+        snapshot = _scheduled_agent_bundle_snapshot(agent)
         validate_session_model_metadata(
             model_override=task.model_override,
             reasoning_effort=task.reasoning_effort,
         )
         if validate_workspace:
             if task.host_id is None or task.workspace is None:
-                return (
+                return None, (
                     "scheduled tasks connected-host execution requires host_id and workspace",
                     "missing_execution_input",
                 )
@@ -709,11 +735,11 @@ async def _validate_fire_session_inputs(
                 host_registry=deps.host_registry,
             )
     except OmnigentError as exc:
-        return exc.message, exc.code
+        return None, (exc.message, exc.code)
     except Exception:
         _logger.exception("scheduled fire: unexpected validation failure for task %s", task.id)
-        return "scheduled task validation failed", ErrorCode.INTERNAL_ERROR
-    return None
+        return None, ("scheduled task validation failed", ErrorCode.INTERNAL_ERROR)
+    return _ValidatedFireSessionInputs(agent=agent, snapshot=snapshot), None
 
 
 def _validate_connected_host_inputs(task: ScheduledTask) -> tuple[str, str] | None:
@@ -845,7 +871,11 @@ def _make_connected_host_dispatch(deps: FireDeps) -> LaunchDispatch:
         conv_for_dispatch = fresh or conv
 
         await _ensure_runner_session_initialized(
-            conv.id, conv_for_dispatch, runner_client, deps.conversation_store
+            conv.id,
+            conv_for_dispatch,
+            runner_client,
+            deps.conversation_store,
+            agent_store=deps.agent_store,
         )
         await _dispatch_session_event_to_runner(
             conv.id,

@@ -9,7 +9,8 @@ import httpx
 import pytest
 
 from omnigent.db.utils import generate_agent_id
-from omnigent.entities import Conversation
+from omnigent.entities import Agent, Conversation
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.runner.session_init_protocol import (
     build_runner_session_init_payload,
     parse_runner_session_init_envelope,
@@ -47,6 +48,7 @@ class _Client:
 
 
 def _conversation() -> Conversation:
+    digest = "a" * 64
     return Conversation(
         id="conv_init",
         created_at=10,
@@ -56,6 +58,9 @@ def _conversation() -> Conversation:
         runner_id="runner_init",
         workspace="/tmp/workspace",
         labels={"example": "value"},
+        agent_bundle_version=7,
+        agent_bundle_digest=digest,
+        agent_bundle_location=f"agent_init/{digest}",
     )
 
 
@@ -79,6 +84,9 @@ async def test_initializer_shares_result_for_one_tunnel_generation() -> None:
     assert first_response is second_response
     assert len(client.calls) == 1
     assert client.calls[0]["session_init"]["snapshot"]["workspace"] == "/tmp/workspace"
+    assert client.calls[0]["session_init"]["bundle_version"] == 7
+    assert client.calls[0]["session_init"]["bundle_digest"] == "a" * 64
+    assert client.calls[0]["session_init"]["bundle_location"] == f"agent_init/{'a' * 64}"
 
     cached = await initializer.initialize(conversation, client, timeout=10)  # type: ignore[arg-type]
     assert cached is first_response
@@ -106,6 +114,80 @@ async def test_initializer_evicts_rejected_result_for_retry() -> None:
 
     assert first.status_code == second.status_code == 503
     assert len(client.calls) == 2
+
+
+def test_legacy_session_init_uses_current_agent_snapshot_without_persisting() -> None:
+    legacy = Conversation(
+        id="conv_legacy",
+        created_at=10,
+        updated_at=11,
+        root_conversation_id="conv_legacy",
+        agent_id="agent_legacy",
+    )
+    digest = "b" * 64
+    current_agent = Agent(
+        id="agent_legacy",
+        created_at=1,
+        name="legacy-agent",
+        version=5,
+        bundle_location=f"agent_legacy/{digest}",
+    )
+
+    payload = build_runner_session_init_payload(
+        legacy,
+        server_version="0.6.0.dev0",
+        agent=current_agent,
+    )
+
+    envelope = payload["session_init"]
+    assert isinstance(envelope, dict)
+    assert envelope["bundle_version"] == 5
+    assert envelope["bundle_digest"] == digest
+    assert envelope["bundle_location"] == f"agent_legacy/{digest}"
+    assert legacy.agent_bundle_version is None
+    assert legacy.agent_bundle_digest is None
+    assert legacy.agent_bundle_location is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("snapshot_state", ["partial", "invalid"])
+async def test_session_init_rejects_corrupt_snapshot_before_agent_or_initializer(
+    snapshot_state: str,
+) -> None:
+    from omnigent.server.routes import sessions as sessions_routes
+
+    digest = "c" * 64
+    conv = _conversation()
+    if snapshot_state == "partial":
+        conv.agent_bundle_digest = None
+        conv.agent_bundle_location = None
+    else:
+        conv.agent_bundle_digest = digest
+        conv.agent_bundle_location = f"agent_init/{'d' * 64}"
+    events: list[str] = []
+
+    class _AgentStore:
+        @staticmethod
+        def get(agent_id: str) -> None:
+            events.append(f"agent_store.get:{agent_id}")
+
+    class _Initializer:
+        async def initialize(self, *_args: Any, **_kwargs: Any) -> httpx.Response:
+            events.append("initializer.initialize")
+            return httpx.Response(201)
+
+    with pytest.raises(OmnigentError) as exc_info:
+        await sessions_routes._ensure_runner_session_initialized(
+            conv.id,
+            conv,
+            object(),  # type: ignore[arg-type]
+            object(),  # type: ignore[arg-type]
+            initializer=_Initializer(),  # type: ignore[arg-type]
+            agent_store=_AgentStore(),  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.code == ErrorCode.CONFLICT
+    assert events == []
 
 
 @pytest.mark.asyncio
@@ -175,8 +257,19 @@ def test_reconnect_init_envelope_carries_fork_history_directives(db_uri: str) ->
     # A claude-native SOURCE with a captured native session id and a bound
     # workspace -- the two preconditions fork_conversation needs to stamp the
     # source-transcript directive.
-    agent = agent_store.create(generate_agent_id(), "claude-native-ui", "bundle/loc")
-    source = conversation_store.create_conversation(agent_id=agent.id, workspace="/tmp/ws")
+    digest = "c" * 64
+    agent = agent_store.create(
+        generate_agent_id(),
+        "claude-native-ui",
+        f"bundle/{digest}",
+    )
+    source = conversation_store.create_conversation(
+        agent_id=agent.id,
+        workspace="/tmp/ws",
+        agent_bundle_version=agent.version,
+        agent_bundle_digest=digest,
+        agent_bundle_location=agent.bundle_location,
+    )
     conversation_store.set_external_session_id(source.id, "src-claude-sid")
 
     # Fork it the way the route does for a same-family native target: carry
