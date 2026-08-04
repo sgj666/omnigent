@@ -35,6 +35,7 @@ from omnigent.harness_plugins import (
 )
 from omnigent.resources import examples as _examples_resources
 from omnigent.runs.service import RunService
+from omnigent.runs.session_gateway import ASGISessionGateway
 from omnigent.runs.session_projection import SessionRunProjection
 from omnigent.runtime import (
     get_terminal_registry,
@@ -2037,7 +2038,12 @@ def create_app(
         tags=["harnesses"],
     )
     app.include_router(
-        create_runs_router(run_store, run_service, auth_provider=auth_provider),
+        create_runs_router(
+            run_store,
+            run_service,
+            auth_provider=auth_provider,
+            session_gateway_factory=ASGISessionGateway,
+        ),
         prefix="/v1",
         tags=["runs"],
     )

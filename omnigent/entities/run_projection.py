@@ -8,6 +8,7 @@ from typing import Any
 
 
 class RunStatus(StrEnum):
+    CREATING = "creating"
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -42,11 +43,12 @@ class WorktreeLeaseStatus(StrEnum):
 @dataclass(frozen=True)
 class RunCreate:
     agent_id: str
-    workspace_id: str
+    input: str
     source: str
     source_event_id: str
-    prompt: str
-    title: str | None = None
+    workspace_id: str | None = None
+    host_id: str | None = None
+    execution_mode: str = "auto"
 
 
 @dataclass(frozen=True)
@@ -61,7 +63,7 @@ class Run:
     bundle_digest: str
     bundle_location: str
     workspace_id: str
-    root_session_id: str
+    root_session_id: str | None
     status: RunStatus
     created_at: int
     updated_at: int | None = None
@@ -168,17 +170,62 @@ class WorktreeLease:
 
 @dataclass(frozen=True)
 class InspectorFailure:
-    attempt_id: str
+    attempt_id: str | None
     code: str
     message: str
 
 
 @dataclass(frozen=True)
+class InspectorAgentSnapshot:
+    id: str
+    bundle_version: int
+    bundle_digest: str
+    bundle_location: str
+
+
+@dataclass(frozen=True)
+class InspectorSessionReference:
+    id: str
+    kind: str
+
+
+@dataclass(frozen=True)
+class InspectorDependency:
+    task_id: str
+    depends_on_task_id: str
+
+
+@dataclass(frozen=True)
+class InspectorLogReference:
+    session_id: str
+    href: str
+
+
+@dataclass(frozen=True)
+class InspectorArtifactReference:
+    id: str
+    task_id: str | None
+    attempt_id: str | None
+    name: str
+    location: str
+    content_type: str | None
+    created_at: int
+
+
+@dataclass(frozen=True)
 class InspectorRun:
     run: Run
-    root_session_id: str
+    root_session_id: str | None
     child_session_ids: tuple[str, ...]
     conversation_item_ids: tuple[str, ...]
     tasks: tuple[Task, ...]
     attempts: tuple[Attempt, ...]
     failures: tuple[InspectorFailure, ...]
+    agent_snapshot: InspectorAgentSnapshot | None = None
+    workspace: Workspace | None = None
+    sessions: tuple[InspectorSessionReference, ...] = ()
+    dependencies: tuple[InspectorDependency, ...] = ()
+    events: tuple[ProjectionEvent, ...] = ()
+    leases: tuple[WorktreeLease, ...] = ()
+    log_references: tuple[InspectorLogReference, ...] = ()
+    artifact_references: tuple[InspectorArtifactReference, ...] = ()

@@ -4488,8 +4488,172 @@ class CreateRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_id: str = Field(min_length=1, max_length=128)
-    workspace_id: str = Field(min_length=1, max_length=128)
-    source: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,63}$")
+    workspace_id: str | None = Field(default=None, min_length=1, max_length=128)
+    input: str = Field(min_length=1, max_length=200_000)
+    source: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_-]*(?::[a-z0-9_-]+)?$",
+    )
     source_event_id: str = Field(min_length=1, max_length=256)
-    prompt: str = Field(min_length=1)
-    title: str | None = Field(default=None, min_length=1, max_length=512)
+    host_id: str | None = Field(default=None, min_length=1, max_length=128)
+    execution_mode: Literal["auto", "cautious", "read_only"] = "auto"
+
+
+class _RunInspectorModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RunInspectorRun(_RunInspectorModel):
+    id: str
+    actor_id: str
+    auth_scope: str
+    source: str
+    source_event_id: str
+    agent_id: str
+    bundle_version: int
+    bundle_digest: str
+    bundle_location: str
+    workspace_id: str
+    root_session_id: str | None
+    status: str
+    created_at: int
+    updated_at: int | None = None
+
+
+class RunInspectorAgentSnapshot(_RunInspectorModel):
+    id: str
+    bundle_version: int
+    bundle_digest: str
+    bundle_location: str
+
+
+class RunInspectorWorkspaceRepository(_RunInspectorModel):
+    id: str
+    name: str
+    path: str
+
+
+class RunInspectorWorkspace(_RunInspectorModel):
+    id: str
+    root_path: str
+    repositories: list[RunInspectorWorkspaceRepository]
+    created_at: int
+
+
+class RunInspectorSession(_RunInspectorModel):
+    id: str
+    kind: Literal["root", "child"]
+
+
+class RunInspectorTask(_RunInspectorModel):
+    id: str
+    run_id: str
+    title: str
+    status: str
+    root_session_id: str | None = None
+    child_session_id: str | None = None
+    dispatch_title: str | None = None
+    purpose: str | None = None
+    source_event_id: str | None = None
+    created_at: int = 0
+    updated_at: int | None = None
+
+
+class RunInspectorAttempt(_RunInspectorModel):
+    id: str
+    task_id: str
+    status: str
+    child_session_id: str | None = None
+    worker_name: str | None = None
+    worker_config_path: str | None = None
+    purpose: str | None = None
+    harness: str | None = None
+    model: str | None = None
+    dispatch_call_id: str | None = None
+    response_id: str | None = None
+    turn_id: str | None = None
+    started_at: int | None = None
+    completed_at: int | None = None
+    failure_code: str | None = None
+    failure_message: str | None = None
+    source_event_id: str | None = None
+    created_at: int = 0
+    updated_at: int | None = None
+
+
+class RunInspectorDependency(_RunInspectorModel):
+    task_id: str
+    depends_on_task_id: str
+
+
+class RunInspectorEvent(_RunInspectorModel):
+    source: str
+    source_event_id: str
+    event_type: str
+    run_id: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    task_id: str | None = None
+    attempt_id: str | None = None
+    session_id: str | None = None
+    conversation_item_id: str | None = None
+
+
+class RunInspectorLease(_RunInspectorModel):
+    id: str
+    run_id: str
+    attempt_id: str | None
+    child_session_id: str
+    host_id: str
+    repository_id: str
+    worktree_path: str
+    branch: str
+    owner_id: str
+    status: str
+    heartbeat_at: int
+    base_commit: str | None
+    output_commit: str | None
+    created_at: int
+    released_at: int | None = None
+
+
+class RunInspectorFailure(_RunInspectorModel):
+    attempt_id: str | None
+    code: str
+    message: str
+
+
+class RunInspectorLogReference(_RunInspectorModel):
+    session_id: str
+    href: str
+
+
+class RunInspectorArtifactReference(_RunInspectorModel):
+    id: str
+    task_id: str | None
+    attempt_id: str | None
+    name: str
+    location: str
+    content_type: str | None
+    created_at: int
+
+
+class RunInspectorResponse(_RunInspectorModel):
+    """Bounded Run inspection graph containing references, never copied logs."""
+
+    object: Literal["run.inspector"] = "run.inspector"
+    run: RunInspectorRun
+    root_session_id: str | None
+    child_session_ids: list[str]
+    conversation_item_ids: list[str]
+    tasks: list[RunInspectorTask]
+    attempts: list[RunInspectorAttempt]
+    failures: list[RunInspectorFailure]
+    agent_snapshot: RunInspectorAgentSnapshot | None = None
+    workspace: RunInspectorWorkspace | None = None
+    sessions: list[RunInspectorSession] = Field(default_factory=list)
+    dependencies: list[RunInspectorDependency] = Field(default_factory=list)
+    events: list[RunInspectorEvent] = Field(default_factory=list)
+    leases: list[RunInspectorLease] = Field(default_factory=list)
+    log_references: list[RunInspectorLogReference] = Field(default_factory=list)
+    artifact_references: list[RunInspectorArtifactReference] = Field(default_factory=list)

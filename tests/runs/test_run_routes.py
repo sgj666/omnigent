@@ -80,9 +80,11 @@ async def test_runs_api_is_authenticated_idempotent_and_rejects_execution_fields
     payload = {
         "agent_id": agent.id,
         "workspace_id": workspace.id,
-        "source": "api.request-v1",
+        "input": "Coordinate this change",
+        "source": "api:request-v1",
         "source_event_id": "request-1",
-        "prompt": "Coordinate this change",
+        "host_id": None,
+        "execution_mode": "auto",
     }
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
@@ -100,7 +102,7 @@ async def test_runs_api_is_authenticated_idempotent_and_rejects_execution_fields
         )
         hidden = await client.get(f"/v1/runs/{first.json()['id']}", headers={"x-user": "bob"})
         forbidden_fields = []
-        for field in ("source_actor", "team_id", "profile_id", "provider"):
+        for field in ("source_actor", "team_id", "profile_id", "prompt", "provider"):
             forbidden_fields.append(
                 await client.post(
                     "/v1/runs",
@@ -115,13 +117,13 @@ async def test_runs_api_is_authenticated_idempotent_and_rejects_execution_fields
     assert first.json()["id"] == second.json()["id"]
     assert first.json()["actor_id"] == "alice"
     assert listing.status_code == detail.status_code == events.status_code == 200
-    assert listing.json()["data"] == [detail.json()]
+    assert listing.json()["data"][0]["id"] == detail.json()["run"]["id"]
     assert [event["event_type"] for event in events.json()["data"]] == ["run.root.created"]
     assert inspector.status_code == 200
     assert inspector.json()["root_session_id"] == first.json()["root_session_id"]
     assert inspector.json()["child_session_ids"] == []
     assert hidden.status_code == 404
-    assert [response.status_code for response in forbidden_fields] == [422, 422, 422, 422]
+    assert [response.status_code for response in forbidden_fields] == [422, 422, 422, 422, 422]
     assert len(submitted) == 1
 
 

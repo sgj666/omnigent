@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from omnigent.db.db_models import (
+    SqlArtifact,
     SqlAttempt,
     SqlRun,
     SqlRunProjectionEvent,
@@ -27,8 +28,13 @@ from omnigent.entities.run_projection import (
     Attempt,
     AttemptStatus,
     CreateRunResult,
+    InspectorAgentSnapshot,
+    InspectorArtifactReference,
+    InspectorDependency,
     InspectorFailure,
+    InspectorLogReference,
     InspectorRun,
+    InspectorSessionReference,
     ProjectionEvent,
     ProjectionResult,
     Run,
@@ -124,7 +130,7 @@ class SqlAlchemyRunStore:
         bundle_digest: str,
         bundle_location: str,
         workspace_id: str,
-        root_session_id: str,
+        root_session_id: str | None,
     ) -> CreateRunResult:
         existing = self.get_run_by_external_event(auth_scope, source, source_event_id)
         if existing is not None:
@@ -142,7 +148,9 @@ class SqlAlchemyRunStore:
             source=source,
             source_event_id=source_event_id,
             auth_scope=auth_scope,
-            status=RunStatus.QUEUED.value,
+            status=(
+                RunStatus.QUEUED.value if root_session_id is not None else RunStatus.CREATING.value
+            ),
             account_id=actor_id,
             created_at=now_epoch(),
             updated_at=None,
@@ -159,6 +167,77 @@ class SqlAlchemyRunStore:
         created = self.get_run(row.id)
         assert created is not None
         return CreateRunResult(run=created, created=True)
+
+    def bind_root_session(self, run_id: str, root_session_id: str) -> Run:
+        """Bind a provisionally-created Run to its real Root Session."""
+        with self._session() as session:
+            row = session.get(SqlRun, (current_workspace_id(), run_id))
+            if row is None:
+                raise ValueError(f"Run not found: {run_id}")
+            if row.root_session_id not in {None, root_session_id}:
+                raise ValueError(f"Run {run_id!r} is already bound to another Root Session")
+            row.root_session_id = root_session_id
+            row.status = RunStatus.QUEUED.value
+            row.updated_at = now_epoch()
+        run = self.get_run(run_id)
+        assert run is not None
+        return run
+
+    def mark_run_started(self, run_id: str) -> Run:
+        """Record that the Root Session accepted the initial Run input."""
+        with self._session() as session:
+            row = session.get(SqlRun, (current_workspace_id(), run_id))
+            if row is None:
+                raise ValueError(f"Run not found: {run_id}")
+            if row.root_session_id is None:
+                raise ValueError(f"Run {run_id!r} has no Root Session")
+            row.status = RunStatus.RUNNING.value
+            row.updated_at = now_epoch()
+        run = self.get_run(run_id)
+        assert run is not None
+        return run
+
+    def mark_run_creation_failed(self, run_id: str, *, code: str, message: str) -> Run:
+        """Persist an explicit terminal failure for a provisional Run."""
+        with self._session() as session:
+            row = session.get(SqlRun, (current_workspace_id(), run_id))
+            if row is None:
+                raise ValueError(f"Run not found: {run_id}")
+            row.status = RunStatus.FAILED.value
+            row.updated_at = now_epoch()
+            session.add(
+                SqlRunProjectionEvent(
+                    id=uuid4().hex,
+                    run_id=run_id,
+                    task_id=None,
+                    attempt_id=None,
+                    session_id=row.root_session_id,
+                    conversation_item_id=None,
+                    source="run-service",
+                    source_event_id=f"creation-failed:{run_id}",
+                    event_type="run.creation.failed",
+                    payload=json.dumps(
+                        {"failure_code": code, "failure_message": message},
+                        sort_keys=True,
+                    ),
+                    created_at=time.time_ns(),
+                )
+            )
+        run = self.get_run(run_id)
+        assert run is not None
+        return run
+
+    def get_run_creation_failure(self, run_id: str) -> InspectorFailure | None:
+        """Return the sanitized provisional-creation failure, when recorded."""
+        for event in reversed(self.list_projection_events(run_id)):
+            if event.event_type != "run.creation.failed":
+                continue
+            return InspectorFailure(
+                attempt_id=None,
+                code=str(event.payload.get("failure_code") or "run_creation_failed"),
+                message=str(event.payload.get("failure_message") or "Run creation failed"),
+            )
+        return None
 
     def get_run_by_external_event(
         self, auth_scope: str, source: str, source_event_id: str
@@ -473,16 +552,49 @@ class SqlAlchemyRunStore:
                     .order_by(SqlRunProjectionEvent.created_at, SqlRunProjectionEvent.id)
                 ).scalars()
             )
-        return InspectorRun(
-            run=run,
-            root_session_id=run.root_session_id,
-            child_session_ids=tuple(
-                dict.fromkeys(
+            artifacts = tuple(
+                session.execute(
+                    select(SqlArtifact)
+                    .where(
+                        SqlArtifact.workspace_id == current_workspace_id(),
+                        SqlArtifact.run_id == run_id,
+                    )
+                    .order_by(SqlArtifact.created_at, SqlArtifact.id)
+                ).scalars()
+            )
+        projection_events = self.list_projection_events(run_id)
+        child_session_ids = tuple(
+            dict.fromkeys(
+                tuple(
                     attempt.child_session_id
                     for attempt in attempts
                     if attempt.child_session_id is not None
                 )
-            ),
+                + tuple(
+                    event.session_id
+                    for event in projection_events
+                    if event.event_type == "session.child.created" and event.session_id is not None
+                )
+            )
+        )
+        session_ids = tuple(
+            session_id
+            for session_id in (run.root_session_id, *child_session_ids)
+            if session_id is not None
+        )
+        creation_failures = tuple(
+            InspectorFailure(
+                attempt_id=None,
+                code=str(event.payload.get("failure_code") or "run_creation_failed"),
+                message=str(event.payload.get("failure_message") or "Run creation failed"),
+            )
+            for event in projection_events
+            if event.event_type == "run.creation.failed"
+        )
+        return InspectorRun(
+            run=run,
+            root_session_id=run.root_session_id,
+            child_session_ids=child_session_ids,
             conversation_item_ids=tuple(
                 event.conversation_item_id
                 for event in events
@@ -490,7 +602,8 @@ class SqlAlchemyRunStore:
             ),
             tasks=tasks,
             attempts=attempts,
-            failures=tuple(
+            failures=creation_failures
+            + tuple(
                 InspectorFailure(
                     attempt_id=attempt.id,
                     code=attempt.failure_code or "unknown_failure",
@@ -498,6 +611,45 @@ class SqlAlchemyRunStore:
                 )
                 for attempt in attempts
                 if attempt.status in {AttemptStatus.FAILED, AttemptStatus.BLOCKED}
+            ),
+            agent_snapshot=InspectorAgentSnapshot(
+                id=run.agent_id,
+                bundle_version=run.bundle_version,
+                bundle_digest=run.bundle_digest,
+                bundle_location=run.bundle_location,
+            ),
+            workspace=self.get_workspace(run.workspace_id),
+            sessions=tuple(
+                InspectorSessionReference(
+                    id=session_id,
+                    kind="root" if session_id == run.root_session_id else "child",
+                )
+                for session_id in session_ids
+            ),
+            dependencies=tuple(
+                InspectorDependency(task_id=task_id, depends_on_task_id=depends_on_task_id)
+                for task_id, depends_on_task_id in self.list_dependencies(run_id)
+            ),
+            events=projection_events,
+            leases=self.list_active_worktree_leases(run_id),
+            log_references=tuple(
+                InspectorLogReference(
+                    session_id=session_id,
+                    href=f"/v1/sessions/{session_id}/items",
+                )
+                for session_id in session_ids
+            ),
+            artifact_references=tuple(
+                InspectorArtifactReference(
+                    id=artifact.id,
+                    task_id=artifact.task_id,
+                    attempt_id=artifact.attempt_id,
+                    name=artifact.name,
+                    location=artifact.location,
+                    content_type=artifact.content_type,
+                    created_at=artifact.created_at,
+                )
+                for artifact in artifacts
             ),
         )
 
@@ -620,7 +772,6 @@ def _run(row: SqlRun) -> Run:
         or row.bundle_digest is None
         or row.bundle_location is None
         or row.workspace_bundle_id is None
-        or row.root_session_id is None
         or row.auth_scope is None
         or row.source_event_id is None
     ):

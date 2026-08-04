@@ -266,9 +266,11 @@ async def test_run_service_creates_one_pinned_root_session_and_submits_one_input
     command = RunCreate(
         agent_id=agent.id,
         workspace_id=workspace.id,
-        source="api.request-v1",
+        input="Coordinate the implementation",
+        source="api:request-v1",
         source_event_id="request-42",
-        prompt="Coordinate the implementation",
+        host_id=None,
+        execution_mode="auto",
     )
 
     first = await service.create(command, actor_id="alice@example.com", auth_scope="user:alice")
@@ -288,7 +290,7 @@ async def test_run_service_creates_one_pinned_root_session_and_submits_one_input
         (root.id, "message", "alice@example.com")
     ]
     assert submitted[0][1].data["content"][0]["text"] == "Coordinate the implementation"
-    assert first.run.status is RunStatus.QUEUED
+    assert first.run.status is RunStatus.RUNNING
 
 
 @pytest.mark.asyncio
