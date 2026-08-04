@@ -104,6 +104,7 @@ async def _kickoff_message_count(client: httpx.AsyncClient, session_id: str, mar
         for item in items
         if item.get("type") == "message"
         and item.get("role") == "user"
+        and not item.get("is_meta", False)
         and marker in json.dumps(item.get("content", []))
     )
 

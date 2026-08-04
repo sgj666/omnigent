@@ -16,7 +16,7 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, Strict, field_validator, model_validator
 
-from omnigent.entities import ConversationItem
+from omnigent.entities import AgentBundleSnapshot, ConversationItem
 
 # ── Shared ──────────────────────────────────────────────────────
 
@@ -1170,6 +1170,7 @@ class SessionEventInput(BaseModel):
     model_override: str | None = None
     tools: list[dict[str, Any]] | None = None
     created_by: str | None = None
+    dispatch_source_id: str | None = None
 
 
 class SessionGitOptions(BaseModel):
@@ -1219,6 +1220,30 @@ class SessionGitOptions(BaseModel):
         """
         if self.existing_worktree and self.base_branch is not None:
             raise ValueError("base_branch cannot be set when existing_worktree is true")
+        return self
+
+
+class SessionAgentBundleExpectation(BaseModel):
+    """Internal create-time guard for an already selected Agent Bundle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: int
+    digest: str
+    location: str
+
+    @model_validator(mode="after")
+    def _validate_snapshot(self) -> SessionAgentBundleExpectation:
+        """Require a complete content-addressed Bundle identity."""
+        try:
+            AgentBundleSnapshot(
+                agent_id="expected",
+                bundle_version=self.version,
+                bundle_digest=self.digest,
+                bundle_location=self.location,
+            )
+        except ValueError as exc:
+            raise ValueError(f"invalid expected Agent Bundle: {exc}") from exc
         return self
 
 
@@ -1357,6 +1382,8 @@ class SessionCreateRequest(BaseModel):
     reasoning_effort: str | None = None
     cost_control_mode_override: str | None = None
     harness_override: str | None = None
+    expected_agent_bundle: SessionAgentBundleExpectation | None = None
+    dispatch_source_id: str | None = Field(default=None, min_length=1, max_length=128)
 
     @model_validator(mode="after")
     def _check_git_requires_host(self) -> SessionCreateRequest:

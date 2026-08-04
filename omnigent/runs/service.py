@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -55,6 +56,9 @@ class RootSessionRequest:
 
 SessionCreator = Callable[[RootSessionRequest, str], Awaitable[str]]
 SessionInputSender = Callable[[str, SessionEventInput, str], Awaitable[None]]
+SessionCleaner = Callable[[str, str], Awaitable[None]]
+
+_logger = logging.getLogger(__name__)
 
 
 class RunService:
@@ -68,12 +72,14 @@ class RunService:
         agent_store: _AgentStore,
         submit_session_event: SessionInputSender,
         session_creator: SessionCreator | None = None,
+        session_cleaner: SessionCleaner | None = None,
     ) -> None:
         self._runs = run_store
         self._conversations = conversation_store
         self._agents = agent_store
         self._submit_session_event = submit_session_event
         self._session_creator = session_creator
+        self._session_cleaner = session_cleaner
         self._projection = SessionRunProjection(run_store)
 
     async def create(
@@ -84,6 +90,7 @@ class RunService:
         auth_scope: str,
         session_creator: SessionCreator | None = None,
         session_input_sender: SessionInputSender | None = None,
+        session_cleaner: SessionCleaner | None = None,
     ) -> CreateRunResult:
         if SOURCE_RE.fullmatch(command.source) is None:
             raise OmnigentError(
@@ -145,7 +152,9 @@ class RunService:
 
         create_root = session_creator or self._session_creator or self._create_root_legacy
         send_input = session_input_sender or self._submit_session_event
+        cleanup = session_cleaner or self._session_cleaner
         stage = "root_session_create"
+        root_session_id: str | None = None
         try:
             root_session_id = await create_root(
                 RootSessionRequest(
@@ -179,6 +188,16 @@ class RunService:
                 else "Root Session input was not accepted"
             )
             self._runs.mark_run_creation_failed(result.run.id, code=code, message=message)
+            if root_session_id is not None and cleanup is not None:
+                try:
+                    await cleanup(root_session_id, actor_id)
+                except Exception:
+                    _logger.exception(
+                        "Failed to clean Root Session after Run creation failure: "
+                        "run=%s session=%s",
+                        result.run.id,
+                        root_session_id,
+                    )
             raise
         return CreateRunResult(run=started, created=True)
 

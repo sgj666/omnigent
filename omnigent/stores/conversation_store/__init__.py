@@ -1269,6 +1269,159 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def compare_and_swap_host_runner_binding(
+        self,
+        conversation_id: str,
+        *,
+        expected_runner_id: str | None,
+        expected_workspace: str,
+        host_id: str,
+        workspace: str,
+        runner_id: str | None,
+    ) -> Conversation | None:
+        """Atomically rotate one Host-bound Session's runner and workspace."""
+        ...
+
+    @abstractmethod
+    def claim_host_runner_recovery(
+        self,
+        conversation_id: str,
+        *,
+        attempt_id: str,
+        expected_runner_id: str | None,
+        expected_workspace: str,
+        host_id: str,
+    ) -> bool:
+        """Freeze an exact failed Attempt binding before deleting its workspace."""
+        ...
+
+    @abstractmethod
+    def finalize_host_runner_recovery(
+        self,
+        conversation_id: str,
+        *,
+        attempt_id: str,
+        expected_runner_id: str | None,
+        expected_workspace: str,
+        host_id: str,
+    ) -> bool:
+        """Clear the claimed runner binding after its workspace was removed."""
+        ...
+
+    @abstractmethod
+    def list_host_runner_recovery_claims(self) -> list[dict[str, Any]]:
+        """List every active durable Host recovery claim in this workspace."""
+        ...
+
+    @abstractmethod
+    def list_host_runner_recovery_claim_workspace_ids(self) -> list[int]:
+        """List tenant IDs containing durable Host recovery claims."""
+        ...
+
+    @abstractmethod
+    async def delete_conversation_if_host_runner_recovery_claimed(
+        self,
+        conversation_id: str,
+        *,
+        attempt_id: str,
+        expected_runner_id: str | None,
+        expected_workspace: str,
+        host_id: str,
+    ) -> bool:
+        """Delete a failed initial Child only while its recovery claim matches."""
+        ...
+
+    @abstractmethod
+    def claim_runner_dispatch_receipt(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str,
+        runner_id: str,
+        persisted_item_id: str,
+        execution_owner_id: str,
+    ) -> dict[str, Any]:
+        """Durably enqueue one runner dispatch or return its existing receipt."""
+        ...
+
+    @abstractmethod
+    def get_runner_dispatch_receipt(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        """Return one durable runner dispatch receipt."""
+        ...
+
+    @abstractmethod
+    def list_recoverable_runner_dispatch_receipts(
+        self,
+        runner_id: str,
+    ) -> list[dict[str, Any]]:
+        """Return queued/running dispatches owned by one stable runner."""
+        ...
+
+    @abstractmethod
+    def transition_runner_dispatch_receipt(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str,
+        runner_id: str,
+        execution_owner_id: str,
+        expected_phases: tuple[str, ...],
+        phase: str,
+        result: dict[str, Any] | None = None,
+        allow_takeover: bool = False,
+    ) -> dict[str, Any] | None:
+        """Atomically transition runner dispatch execution ownership and phase."""
+        ...
+
+    @abstractmethod
+    def list_pending_runner_dispatch_effects(self) -> list[dict[str, Any]]:
+        """Return terminal dispatch receipts whose durable effects remain pending."""
+        ...
+
+    @abstractmethod
+    def list_pending_runner_dispatch_effect_workspace_ids(self) -> list[int]:
+        """Return workspace IDs containing pending terminal receipt effects."""
+        ...
+
+    @abstractmethod
+    def complete_runner_dispatch_effects(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        """CAS pending receipt effects to completed after every effect succeeds."""
+        ...
+
+    @abstractmethod
+    def record_runner_dispatch_effect_failure(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str,
+        error: str,
+    ) -> dict[str, Any] | None:
+        """Record a failed effects attempt while leaving the receipt pending."""
+        ...
+
+    @abstractmethod
+    def build_runner_dispatch_request(
+        self,
+        conversation_id: str,
+        *,
+        persisted_item_id: str,
+        idempotency_key: str,
+        runner_id: str,
+    ) -> dict[str, Any] | None:
+        """Rebuild a bounded runner message from the authoritative stored item."""
+        ...
+
+    @abstractmethod
     def clear_host_binding(self, conversation_id: str) -> Conversation:
         """
         Revert a session to fully unbound: NULL ``host_id``,

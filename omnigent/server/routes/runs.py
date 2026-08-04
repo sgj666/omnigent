@@ -45,6 +45,7 @@ def create_runs_router(
             create_kwargs.update(
                 session_creator=gateway.create_root,
                 session_input_sender=gateway.send_input,
+                session_cleaner=gateway.cleanup,
             )
         result = await service.create(RunCreate(**body.model_dump()), **create_kwargs)
         response.status_code = 201 if result.created else 200

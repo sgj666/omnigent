@@ -12,7 +12,10 @@ import json
 import secrets
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, cast
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import httpx
 from fastapi import (
@@ -56,6 +59,7 @@ from omnigent.policies.types import (
 from omnigent.runner.routing import RunnerRouter
 from omnigent.runner.session_init_protocol import build_runner_session_init_payload
 from omnigent.runner.transports.ws_tunnel.registry import TunnelRegistry
+from omnigent.runs.session_projection import canonical_dispatch_title
 from omnigent.runtime import (
     get_policy_store,
     inflight_text,
@@ -82,6 +86,7 @@ from omnigent.server._elicitation_registry import (
     _PreResolvedHarnessElicitation,
 )
 from omnigent.server.auth import (
+    LEVEL_OWNER,
     LEVEL_READ,
     local_single_user_enabled,
 )
@@ -174,7 +179,490 @@ from omnigent.telemetry import emit as _tel_emit
 from omnigent.telemetry.events import SessionCreatedEvent as _TelSessionCreatedEvent
 from omnigent.telemetry.installation_id import get_installation_id as _get_installation_id
 from omnigent.telemetry.surface import classify_surface as _classify_surface
+from omnigent.workspaces.manifest import WorkspaceRepository
 from omnigent.workspaces.worktree_lease import WorktreeLease
+
+
+@dataclass
+class _RunChildCreateRollback:
+    """Durable identities needed to compensate a failed Run Child create."""
+
+    run_store: Any | None = None
+    run_id: str | None = None
+    child_session_id: str | None = None
+    attempt_id: str | None = None
+
+
+async def _cleanup_projected_run_attempt(
+    projection_result: Any,
+    *,
+    host_registry: Any,
+    runner_stop_confirmed: bool | None = False,
+) -> None:
+    """Apply the one Attempt-workspace teardown policy to a projection result."""
+    attempt = getattr(projection_result, "attempt", None)
+    attempt_id = getattr(attempt, "id", None)
+    if not isinstance(attempt_id, str):
+        return
+    from omnigent.server.routes._host_worktree import (
+        teardown_attempt_worktree_leases_for_attempt,
+    )
+
+    try:
+        await teardown_attempt_worktree_leases_for_attempt(
+            host_registry=host_registry,
+            attempt_id=attempt_id,
+            runner_stop_confirmed=runner_stop_confirmed,
+        )
+    except Exception:  # noqa: BLE001 - terminal cleanup cannot mask lifecycle errors
+        _logger.warning(
+            "Run Attempt worktree cleanup deferred for attempt %s",
+            attempt_id,
+            exc_info=True,
+        )
+
+
+async def _rollback_run_child_create(
+    rollback: _RunChildCreateRollback,
+    *,
+    request: Request,
+    conversation_store: ConversationStore,
+    code: str,
+    message: str,
+) -> None:
+    """Best-effort compensation that never masks the create failure."""
+    if (
+        rollback.run_store is None
+        or rollback.run_id is None
+        or rollback.child_session_id is None
+        or rollback.attempt_id is None
+    ):
+        return
+    try:
+        child = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            rollback.child_session_id,
+        )
+    except Exception:  # noqa: BLE001 - preserve the original create failure
+        child = None
+        _logger.warning(
+            "Run Child lookup failed during rollback for session %s",
+            rollback.child_session_id,
+            exc_info=True,
+        )
+    runner_stop_confirmed: bool | None = None
+    if child is not None and child.host_id is not None and child.runner_id is not None:
+        try:
+            runner_stop_confirmed = await _stop_session_host_runner(
+                child.id,
+                child.host_id,
+                child.runner_id,
+                getattr(request.app.state, "host_registry", None),
+            )
+        except Exception:  # noqa: BLE001 - preserve the original create failure
+            runner_stop_confirmed = False
+            _logger.warning(
+                "Run Child runner rollback failed for session %s",
+                rollback.child_session_id,
+                exc_info=True,
+            )
+    from omnigent.server.routes._host_worktree import (
+        teardown_attempt_worktree_leases_for_attempt,
+    )
+
+    try:
+        await teardown_attempt_worktree_leases_for_attempt(
+            host_registry=getattr(request.app.state, "host_registry", None),
+            attempt_id=rollback.attempt_id,
+            runner_stop_confirmed=runner_stop_confirmed,
+        )
+    except Exception:  # noqa: BLE001 - preserve the original create failure
+        _logger.warning(
+            "Run Child worktree rollback failed for session %s",
+            rollback.child_session_id,
+            exc_info=True,
+        )
+    try:
+        await asyncio.to_thread(
+            rollback.run_store.fail_reserved_child_dispatch,
+            rollback.run_id,
+            rollback.child_session_id,
+            code=code,
+            message=message,
+        )
+    except Exception:  # noqa: BLE001 - preserve the original create failure
+        _logger.warning(
+            "Run Child reservation rollback failed for session %s",
+            rollback.child_session_id,
+            exc_info=True,
+        )
+    from omnigent.server.routes._host_worktree import (
+        get_attempt_worktree_lease_manager,
+    )
+
+    if not get_attempt_worktree_lease_manager().for_attempt(rollback.attempt_id):
+        try:
+            await conversation_store.delete_conversation(rollback.child_session_id)
+        except Exception:  # noqa: BLE001 - preserve the original create failure
+            _logger.warning(
+                "Run Child Session rollback failed for session %s",
+                rollback.child_session_id,
+                exc_info=True,
+            )
+
+
+async def _prepare_run_child_followup(
+    *,
+    request: Request,
+    conv: Conversation,
+    user_id: str | None,
+    dispatch_source_id: str,
+    conversation_store: ConversationStore,
+    permission_store: PermissionStore | None,
+    runner_router: RunnerRouter | None,
+) -> tuple[Conversation, str, str | None, str | None]:
+    """Rotate a terminal Run Child onto a fresh Attempt workspace and runner."""
+    run_store = getattr(request.app.state, "run_store", None)
+    root_session_id = conv.root_conversation_id
+    run = (
+        run_store.get_run_by_root_session_id(root_session_id)
+        if run_store is not None and isinstance(root_session_id, str)
+        else None
+    )
+    if run is None or conv.kind != "sub_agent":
+        return conv, "none", None, None
+    latest = await asyncio.to_thread(
+        run_store.get_latest_attempt_for_child,
+        run.id,
+        conv.id,
+    )
+    if latest is None:
+        return conv, "none", None, None
+    _task, previous_attempt = latest
+    if (
+        previous_attempt.status.value in {"queued", "running"}
+        and previous_attempt.retry_of_attempt_id is None
+    ):
+        return conv, "none", None, None
+    if conv.parent_conversation_id is None:
+        raise OmnigentError("Run Child is missing its Parent", code=ErrorCode.CONFLICT)
+    await _require_access(
+        user_id,
+        conv.parent_conversation_id,
+        LEVEL_OWNER,
+        permission_store,
+        conversation_store,
+    )
+    host_store = getattr(request.app.state, "host_store", None)
+    host_registry = getattr(request.app.state, "host_registry", None)
+    if (
+        conv.host_id is None
+        or conv.workspace is None
+        or host_store is None
+        or host_registry is None
+    ):
+        raise OmnigentError(
+            "Run Child follow-up requires a durable Workspace and connected host",
+            code=ErrorCode.CONFLICT,
+        )
+    from omnigent.server.routes._host_launch import resolve_host_owner
+
+    resolve_host_owner(user_id=user_id, host_id=conv.host_id, host_store=host_store)
+    host_conn = host_registry.get(conv.host_id)
+    if host_conn is None:
+        raise OmnigentError(
+            f"Host {conv.host_id!r} is not connected",
+            code=ErrorCode.CONFLICT,
+        )
+    workspace = await asyncio.to_thread(run_store.get_workspace, run.workspace_id)
+    if workspace is None:
+        raise OmnigentError("Run Workspace no longer exists", code=ErrorCode.CONFLICT)
+    try:
+        reservation = await asyncio.to_thread(
+            run_store.reserve_followup_dispatch,
+            run_id=run.id,
+            child_session_id=conv.id,
+            source_id=dispatch_source_id,
+        )
+    except ValueError as exc:
+        raise OmnigentError(str(exc), code=ErrorCode.CONFLICT) from exc
+    if reservation.attempt is None:
+        raise OmnigentError(
+            "Run Child follow-up did not reserve an Attempt",
+            code=ErrorCode.INTERNAL_ERROR,
+        )
+    idempotency_key = uuid5(
+        NAMESPACE_URL,
+        f"run-followup:{run.id}:{conv.id}:{dispatch_source_id}",
+    ).hex
+    if (
+        not reservation.created
+        and reservation.attempt.status.value == "running"
+        and reservation.attempt.dispatch_call_id == idempotency_key
+    ):
+        return conv, "accepted", idempotency_key, reservation.attempt.id
+    attempt = reservation.attempt
+    workspace_root = Path(workspace.root_path).resolve()
+    attempt_root = (
+        workspace_root.parent
+        / f"{workspace_root.name}-worktrees"
+        / f"omnigent-attempt-{attempt.id}"
+    ).resolve()
+    if not reservation.created and conv.workspace == str(attempt_root):
+        phase, claimed_attempt = await asyncio.to_thread(
+            run_store.claim_followup_dispatch,
+            run_id=run.id,
+            child_session_id=conv.id,
+            source_id=dispatch_source_id,
+            idempotency_key=idempotency_key,
+        )
+        return conv, phase, idempotency_key, claimed_attempt.id
+    repositories = tuple(
+        WorkspaceRepository(id=repository.id, path=repository.path)
+        for repository in workspace.repositories
+    )
+    target_paths = {
+        repository.id: str((attempt_root / repository.path).resolve())
+        for repository in repositories
+    }
+    if any(not Path(path).is_relative_to(attempt_root) for path in target_paths.values()):
+        try:
+            await asyncio.to_thread(
+                run_store.fail_reserved_child_dispatch,
+                run.id,
+                conv.id,
+                code="invalid_workspace",
+                message="Workspace repository path escapes the attempt root",
+            )
+        except Exception:  # noqa: BLE001 - preserve the validation failure
+            _logger.warning(
+                "Run Child follow-up reservation rollback failed for session %s",
+                conv.id,
+                exc_info=True,
+            )
+        raise OmnigentError(
+            "Workspace repository path escapes the Run attempt root",
+            code=ErrorCode.CONFLICT,
+        )
+    owner_id = f"run:{run.id}:attempt:{attempt.id}"
+    from omnigent.server.routes._host_worktree import (
+        acquire_attempt_worktree_leases,
+        release_attempt_worktree_leases_for_attempt,
+    )
+
+    try:
+        await acquire_attempt_worktree_leases(
+            host_id=conv.host_id,
+            host_registry=host_registry,
+            host_conn=host_conn,
+            workspace_root=workspace_root,
+            repositories=repositories,
+            attempt_id=attempt.id,
+            owner_id=owner_id,
+            run_id=run.id,
+            child_session_id=conv.id,
+            target_paths=target_paths,
+        )
+    except Exception:
+        try:
+            await asyncio.to_thread(
+                run_store.fail_reserved_child_dispatch,
+                run.id,
+                conv.id,
+                code="worktree_create_failed",
+                message="Run Child follow-up worktree creation failed",
+            )
+        except Exception:  # noqa: BLE001 - preserve the Host failure
+            _logger.warning(
+                "Run Child follow-up reservation rollback failed for session %s",
+                conv.id,
+                exc_info=True,
+            )
+        raise
+
+    old_workspace = conv.workspace
+    old_runner_id = conv.runner_id
+
+    async def _fail_followup(
+        code: str,
+        message: str,
+        *,
+        restore: bool,
+        runner_stop_confirmed: bool | None = None,
+    ) -> None:
+        if restore:
+            try:
+                current = await asyncio.to_thread(conversation_store.get_conversation, conv.id)
+            except Exception:  # noqa: BLE001 - preserve the transaction failure
+                current = None
+                _logger.warning(
+                    "Run Child binding lookup failed during follow-up rollback for %s",
+                    conv.id,
+                    exc_info=True,
+                )
+            if current is not None:
+                try:
+                    stopped_current = True
+                    if current.runner_id is not None:
+                        stopped_current = await _stop_session_host_runner(
+                            current.id,
+                            conv.host_id,
+                            current.runner_id,
+                            host_registry,
+                        )
+                        runner_stop_confirmed = stopped_current
+                    if stopped_current:
+                        await asyncio.to_thread(
+                            conversation_store.compare_and_swap_host_runner_binding,
+                            conv.id,
+                            expected_runner_id=current.runner_id,
+                            expected_workspace=current.workspace or str(attempt_root),
+                            host_id=conv.host_id,
+                            workspace=old_workspace,
+                            runner_id=None,
+                        )
+                except Exception:  # noqa: BLE001 - preserve the transaction failure
+                    if current.runner_id is not None:
+                        runner_stop_confirmed = False
+                    _logger.warning(
+                        "Run Child binding restore failed during follow-up rollback for %s",
+                        conv.id,
+                        exc_info=True,
+                    )
+        try:
+            from omnigent.server.routes._host_worktree import (
+                teardown_attempt_worktree_leases_for_attempt,
+            )
+
+            await teardown_attempt_worktree_leases_for_attempt(
+                host_registry=host_registry,
+                attempt_id=attempt.id,
+                runner_stop_confirmed=runner_stop_confirmed,
+            )
+        except Exception:  # noqa: BLE001 - preserve the transaction failure
+            _logger.warning(
+                "Run Child worktree cleanup failed during follow-up rollback for %s",
+                conv.id,
+                exc_info=True,
+            )
+        try:
+            await asyncio.to_thread(
+                run_store.fail_reserved_child_dispatch,
+                run.id,
+                conv.id,
+                code=code,
+                message=message,
+            )
+        except Exception:  # noqa: BLE001 - preserve the transaction failure
+            _logger.warning(
+                "Run Child Attempt rollback failed for session %s",
+                conv.id,
+                exc_info=True,
+            )
+
+    if old_runner_id is not None:
+        try:
+            stopped = await _stop_session_host_runner(
+                conv.id,
+                conv.host_id,
+                old_runner_id,
+                host_registry,
+            )
+        except Exception:  # noqa: BLE001 - unconfirmed stop must retain the workspace
+            stopped = False
+        if not stopped:
+            await _fail_followup(
+                "runner_stop_failed",
+                "Host did not confirm the previous Run Child runner stopped",
+                restore=False,
+                runner_stop_confirmed=False,
+            )
+            raise OmnigentError(
+                "Host did not confirm the previous Run Child runner stopped",
+                code=ErrorCode.RUNNER_UNAVAILABLE,
+            )
+
+    from omnigent.host.frames import HostLaunchRunnerFrame, encode_host_frame
+    from omnigent.runner.identity import token_bound_runner_id
+
+    binding_token = secrets.token_urlsafe(32)
+    new_runner_id = token_bound_runner_id(binding_token)
+    rebound = await asyncio.to_thread(
+        conversation_store.compare_and_swap_host_runner_binding,
+        conv.id,
+        expected_runner_id=old_runner_id,
+        expected_workspace=old_workspace,
+        host_id=conv.host_id,
+        workspace=str(attempt_root),
+        runner_id=new_runner_id,
+    )
+    if rebound is None:
+        await _fail_followup(
+            "runner_rebind_conflict",
+            "Run Child binding changed during follow-up",
+            restore=False,
+        )
+        raise OmnigentError(
+            "Run Child binding changed during follow-up",
+            code=ErrorCode.CONFLICT,
+        )
+    request_id = secrets.token_hex(8)
+    future: asyncio.Future[dict[str, str | None]] = asyncio.get_running_loop().create_future()
+    host_conn.pending_launches[request_id] = future
+    try:
+        host_registry.send_text(
+            host_conn,
+            encode_host_frame(
+                HostLaunchRunnerFrame(
+                    request_id=request_id,
+                    binding_token=binding_token,
+                    workspace=str(attempt_root),
+                    session_id=conv.id,
+                    harness=_resolve_harness(rebound),
+                )
+            ),
+        )
+        result = await asyncio.wait_for(future, timeout=_HOST_LAUNCH_RESULT_TIMEOUT_S)
+        if result.get("status") == "failed":
+            raise OmnigentError(
+                str(result.get("error") or "Host runner launch failed"),
+                code=ErrorCode.RUNNER_UNAVAILABLE,
+            )
+        runner_client = await _get_runner_client(conv.id, runner_router)
+        if runner_client is None:
+            runner_client = await _wait_for_runner_client(
+                conv.id,
+                runner_router,
+                getattr(request.app.state, "tunnel_registry", None),
+                runner_id=new_runner_id,
+                timeout_s=_HOST_RELAUNCH_RUNNER_CONNECT_TIMEOUT_S,
+                runner_exit_reports=getattr(request.app.state, "runner_exit_reports", None),
+            )
+        if runner_client is None:
+            raise OmnigentError(
+                "Run Child follow-up runner did not become ready",
+                code=ErrorCode.RUNNER_UNAVAILABLE,
+            )
+    except Exception as exc:
+        host_conn.pending_launches.pop(request_id, None)
+        await _fail_followup(
+            "runner_launch_failed",
+            str(exc) or type(exc).__name__,
+            restore=True,
+        )
+        raise
+    await release_attempt_worktree_leases_for_attempt(
+        host_registry=host_registry,
+        attempt_id=previous_attempt.id,
+    )
+    phase, claimed_attempt = await asyncio.to_thread(
+        run_store.claim_followup_dispatch,
+        run_id=run.id,
+        child_session_id=conv.id,
+        source_id=dispatch_source_id,
+        idempotency_key=idempotency_key,
+    )
+    return rebound, phase, idempotency_key, claimed_attempt.id
 
 
 async def _publish_and_wait_for_harness_elicitation(
@@ -3264,6 +3752,9 @@ async def _forward_native_subagent_terminal_failure(
     conv: Conversation,
     error: ErrorData,
     runner_router: RunnerRouter | None,
+    *,
+    source_event_id: str | None = None,
+    require_wake_ack: bool = False,
 ) -> None:
     """
     Wake the parent runner when a native sub-agent fails to boot its terminal.
@@ -3299,6 +3790,8 @@ async def _forward_native_subagent_terminal_failure(
         # ``output`` is the parent-inbox result text on a failed edge
         # (runner: ``output or "...turn failed"``); pass the real error.
         "data": {"status": "failed", "output": error.message},
+        **({"dispatch_source_id": source_event_id} if source_event_id is not None else {}),
+        **({"require_wake_ack": True} if require_wake_ack else {}),
     }
     runner_result = await _forward_session_change_to_runner(
         session_id,
@@ -3373,25 +3866,27 @@ async def _forward_native_terminal_message(
     session_id: str,
     conv: Conversation,
     body: SessionEventInput,
+    conversation_store: ConversationStore,
     file_store: FileStore | None = None,
     artifact_store: ArtifactStore | None = None,
     model_override: str | None = None,
     created_by: str | None = None,
     author_attribution_required: bool = False,
-) -> None:
+    dispatch_idempotency_key: str | None = None,
+) -> str:
     """
     Forward one Omnigent web-chat message to the native terminal harness.
 
-    The message is intentionally not persisted here. Claude Code
-    and Codex record the accepted prompt in their terminal/app-server
-    state, and their forwarders later post that terminal-originated
-    item back through ``external_conversation_item``.
+    Persist a hidden recovery source before forwarding. Native harnesses
+    remain the single writer for the visible transcript through
+    ``external_conversation_item``.
 
     :param runner_client: Runner client selected for ``session_id``.
     :param session_id: Session/conversation identifier, e.g.
         ``"conv_abc123"``.
     :param conv: Conversation row for *session_id*.
     :param body: Sessions API message event to inject.
+    :param conversation_store: Store for the hidden durable prompt.
     :param file_store: Optional file metadata store for resolving
         ``file_id`` references in ``input_image`` / ``input_file``
         content blocks.
@@ -3404,7 +3899,8 @@ async def _forward_native_terminal_message(
     :param created_by: Authenticated identity of the posting actor.
     :param author_attribution_required: Whether the posting actor is a
         shared-session collaborator.
-    :returns: None.
+    :param dispatch_idempotency_key: Optional caller-provided durable key.
+    :returns: Store-assigned id of the hidden durable prompt.
     :raises HTTPException: 502 when the runner or harness rejects
         the injection request.
     """
@@ -3416,6 +3912,28 @@ async def _forward_native_terminal_message(
         created_by=created_by,
         author_attribution_required=author_attribution_required,
     )
+    effective_dispatch_key = dispatch_idempotency_key or uuid4().hex
+    durable_prompt = NewConversationItem(
+        type="message",
+        response_id=f"turn_{uuid5(NAMESPACE_URL, effective_dispatch_key).hex}",
+        data=MessageData(
+            role="user",
+            content=list(event.get("content", [])),
+            is_meta=True,
+        ),
+        created_by=created_by,
+    )
+    persisted = await asyncio.to_thread(
+        conversation_store.append_idempotent,
+        session_id,
+        [durable_prompt],
+        idempotency_key=effective_dispatch_key,
+    )
+    persisted_item_id = persisted[0].id
+    event["dispatch_source_id"] = effective_dispatch_key
+    event["idempotency_key"] = effective_dispatch_key
+    event["persisted_item_id"] = persisted_item_id
+    event["runner_id"] = conv.runner_id
     _logger.info(
         "%s terminal message forward starting: session=%s block_types=%s",
         display_name,
@@ -3497,8 +4015,7 @@ async def _forward_native_terminal_message(
             status_code=502,
             detail=f"{display_name} terminal message delivery failed: {failure}",
         )
-
-
+    return persisted_item_id
 async def _persist_session_event(
     session_id: str,
     body: SessionEventInput,
@@ -3553,6 +4070,7 @@ async def _forward_event_to_runner(
     has_mcp_servers: bool = False,
     created_by: str | None = None,
     author_attribution_required: bool = False,
+    dispatch_idempotency_key: str | None = None,
 ) -> str:
     """
     Persist a user event and forward it to the runner.
@@ -3587,13 +4105,27 @@ async def _forward_event_to_runner(
     """
     import uuid
 
-    turn_id = f"turn_{uuid.uuid4().hex}"
-    item = _build_new_item(body, turn_id, created_by=created_by)
-    persisted_items = await asyncio.to_thread(
-        conversation_store.append,
-        session_id,
-        [item],
+    turn_id = (
+        f"turn_{uuid.uuid5(uuid.NAMESPACE_URL, dispatch_idempotency_key).hex}"
+        if dispatch_idempotency_key is not None
+        else f"turn_{uuid.uuid4().hex}"
     )
+    item = _build_new_item(body, turn_id, created_by=created_by)
+    append_idempotent = getattr(conversation_store, "append_idempotent", None)
+    if dispatch_idempotency_key is not None and callable(append_idempotent):
+        persisted_items = await asyncio.to_thread(
+            append_idempotent,
+            session_id,
+            [item],
+            idempotency_key=dispatch_idempotency_key,
+        )
+    else:
+        persisted_items = await asyncio.to_thread(
+            conversation_store.append,
+            session_id,
+            [item],
+        )
+    effective_dispatch_key = dispatch_idempotency_key or f"item:{persisted_items[0].id}"
     await _seed_missing_title_from_user_message(
         conv,
         item,
@@ -3668,6 +4200,9 @@ async def _forward_event_to_runner(
         # PRE-resolution form) and drops it by id, appending its own
         # resolved copy — id-based dedup, not a role/content guess.
         "persisted_item_id": persisted_items[0].id,
+        "runner_id": conv.runner_id,
+        "dispatch_source_id": effective_dispatch_key,
+        "idempotency_key": effective_dispatch_key,
         **({"created_by": created_by} if created_by is not None else {}),
         **({"author_attribution_required": True} if author_attribution_required else {}),
     }
@@ -3962,6 +4497,7 @@ async def _dispatch_session_event_to_runner_impl(
     author_attribution_required: bool = False,
     runner_router: RunnerRouter | None = None,
     native_terminal_ready: bool = False,
+    dispatch_idempotency_key: str | None = None,
 ) -> _SessionEventDispatchResult:
     """
     Forward an item-event to the runner with harness-aware dispatch.
@@ -4060,7 +4596,11 @@ async def _dispatch_session_event_to_runner_impl(
                 runner_router,
                 created_by=created_by,
             )
-            return _SessionEventDispatchResult(item_id=item_id, pending_id=None)
+            return _SessionEventDispatchResult(
+                item_id=item_id,
+                pending_id=None,
+                terminal_error=ensure_outcome.error,
+            )
         if ensure_outcome.policy_notice is not None:
             # Terminal is up but policy enforcement is off (fail-open). Post
             # a durable, non-fatal banner; the user message still forwards.
@@ -4136,16 +4676,18 @@ async def _dispatch_session_event_to_runner_impl(
         # already-running pane.
         forwarded = False
         try:
-            await _forward_native_terminal_message(
+            durable_prompt_item_id = await _forward_native_terminal_message(
                 runner_client,
                 session_id,
                 conv,
                 body,
+                conversation_store,
                 file_store=file_store,
                 artifact_store=artifact_store,
                 model_override=_native_routed_model,
                 created_by=created_by,
                 author_attribution_required=author_attribution_required,
+                dispatch_idempotency_key=dispatch_idempotency_key,
             )
             forwarded = True
         finally:
@@ -4169,7 +4711,10 @@ async def _dispatch_session_event_to_runner_impl(
                     _native_verdict,
                     agent=agent_name or "",
                 )
-        return _SessionEventDispatchResult(item_id=None, pending_id=pending_id)
+        return _SessionEventDispatchResult(
+            item_id=durable_prompt_item_id,
+            pending_id=pending_id,
+        )
     item_id = await _forward_event_to_runner(
         session_id,
         conv,
@@ -4182,6 +4727,7 @@ async def _dispatch_session_event_to_runner_impl(
         has_mcp_servers=has_mcp_servers,
         created_by=created_by,
         author_attribution_required=author_attribution_required,
+        dispatch_idempotency_key=dispatch_idempotency_key,
     )
     return _SessionEventDispatchResult(item_id=item_id, pending_id=None)
 
@@ -4335,7 +4881,7 @@ async def _relay_runner_stream(
                                 conversation_store.get_conversation, session_id
                             )
                             if projected_conv is not None:
-                                observe(
+                                terminal_projection = observe(
                                     getattr(conversation_store, "run_projection", None),
                                     "terminal",
                                     projected_conv,
@@ -4347,6 +4893,11 @@ async def _relay_runner_stream(
                                         status_error.message if status_error is not None else None
                                     ),
                                 )
+                                if status in {"idle", "completed", "failed", "cancelled"}:
+                                    await _cleanup_projected_run_attempt(
+                                        terminal_projection,
+                                        host_registry=get_server_host_registry(),
+                                    )
                         if status == "running":
                             text_acc.clear()
                         continue
@@ -5263,6 +5814,7 @@ def configure_subagent_block_notifier(
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
     run_projection: Any | None = None,
+    host_registry: HostRegistry | None = None,
 ) -> Callable[[], None]:
     """
     Install the parent-wake notifier on the elicitation publish path.
@@ -5305,7 +5857,17 @@ def configure_subagent_block_notifier(
         from omnigent.runs.session_projection import observe
 
         block_id = sha256(notice.encode()).hexdigest()[:32]
-        observe(run_projection, "blocked", child, block_id=block_id, reason=notice)
+        projection_result = observe(
+            run_projection,
+            "blocked",
+            child,
+            block_id=block_id,
+            reason=notice,
+        )
+        await _cleanup_projected_run_attempt(
+            projection_result,
+            host_registry=host_registry,
+        )
         delivered = await _wake_parent_for_blocked_child(
             parent_id,
             child,
@@ -5383,6 +5945,7 @@ async def _create_session_from_existing_agent(
     file_store: FileStore | None = None,
     artifact_store: ArtifactStore | None = None,
     background_title_coordinator: BackgroundSessionTitleCoordinator | None = None,
+    run_child_rollback: _RunChildCreateRollback | None = None,
 ) -> SessionResponse:
     """
     Create a session bound to an already-registered agent.
@@ -5412,6 +5975,8 @@ async def _create_session_from_existing_agent(
         ``file_id`` references in ``initial_items`` before forwarding
         to the runner.
     :param artifact_store: Optional binary content store for the same.
+    :param run_child_rollback: Optional outer-route compensation context,
+        populated only after a Run Child reservation succeeds.
     :returns: The newly created session snapshot.
     :raises OmnigentError: 404 if no agent matches ``body.agent_id``;
         403/404 if ``parent_session_id`` or session-scoped ``agent_id``
@@ -5459,6 +6024,18 @@ async def _create_session_from_existing_agent(
         conversation_store=conversation_store,
     )
     agent, bundle_snapshot = pin_session_agent_bundle(agent, parent_conv)
+    if body.expected_agent_bundle is not None:
+        expected = body.expected_agent_bundle
+        actual = (
+            bundle_snapshot.bundle_version,
+            bundle_snapshot.bundle_digest,
+            bundle_snapshot.bundle_location,
+        )
+        if actual != (expected.version, expected.digest, expected.location):
+            raise OmnigentError(
+                "Agent Bundle changed during Session creation",
+                code=ErrorCode.CONFLICT,
+            )
 
     # Reject an undeclared sub-agent before persisting the row. Downstream
     # spec swaps are all guarded by ``if ... is not None`` with no
@@ -5535,6 +6112,160 @@ async def _create_session_from_existing_agent(
             if runner_owner is not None and runner_owner != user_id:
                 inherited_runner_id = None
 
+    run_child_id: str | None = None
+    run_child_leases: tuple[WorktreeLease, ...] = ()
+    run_child_lease_owner: str | None = None
+    run_child_host_conn: HostConnection | None = None
+    run_child_attempt_id: str | None = None
+    if parent_conv is not None:
+        run_store = getattr(request.app.state, "run_store", None)
+        root_session_id = parent_conv.root_conversation_id
+        run = (
+            run_store.get_run_by_root_session_id(root_session_id)
+            if run_store is not None and isinstance(root_session_id, str)
+            else None
+        )
+        if run is not None:
+            await _require_access(
+                user_id,
+                parent_conv.id,
+                LEVEL_OWNER,
+                permission_store,
+                conversation_store,
+            )
+            derived_host_id = parent_conv.host_id
+            host_store = getattr(request.app.state, "host_store", None)
+            host_registry = getattr(request.app.state, "host_registry", None)
+            if derived_host_id is None or host_store is None or host_registry is None:
+                raise OmnigentError(
+                    "Run Child requires a durable Workspace and connected Parent host",
+                    code=ErrorCode.CONFLICT,
+                )
+            from omnigent.server.routes._host_launch import resolve_host_owner
+
+            resolve_host_owner(
+                user_id=user_id,
+                host_id=derived_host_id,
+                host_store=host_store,
+            )
+            run_child_host_conn = host_registry.get(derived_host_id)
+            if run_child_host_conn is None:
+                raise OmnigentError(
+                    f"Host {derived_host_id!r} is not connected",
+                    code=ErrorCode.CONFLICT,
+                )
+            workspace = await asyncio.to_thread(run_store.get_workspace, run.workspace_id)
+            if workspace is None:
+                raise OmnigentError(
+                    "Run Child requires a durable Workspace and connected Parent host",
+                    code=ErrorCode.CONFLICT,
+                )
+
+            # Run identity, host, workspace and lease ownership are always
+            # derived from the authenticated Parent lineage. Caller-supplied
+            # execution fields are not authoritative on this path.
+            run_child_id = uuid4().hex
+            worker_name = body.sub_agent_name or "agent"
+            dispatch_title = canonical_dispatch_title(
+                worker_name,
+                body.title or worker_name,
+            )
+            source_id = body.dispatch_source_id or f"session-create:{run_child_id}"
+            reservation = await asyncio.to_thread(
+                run_store.reserve_child_dispatch,
+                run_id=run.id,
+                child_session_id=run_child_id,
+                worker_name=worker_name,
+                title=dispatch_title,
+                source_id=source_id,
+            )
+            if reservation.attempt is None:
+                raise OmnigentError(
+                    "Run Child dispatch did not reserve an Attempt",
+                    code=ErrorCode.INTERNAL_ERROR,
+                )
+            run_child_attempt_id = reservation.attempt.id
+            if run_child_rollback is not None:
+                run_child_rollback.run_store = run_store
+                run_child_rollback.run_id = run.id
+                run_child_rollback.child_session_id = run_child_id
+                run_child_rollback.attempt_id = run_child_attempt_id
+            workspace_root = Path(workspace.root_path).resolve()
+            attempt_root = (
+                workspace_root.parent
+                / f"{workspace_root.name}-worktrees"
+                / f"omnigent-attempt-{run_child_attempt_id}"
+            ).resolve()
+            repositories = tuple(
+                WorkspaceRepository(id=repository.id, path=repository.path)
+                for repository in workspace.repositories
+            )
+            target_paths: dict[str, str] = {}
+            for repository in repositories:
+                target = (attempt_root / repository.path).resolve()
+                if not target.is_relative_to(attempt_root):
+                    try:
+                        await asyncio.to_thread(
+                            run_store.fail_reserved_child_dispatch,
+                            run.id,
+                            run_child_id,
+                            code="invalid_workspace",
+                            message="Workspace repository path escapes the attempt root",
+                        )
+                    except Exception:  # noqa: BLE001 - preserve the validation failure
+                        _logger.warning(
+                            "Run Child reservation rollback failed for session %s",
+                            run_child_id,
+                            exc_info=True,
+                        )
+                    raise OmnigentError(
+                        "Workspace repository path escapes the Run attempt root",
+                        code=ErrorCode.CONFLICT,
+                    )
+                target_paths[repository.id] = str(target)
+            run_child_lease_owner = f"run:{run.id}:attempt:{run_child_attempt_id}"
+            from omnigent.server.routes._host_worktree import (
+                acquire_attempt_worktree_leases,
+            )
+
+            try:
+                run_child_leases = await acquire_attempt_worktree_leases(
+                    host_id=derived_host_id,
+                    host_registry=host_registry,
+                    host_conn=run_child_host_conn,
+                    workspace_root=workspace_root,
+                    repositories=repositories,
+                    attempt_id=run_child_attempt_id,
+                    owner_id=run_child_lease_owner,
+                    run_id=run.id,
+                    child_session_id=run_child_id,
+                    target_paths=target_paths,
+                )
+            except Exception:
+                try:
+                    await asyncio.to_thread(
+                        run_store.fail_reserved_child_dispatch,
+                        run.id,
+                        run_child_id,
+                        code="worktree_create_failed",
+                        message="Run Child worktree creation failed",
+                    )
+                except Exception:  # noqa: BLE001 - preserve the Host failure
+                    _logger.warning(
+                        "Run Child reservation rollback failed for session %s",
+                        run_child_id,
+                        exc_info=True,
+                    )
+                raise
+            body.host_id = derived_host_id
+            body.host_type = None
+            body.workspace = str(attempt_root)
+            body.git = None
+            body.attempt_id = None
+            body.lease_owner_id = None
+            # A Run Child gets a dedicated runner launched in its attempt cwd.
+            inherited_runner_id = None
+
     # Workspace validation: if the caller is binding to a host,
     # they must also pass a workspace, and the workspace must
     # satisfy the agent's os_env.cwd boundary on that host (per
@@ -5543,7 +6274,9 @@ async def _create_session_from_existing_agent(
     # With git worktree creation, the validated path is the source
     # repo; the worktree it produces becomes the stored workspace.
     canonical_workspace: str | None = body.workspace
-    if body.host_id is not None:
+    if run_child_leases:
+        canonical_workspace = body.workspace
+    elif body.host_id is not None:
         canonical_workspace = await _validate_session_workspace(
             user_id=user_id,
             host_id=body.host_id,
@@ -5648,6 +6381,7 @@ async def _create_session_from_existing_agent(
             workspace=canonical_workspace,
             git_branch=git_branch,
             terminal_launch_args=validated_launch_args,
+            conversation_id=run_child_id,
             agent_bundle_version=bundle_snapshot.bundle_version,
             agent_bundle_digest=bundle_snapshot.bundle_digest,
             agent_bundle_location=bundle_snapshot.bundle_location,
@@ -5674,6 +6408,42 @@ async def _create_session_from_existing_agent(
                 reason="create-rollback",
                 lease=created_worktree_lease,
             )
+        if (
+            run_child_leases
+            and run_child_lease_owner is not None
+            and run_child_host_conn is not None
+        ):
+            from omnigent.server.routes._host_worktree import (
+                release_attempt_worktree_leases,
+            )
+
+            try:
+                await release_attempt_worktree_leases(
+                    host_registry=request.app.state.host_registry,
+                    host_conn=run_child_host_conn,
+                    leases=run_child_leases,
+                    owner_id=run_child_lease_owner,
+                )
+            except Exception:  # noqa: BLE001 - preserve the create failure
+                _logger.warning(
+                    "Run Child worktree rollback deferred for session %s",
+                    run_child_id,
+                    exc_info=True,
+                )
+            try:
+                await asyncio.to_thread(
+                    run_store.fail_reserved_child_dispatch,
+                    run.id,
+                    run_child_id,
+                    code="session_create_failed",
+                    message="Run Child Session creation failed",
+                )
+            except Exception:  # noqa: BLE001 - preserve the create failure
+                _logger.warning(
+                    "Run Child reservation rollback failed for session %s",
+                    run_child_id,
+                    exc_info=True,
+                )
         raise
 
     # The create request has no conv id in its URL, so the path-based
@@ -6853,6 +7623,7 @@ async def _get_session_snapshot(
 
 
 __all__ = [
+    "_RunChildCreateRollback",
     "_accumulate_session_usage",
     "_best_effort_stop",
     "_bind_and_launch_managed_runner",
@@ -6860,6 +7631,7 @@ __all__ = [
     "_build_session_list_item",
     "_build_session_response",
     "_child_session_summaries_from_conversations",
+    "_cleanup_projected_run_attempt",
     "_create_session_from_bundle",
     "_create_session_from_existing_agent",
     "_dispatch_session_event_to_runner",
@@ -6897,6 +7669,7 @@ __all__ = [
     "_persist_native_terminal_failure",
     "_persist_session_event",
     "_persist_skipped_kiro_pending_input",
+    "_prepare_run_child_followup",
     "_publish_and_wait_for_harness_elicitation",
     "_publish_runner_recovered_status",
     "_publish_subtree_cost_to_ancestors",
@@ -6904,6 +7677,7 @@ __all__ = [
     "_register_policy_elicitation",
     "_relay_runner_stream",
     "_resolve_elicitation",
+    "_rollback_run_child_create",
     "_run_managed_launch",
     "_run_managed_wake",
     "_schedule_deferred_elicitation_clear",

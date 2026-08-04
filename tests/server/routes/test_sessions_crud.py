@@ -27,7 +27,11 @@ from omnigent.server.routes._session_create_validation import pin_session_agent_
 from omnigent.server.routes._sessions import orchestration as session_orchestration
 from omnigent.server.routes.sessions import create_sessions_router
 from omnigent.server.routes.sessions import routes_core as sessions_core
-from omnigent.server.schemas import SessionCreateMetadata, SessionCreateRequest
+from omnigent.server.schemas import (
+    SessionAgentBundleExpectation,
+    SessionCreateMetadata,
+    SessionCreateRequest,
+)
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.conversation_store.sqlalchemy_store import (
@@ -276,6 +280,56 @@ async def test_json_child_validates_parent_before_target_agent_lookup(
 
     assert exc_info.value.code == ErrorCode.CONFLICT
     assert agent_calls == []
+
+
+async def test_json_create_rejects_changed_expected_bundle_before_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Run-pinned Root expectation is checked before any Session row exists."""
+    agent_id = "1" * 32
+    actual_digest = "a" * 64
+    agent = Agent(
+        id=agent_id,
+        created_at=1,
+        name="coordinator",
+        version=4,
+        bundle_location=f"{agent_id}/{actual_digest}",
+    )
+    create_calls: list[dict[str, object]] = []
+
+    class _ConversationStore:
+        @staticmethod
+        def create_conversation(**kwargs: object) -> None:
+            create_calls.append(kwargs)
+            raise AssertionError("mismatched snapshot must not create a conversation")
+
+    async def _validate_session_agent(**_kwargs: object) -> Agent:
+        return agent
+
+    monkeypatch.setattr(
+        session_orchestration,
+        "validate_session_agent",
+        _validate_session_agent,
+    )
+
+    with pytest.raises(OmnigentError) as exc_info:
+        await session_orchestration._create_session_from_existing_agent(
+            _ConversationStore(),  # type: ignore[arg-type]
+            object(),  # type: ignore[arg-type]
+            None,
+            SessionCreateRequest(
+                agent_id=agent_id,
+                expected_agent_bundle=SessionAgentBundleExpectation(
+                    version=4,
+                    digest="b" * 64,
+                    location=f"{agent_id}/{'b' * 64}",
+                ),
+            ),
+            object(),  # type: ignore[arg-type]
+        )
+
+    assert exc_info.value.code == ErrorCode.CONFLICT
+    assert create_calls == []
 
 
 def test_persist_stored_session_bundle_cleans_snapshot_value_error(

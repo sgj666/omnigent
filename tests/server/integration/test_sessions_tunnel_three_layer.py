@@ -167,6 +167,31 @@ class FakeProcessManager:
         del conversation_id
 
 
+class _ReceiptAwareNullServerClient(NullServerClient):
+    """Keep this transport-focused fixture compatible with durable dispatch."""
+
+    class _JsonResponse(NullServerClient._Response):
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self._payload = payload
+
+        def json(self) -> dict[str, Any]:
+            return self._payload
+
+    async def get(self, url: str, **kwargs: Any) -> NullServerClient._Response:
+        if url == "/v1/runner-dispatch-receipts/recoverable":
+            return self._JsonResponse({"data": []})
+        return await super().get(url, **kwargs)
+
+    async def post(self, url: str, **kwargs: Any) -> NullServerClient._Response:
+        if url == "/v1/runner-dispatch-receipts/claim":
+            return self._JsonResponse({"phase": "queued", "created": True})
+        if url == "/v1/runner-dispatch-receipts/transition":
+            body = kwargs.get("json")
+            phase = body.get("phase") if isinstance(body, dict) else None
+            return self._JsonResponse({"phase": phase})
+        return await super().post(url, **kwargs)
+
+
 def _build_harness_agent_bundle() -> bytes:
     """Build an agent bundle that routes through the harness path.
 
@@ -391,7 +416,7 @@ async def tunnel_three_layer_stack(tmp_path: Path) -> AsyncIterator[_TunnelStack
     runner_app = create_runner_app(
         process_manager=fake_pm,
         spec_resolver=_resolve_spec,
-        server_client=NullServerClient(),  # type: ignore[arg-type]
+        server_client=_ReceiptAwareNullServerClient(),  # type: ignore[arg-type]
     )
 
     # Build the Omnigent server. ``create_app`` constructs the

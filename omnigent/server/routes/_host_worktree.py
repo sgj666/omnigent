@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from omnigent.db.db_models import current_workspace_id, workspace_scope
 from omnigent.host.frames import (
     HostCreateWorktreeFrame,
     HostListWorktreesFrame,
@@ -147,6 +148,7 @@ async def create_worktree_on_host(
     repo_path: str,
     branch_name: str,
     base_branch: str | None,
+    target_path: str | None = None,
 ) -> CreatedWorktree:
     """
     Send a ``host.create_worktree`` frame and await the result.
@@ -172,6 +174,7 @@ async def create_worktree_on_host(
             repo_path=repo_path,
             branch_name=branch_name,
             base_branch=base_branch,
+            target_path=target_path,
         )
     )
     result = await _await_host_worktree_result(
@@ -322,6 +325,7 @@ async def acquire_attempt_worktree_leases(
     run_id: str | None = None,
     child_session_id: str | None = None,
     branch_names: Mapping[str, str] | None = None,
+    target_paths: Mapping[str, str] | None = None,
 ) -> tuple[WorktreeLease, ...]:
     """Production lifecycle seam for scheduler/session attempt startup."""
     return await get_attempt_worktree_lease_manager().acquire(
@@ -335,6 +339,7 @@ async def acquire_attempt_worktree_leases(
         run_id=run_id,
         child_session_id=child_session_id,
         branch_names=branch_names,
+        target_paths=target_paths,
     )
 
 
@@ -359,19 +364,249 @@ async def release_attempt_worktree_leases(
     )
 
 
+async def release_attempt_worktree_leases_for_attempt(
+    *,
+    host_registry: HostRegistry | None,
+    attempt_id: str,
+) -> None:
+    """Idempotently release the complete durable lease set for an Attempt."""
+    await teardown_attempt_worktree_leases_for_attempt(
+        host_registry=host_registry,
+        attempt_id=attempt_id,
+        runner_stop_confirmed=True,
+    )
+
+
+async def teardown_attempt_worktree_leases_for_attempt(
+    *,
+    host_registry: HostRegistry | None,
+    attempt_id: str,
+    runner_stop_confirmed: bool | None = None,
+) -> None:
+    """Release an Attempt workspace, or retain it when runner stop is unconfirmed."""
+    manager = get_attempt_worktree_lease_manager()
+    leases = manager.for_attempt(attempt_id)
+    if not leases:
+        return
+    if runner_stop_confirmed is not True:
+        await manager.defer_recovery(leases)
+        return
+    if host_registry is None:
+        await manager.defer_recovery(leases)
+        return
+    host_conn = host_registry.get(leases[0].host_id)
+    if host_conn is None:
+        await manager.defer_recovery(leases)
+        return
+    try:
+        await manager.release(
+            host_registry=host_registry,
+            host_conn=host_conn,
+            leases=leases,
+            owner_id=leases[0].owner,
+        )
+    except Exception:  # noqa: BLE001 - terminal cleanup must remain best-effort
+        _logger.warning(
+            "Attempt worktree cleanup deferred for attempt %s",
+            attempt_id,
+            exc_info=True,
+        )
+
+
 async def recover_expired_attempt_worktree_leases(
-    *, host_registry: HostRegistry, host_conn: HostConnection
+    *,
+    host_registry: HostRegistry,
+    host_conn: HostConnection,
+    safe_attempt_ids: set[str] | None = None,
 ) -> tuple[WorktreeLease, ...]:
     """Production lifecycle seam for stale-attempt recovery workers."""
     return await get_attempt_worktree_lease_manager().recover_expired(
-        host_registry=host_registry, host_conn=host_conn
+        host_registry=host_registry,
+        host_conn=host_conn,
+        safe_attempt_ids=safe_attempt_ids,
     )
+
+
+async def _confirm_recovery_attempts_stopped(
+    *,
+    manager: WorktreeLeaseManager,
+    host_registry: HostRegistry,
+    host_conn: HostConnection,
+    conversation_store: object,
+) -> dict[str, str | None]:
+    """Map recovery-safe Attempts to the exact runner binding that was checked."""
+    from omnigent.server.routes._sessions.helpers import (
+        _query_host_runner_status,
+        _stop_session_host_runner,
+    )
+
+    safe: dict[str, str | None] = {}
+
+    def _claim(
+        *,
+        child: object,
+        child_id: str,
+        attempt_id: str,
+        runner_id: str | None,
+    ) -> bool:
+        workspace = getattr(child, "workspace", None)
+        host_id = getattr(child, "host_id", None)
+        if not isinstance(workspace, str) or not isinstance(host_id, str):
+            return False
+        return bool(
+            conversation_store.claim_host_runner_recovery(
+                child_id,
+                attempt_id=attempt_id,
+                expected_runner_id=runner_id,
+                expected_workspace=workspace,
+                host_id=host_id,
+            )
+        )
+
+    for attempt_id in manager.recovery_candidate_attempt_ids(host_conn.host_id):
+        leases = manager.for_attempt(attempt_id)
+        if not leases:
+            continue
+        child_id = leases[0].child_session_id
+        child = (
+            conversation_store.get_conversation(child_id)
+            if isinstance(child_id, str)
+            else None
+        )
+        runner_id = getattr(child, "runner_id", None) if child is not None else None
+        if child is None:
+            safe[attempt_id] = None
+            continue
+        if not isinstance(runner_id, str) or not runner_id:
+            if _claim(
+                child=child,
+                child_id=child_id,
+                attempt_id=attempt_id,
+                runner_id=None,
+            ):
+                safe[attempt_id] = None
+            continue
+        status = await _query_host_runner_status(host_conn, host_registry, runner_id)
+        if status in {"dead", "unknown"}:
+            current = conversation_store.get_conversation(child_id)
+            if (
+                current is not None
+                and getattr(current, "runner_id", None) == runner_id
+                and _claim(
+                    child=current,
+                    child_id=child_id,
+                    attempt_id=attempt_id,
+                    runner_id=runner_id,
+                )
+            ):
+                safe[attempt_id] = runner_id
+            continue
+        if status != "alive":
+            continue
+        stopped = await _stop_session_host_runner(
+            child.id,
+            host_conn.host_id,
+            runner_id,
+            host_registry,
+        )
+        if stopped:
+            current = conversation_store.get_conversation(child_id)
+            if (
+                current is not None
+                and getattr(current, "runner_id", None) == runner_id
+                and _claim(
+                    child=current,
+                    child_id=child_id,
+                    attempt_id=attempt_id,
+                    runner_id=runner_id,
+                )
+            ):
+                safe[attempt_id] = runner_id
+    return safe
+
+
+async def _finalize_recovered_attempt_bindings(
+    *,
+    manager: WorktreeLeaseManager,
+    recovered: tuple[WorktreeLease, ...],
+    confirmed_runner_ids: dict[str, str | None],
+    conversation_store: object,
+) -> None:
+    """Delete initial failed Children or clear retry bindings after lease removal."""
+    for attempt_id in {lease.attempt_id for lease in recovered}:
+        leases = tuple(lease for lease in recovered if lease.attempt_id == attempt_id)
+        child_id = leases[0].child_session_id if leases else None
+        if not isinstance(child_id, str):
+            continue
+        child = conversation_store.get_conversation(child_id)
+        if child is None:
+            continue
+        expected_runner_id = confirmed_runner_ids.get(attempt_id)
+        if getattr(child, "runner_id", None) != expected_runner_id:
+            continue
+        workspace = getattr(child, "workspace", None)
+        host_id = getattr(child, "host_id", None)
+        if not isinstance(workspace, str) or not isinstance(host_id, str):
+            continue
+        if manager.recovery_should_delete_child(attempt_id) and not manager.for_child(child_id):
+            await conversation_store.delete_conversation_if_host_runner_recovery_claimed(
+                child_id,
+                attempt_id=attempt_id,
+                expected_runner_id=expected_runner_id,
+                expected_workspace=workspace,
+                host_id=host_id,
+            )
+            continue
+        conversation_store.finalize_host_runner_recovery(
+            child_id,
+            attempt_id=attempt_id,
+            expected_runner_id=expected_runner_id,
+            expected_workspace=workspace,
+            host_id=host_id,
+        )
+
+
+async def _finalize_stranded_recovery_claims(
+    *,
+    manager: WorktreeLeaseManager,
+    claims: list[dict[str, object]],
+    conversation_store: object,
+) -> None:
+    """Finish claims whose worktree leases were released before a worker crash."""
+    for claim in claims:
+        child_id = claim.get("conversation_id")
+        attempt_id = claim.get("attempt_id")
+        workspace = claim.get("workspace")
+        host_id = claim.get("host_id")
+        runner_id = claim.get("runner_id")
+        if not all(isinstance(value, str) for value in (child_id, attempt_id, workspace, host_id)):
+            continue
+        if manager.for_attempt(attempt_id):
+            continue
+        if manager.recovery_should_delete_child(attempt_id) and not manager.for_child(child_id):
+            await conversation_store.delete_conversation_if_host_runner_recovery_claimed(
+                child_id,
+                attempt_id=attempt_id,
+                expected_runner_id=runner_id if isinstance(runner_id, str) else None,
+                expected_workspace=workspace,
+                host_id=host_id,
+            )
+            continue
+        conversation_store.finalize_host_runner_recovery(
+            child_id,
+            attempt_id=attempt_id,
+            expected_runner_id=runner_id if isinstance(runner_id, str) else None,
+            expected_workspace=workspace,
+            host_id=host_id,
+        )
 
 
 async def maintain_attempt_worktree_leases(
     host_registry: HostRegistry,
     stop_event: asyncio.Event,
     *,
+    conversation_store: object | None = None,
+    liveness_lookup: object | None = None,
     interval_s: float = 30.0,
 ) -> None:
     """Heartbeat active leases and recover stale leases until shutdown."""
@@ -379,22 +614,85 @@ async def maintain_attempt_worktree_leases(
 
     while not stop_event.is_set():
         manager = get_attempt_worktree_lease_manager()
-        host_ids = sorted({lease.host_id for lease in manager.records})
-        for host_id in host_ids:
-            host_conn = host_registry.get(host_id)
-            if host_conn is None:
-                continue
-            try:
-                await recover_expired_attempt_worktree_leases(
-                    host_registry=host_registry,
-                    host_conn=host_conn,
+        workspace_ids = {lease.workspace_id for lease in manager.records}
+        if conversation_store is not None:
+            list_claim_workspaces = getattr(
+                conversation_store,
+                "list_host_runner_recovery_claim_workspace_ids",
+                None,
+            )
+            if callable(list_claim_workspaces):
+                workspace_ids.update(list_claim_workspaces())
+        for workspace_id in sorted(workspace_ids or {0}):
+            with workspace_scope(workspace_id):
+                if conversation_store is not None and callable(liveness_lookup):
+                    await manager.reconcile_hydrated_active(
+                        host_registry=host_registry,
+                        conversation_store=conversation_store,
+                        liveness_lookup=liveness_lookup,
+                    )
+                recovery_claims = (
+                    conversation_store.list_host_runner_recovery_claims()
+                    if conversation_store is not None
+                    else []
                 )
-            except (WorktreeLeaseError, WorktreeProxyError):
-                _logger.warning(
-                    "Attempt worktree lease recovery failed for host %s",
-                    host_id,
-                    exc_info=True,
+                if conversation_store is not None:
+                    try:
+                        await _finalize_stranded_recovery_claims(
+                            manager=manager,
+                            claims=recovery_claims,
+                            conversation_store=conversation_store,
+                        )
+                    except Exception:  # noqa: BLE001 - retry next maintenance cycle
+                        _logger.warning(
+                            "Stranded Host recovery finalization failed", exc_info=True
+                        )
+                host_ids = sorted(
+                    {
+                        lease.host_id
+                        for lease in manager.records
+                        if lease.workspace_id == current_workspace_id()
+                    }
+                    | {
+                        str(claim["host_id"])
+                        for claim in recovery_claims
+                        if isinstance(claim.get("host_id"), str)
+                    }
                 )
+                for host_id in host_ids:
+                    host_conn = host_registry.get(host_id)
+                    if host_conn is None:
+                        continue
+                    try:
+                        if conversation_store is not None:
+                            confirmed_runner_ids = await _confirm_recovery_attempts_stopped(
+                                manager=manager,
+                                host_registry=host_registry,
+                                host_conn=host_conn,
+                                conversation_store=conversation_store,
+                            )
+                            recovered = await recover_expired_attempt_worktree_leases(
+                                host_registry=host_registry,
+                                host_conn=host_conn,
+                                safe_attempt_ids=set(confirmed_runner_ids),
+                            )
+                            await _finalize_recovered_attempt_bindings(
+                                manager=manager,
+                                recovered=recovered,
+                                confirmed_runner_ids=confirmed_runner_ids,
+                                conversation_store=conversation_store,
+                            )
+                        else:
+                            await recover_expired_attempt_worktree_leases(
+                                host_registry=host_registry,
+                                host_conn=host_conn,
+                            )
+                    except (WorktreeLeaseError, WorktreeProxyError):
+                        _logger.warning(
+                            "Attempt worktree lease recovery failed for host %s",
+                            host_id,
+                            exc_info=True,
+                        )
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=interval_s)
         except TimeoutError:

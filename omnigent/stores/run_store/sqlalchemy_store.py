@@ -7,7 +7,7 @@ import time
 from collections.abc import Iterable
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from omnigent.db.db_models import (
@@ -268,6 +268,184 @@ class SqlAlchemyRunStore:
             ).scalar_one_or_none()
             return _run(row) if row is not None else None
 
+    def reserve_child_dispatch(
+        self,
+        *,
+        run_id: str,
+        child_session_id: str,
+        worker_name: str,
+        title: str,
+        source_id: str,
+    ) -> ProjectionResult:
+        """Durably reserve the real Task/Attempt before Child runner launch."""
+        event = ProjectionEvent(
+            source="session-dispatch-reservation",
+            source_event_id=f"{run_id}:{source_id}",
+            event_type="dispatch.reserved",
+            run_id=run_id,
+            session_id=child_session_id,
+            payload={
+                "child_session_id": child_session_id,
+                "worker_name": worker_name,
+                "title": title,
+            },
+        )
+        with self._session() as session:
+            existing = session.execute(
+                select(SqlRunProjectionEvent).where(
+                    SqlRunProjectionEvent.workspace_id == current_workspace_id(),
+                    SqlRunProjectionEvent.source == event.source,
+                    SqlRunProjectionEvent.source_event_id == event.source_event_id,
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                task_row = session.get(SqlRunTask, (current_workspace_id(), existing.task_id))
+                attempt_row = session.get(
+                    SqlAttempt, (current_workspace_id(), existing.attempt_id)
+                )
+                if (
+                    task_row is None
+                    or attempt_row is None
+                    or attempt_row.child_session_id != child_session_id
+                    or attempt_row.worker_name != worker_name
+                    or task_row.title != title
+                ):
+                    raise ValueError(
+                        "dispatch source is already reserved for a different Run Child"
+                    )
+                return ProjectionResult(
+                    created=False,
+                    event=event,
+                    task=_task(task_row) if task_row is not None else None,
+                    attempt=_attempt(attempt_row) if attempt_row is not None else None,
+                )
+            run_row = session.get(SqlRun, (current_workspace_id(), run_id))
+            if run_row is None:
+                raise ValueError(f"Run not found: {run_id}")
+            now = now_epoch()
+            task_id = uuid4().hex
+            attempt_id = uuid4().hex
+            task_row = SqlRunTask(
+                id=task_id,
+                run_id=run_id,
+                root_session_id=run_row.root_session_id,
+                child_session_id=child_session_id,
+                dispatch_title=title,
+                purpose=None,
+                source_event_id=event.source_event_id,
+                title=title,
+                status=TaskStatus.PENDING.value,
+                created_at=now,
+                updated_at=now,
+            )
+            attempt_row = SqlAttempt(
+                id=attempt_id,
+                task_id=task_id,
+                agent_profile_id=None,
+                child_session_id=child_session_id,
+                worker_name=worker_name,
+                worker_config_path=None,
+                purpose=None,
+                harness=None,
+                model=None,
+                dispatch_call_id=None,
+                response_id=None,
+                turn_id=None,
+                started_at=None,
+                completed_at=None,
+                failure_code=None,
+                failure_message=None,
+                retry_of_attempt_id=None,
+                source_event_id=event.source_event_id,
+                status=AttemptStatus.QUEUED.value,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add_all((task_row, attempt_row))
+            session.add(
+                SqlRunProjectionEvent(
+                    id=uuid4().hex,
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    session_id=child_session_id,
+                    conversation_item_id=None,
+                    source=event.source,
+                    source_event_id=event.source_event_id,
+                    event_type=event.event_type,
+                    payload=json.dumps(event.payload, sort_keys=True),
+                    created_at=time.time_ns(),
+                )
+            )
+            session.flush()
+            return ProjectionResult(
+                created=True,
+                event=event,
+                task=_task(task_row),
+                attempt=_attempt(attempt_row),
+            )
+
+    def fail_reserved_child_dispatch(
+        self,
+        run_id: str,
+        child_session_id: str,
+        *,
+        code: str,
+        message: str,
+    ) -> None:
+        """Terminalize a reservation whose Child could not be created."""
+        with self._session() as session:
+            pair = session.execute(
+                select(SqlRunTask, SqlAttempt)
+                .join(
+                    SqlAttempt,
+                    (
+                        (SqlAttempt.workspace_id == SqlRunTask.workspace_id)
+                        & (SqlAttempt.task_id == SqlRunTask.id)
+                    ),
+                )
+                .where(
+                    SqlRunTask.workspace_id == current_workspace_id(),
+                    SqlRunTask.run_id == run_id,
+                    SqlAttempt.child_session_id == child_session_id,
+                    SqlAttempt.status == AttemptStatus.QUEUED.value,
+                )
+                .order_by(SqlAttempt.created_at.desc(), SqlAttempt.id.desc())
+            ).first()
+            if pair is None:
+                return
+            task_row, attempt_row = pair
+            now = now_epoch()
+            task_row.status = TaskStatus.FAILED.value
+            task_row.updated_at = now
+            attempt_row.status = AttemptStatus.FAILED.value
+            attempt_row.completed_at = now
+            attempt_row.failure_code = code
+            attempt_row.failure_message = message
+            attempt_row.updated_at = now
+            session.add(
+                SqlRunProjectionEvent(
+                    id=uuid4().hex,
+                    run_id=run_id,
+                    task_id=task_row.id,
+                    attempt_id=attempt_row.id,
+                    session_id=child_session_id,
+                    conversation_item_id=None,
+                    source="session-dispatch-reservation",
+                    source_event_id=f"reservation-failed:{attempt_row.id}",
+                    event_type="session.failed",
+                    payload=json.dumps(
+                        {"failure_code": code, "failure_message": message},
+                        sort_keys=True,
+                    ),
+                    created_at=time.time_ns(),
+                )
+            )
+            run_row = session.get(SqlRun, (current_workspace_id(), run_id))
+            if run_row is not None:
+                session.flush()
+                _recompute_run_status(session, run_row, now)
+
     def list_runs(self, *, actor_id: str | None = None) -> tuple[Run, ...]:
         with self._session() as session:
             statement = select(SqlRun).where(SqlRun.workspace_id == current_workspace_id())
@@ -318,84 +496,126 @@ class SqlAlchemyRunStore:
                 child_session_id = _required_payload(event, "child_session_id")
                 title = _required_payload(event, "title")
                 worker_name = _optional_payload(event, "worker_name")
+                dispatch_call_id = _optional_payload(event, "dispatch_call_id")
                 explicit_logical_task = _optional_payload(event, "logical_task_id")
-                existing_task: SqlRunTask | None = None
-                if explicit_logical_task is None:
-                    existing_task = (
-                        session.execute(
-                            select(SqlRunTask)
-                            .join(
-                                SqlAttempt,
-                                (
-                                    (SqlAttempt.workspace_id == SqlRunTask.workspace_id)
-                                    & (SqlAttempt.task_id == SqlRunTask.id)
-                                ),
-                            )
-                            .where(
-                                SqlRunTask.workspace_id == current_workspace_id(),
-                                SqlRunTask.run_id == event.run_id,
-                                SqlRunTask.title == title,
-                                SqlAttempt.worker_name == worker_name,
-                            )
-                            .order_by(SqlRunTask.created_at, SqlRunTask.id)
+                reserved = session.execute(
+                    select(SqlRunTask, SqlAttempt)
+                    .join(
+                        SqlAttempt,
+                        (
+                            (SqlAttempt.workspace_id == SqlRunTask.workspace_id)
+                            & (SqlAttempt.task_id == SqlRunTask.id)
+                        ),
+                    )
+                    .where(
+                        SqlRunTask.workspace_id == current_workspace_id(),
+                        SqlRunTask.run_id == event.run_id,
+                        SqlAttempt.child_session_id == child_session_id,
+                        SqlAttempt.status.in_(
+                            (AttemptStatus.QUEUED.value, AttemptStatus.RUNNING.value)
+                        ),
+                        (
+                            SqlAttempt.dispatch_call_id.is_(None)
+                            | (SqlAttempt.dispatch_call_id == dispatch_call_id)
+                        ),
+                    )
+                    .order_by(SqlAttempt.created_at.desc(), SqlAttempt.id.desc())
+                ).first()
+                if reserved is not None:
+                    task_row, attempt_row = reserved
+                    task_id = task_row.id
+                    attempt_id = attempt_row.id
+                    if attempt_row.status == AttemptStatus.QUEUED.value:
+                        task_row.status = TaskStatus.RUNNING.value
+                        task_row.updated_at = now
+                        attempt_row.dispatch_call_id = dispatch_call_id
+                        attempt_row.worker_config_path = _optional_payload(
+                            event, "worker_config_path"
                         )
-                        .scalars()
-                        .first()
-                    )
-                if (
-                    existing_task is not None
-                    and existing_task.child_session_id != child_session_id
-                ):
-                    raise ValueError(
-                        "dispatch for an existing worker/title must use its current "
-                        "Child Session; "
-                        "set payload.logical_task_id for an explicit new logical task"
-                    )
-                task_id = existing_task.id if existing_task is not None else uuid4().hex
-                attempt_id = uuid4().hex
-                if existing_task is None:
-                    task_row = SqlRunTask(
-                        id=task_id,
-                        run_id=event.run_id,
-                        root_session_id=run_row.root_session_id,
+                        attempt_row.purpose = _optional_payload(event, "purpose")
+                        attempt_row.harness = _optional_payload(event, "harness")
+                        attempt_row.model = _optional_payload(event, "model")
+                        attempt_row.started_at = now
+                        attempt_row.updated_at = now
+                        attempt_row.status = AttemptStatus.RUNNING.value
+                else:
+                    existing_task: SqlRunTask | None = None
+                    if explicit_logical_task is None:
+                        existing_task = (
+                            session.execute(
+                                select(SqlRunTask)
+                                .join(
+                                    SqlAttempt,
+                                    (
+                                        (SqlAttempt.workspace_id == SqlRunTask.workspace_id)
+                                        & (SqlAttempt.task_id == SqlRunTask.id)
+                                    ),
+                                )
+                                .where(
+                                    SqlRunTask.workspace_id == current_workspace_id(),
+                                    SqlRunTask.run_id == event.run_id,
+                                    SqlRunTask.title == title,
+                                    SqlAttempt.worker_name == worker_name,
+                                )
+                                .order_by(SqlRunTask.created_at, SqlRunTask.id)
+                            )
+                            .scalars()
+                            .first()
+                        )
+                    if (
+                        existing_task is not None
+                        and existing_task.child_session_id != child_session_id
+                    ):
+                        raise ValueError(
+                            "dispatch for an existing worker/title must use its current "
+                            "Child Session; set payload.logical_task_id for an explicit "
+                            "new logical task"
+                        )
+                    task_id = existing_task.id if existing_task is not None else uuid4().hex
+                    attempt_id = uuid4().hex
+                    if existing_task is None:
+                        task_row = SqlRunTask(
+                            id=task_id,
+                            run_id=event.run_id,
+                            root_session_id=run_row.root_session_id,
+                            child_session_id=child_session_id,
+                            dispatch_title=title,
+                            purpose=_optional_payload(event, "purpose"),
+                            source_event_id=event.source_event_id,
+                            title=title,
+                            status=TaskStatus.RUNNING.value,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                        session.add(task_row)
+                    else:
+                        task_row = existing_task
+                        task_row.status = TaskStatus.RUNNING.value
+                        task_row.updated_at = now
+                    attempt_row = SqlAttempt(
+                        id=attempt_id,
+                        task_id=task_id,
+                        agent_profile_id=None,
                         child_session_id=child_session_id,
-                        dispatch_title=title,
+                        worker_name=worker_name,
+                        worker_config_path=_optional_payload(event, "worker_config_path"),
                         purpose=_optional_payload(event, "purpose"),
+                        harness=_optional_payload(event, "harness"),
+                        model=_optional_payload(event, "model"),
+                        dispatch_call_id=_optional_payload(event, "dispatch_call_id"),
+                        response_id=None,
+                        turn_id=None,
+                        started_at=now,
+                        completed_at=None,
+                        failure_code=None,
+                        failure_message=None,
+                        retry_of_attempt_id=None,
                         source_event_id=event.source_event_id,
-                        title=title,
-                        status=TaskStatus.RUNNING.value,
+                        status=AttemptStatus.RUNNING.value,
                         created_at=now,
                         updated_at=now,
                     )
-                    session.add(task_row)
-                else:
-                    task_row = existing_task
-                    task_row.status = TaskStatus.RUNNING.value
-                    task_row.updated_at = now
-                attempt_row = SqlAttempt(
-                    id=attempt_id,
-                    task_id=task_id,
-                    agent_profile_id=None,
-                    child_session_id=child_session_id,
-                    worker_name=worker_name,
-                    worker_config_path=_optional_payload(event, "worker_config_path"),
-                    purpose=_optional_payload(event, "purpose"),
-                    harness=_optional_payload(event, "harness"),
-                    model=_optional_payload(event, "model"),
-                    dispatch_call_id=_optional_payload(event, "dispatch_call_id"),
-                    response_id=None,
-                    turn_id=None,
-                    started_at=now,
-                    completed_at=None,
-                    failure_code=None,
-                    failure_message=None,
-                    retry_of_attempt_id=None,
-                    source_event_id=event.source_event_id,
-                    status=AttemptStatus.RUNNING.value,
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(attempt_row)
+                    session.add(attempt_row)
                 run_row.status = RunStatus.RUNNING.value
                 run_row.updated_at = now
             elif event.event_type in {
@@ -469,6 +689,271 @@ class SqlAlchemyRunStore:
                 attempt=_attempt(attempt_row) if attempt_row else None,
             )
 
+    def reserve_followup_dispatch(
+        self,
+        *,
+        run_id: str,
+        child_session_id: str,
+        source_id: str,
+    ) -> ProjectionResult:
+        """Reserve one new Attempt on an existing Child's logical Task."""
+        event = ProjectionEvent(
+            source="session-followup-reservation",
+            source_event_id=f"{run_id}:{source_id}",
+            event_type="dispatch.reserved",
+            run_id=run_id,
+            session_id=child_session_id,
+            payload={"child_session_id": child_session_id},
+        )
+        with self._session() as session:
+            existing = session.execute(
+                select(SqlRunProjectionEvent).where(
+                    SqlRunProjectionEvent.workspace_id == current_workspace_id(),
+                    SqlRunProjectionEvent.source == event.source,
+                    SqlRunProjectionEvent.source_event_id == event.source_event_id,
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                task_row = session.get(
+                    SqlRunTask,
+                    (current_workspace_id(), existing.task_id),
+                )
+                attempt_row = session.get(
+                    SqlAttempt,
+                    (current_workspace_id(), existing.attempt_id),
+                )
+                if task_row is None or attempt_row is None:
+                    raise ValueError("follow-up reservation references missing Task/Attempt")
+                return ProjectionResult(
+                    created=False,
+                    event=event,
+                    task=_task(task_row),
+                    attempt=_attempt(attempt_row),
+                )
+            pair = session.execute(
+                select(SqlRunTask, SqlAttempt)
+                .join(
+                    SqlAttempt,
+                    (
+                        (SqlAttempt.workspace_id == SqlRunTask.workspace_id)
+                        & (SqlAttempt.task_id == SqlRunTask.id)
+                    ),
+                )
+                .where(
+                    SqlRunTask.workspace_id == current_workspace_id(),
+                    SqlRunTask.run_id == run_id,
+                    SqlAttempt.child_session_id == child_session_id,
+                )
+                .order_by(SqlAttempt.created_at.desc(), SqlAttempt.id.desc())
+            ).first()
+            if pair is None:
+                raise ValueError("Run Child has no logical Task to continue")
+            task_row, previous_attempt = pair
+            terminal_task_statuses = {
+                TaskStatus.COMPLETED.value,
+                TaskStatus.FAILED.value,
+                TaskStatus.CANCELLED.value,
+                TaskStatus.BLOCKED.value,
+            }
+            if task_row.status not in terminal_task_statuses:
+                raise ValueError("Run Child already has a queued or running Attempt")
+            from sqlalchemy import update
+
+            claimed = session.execute(
+                update(SqlRunTask)
+                .where(
+                    SqlRunTask.workspace_id == current_workspace_id(),
+                    SqlRunTask.id == task_row.id,
+                    SqlRunTask.status.in_(terminal_task_statuses),
+                )
+                .values(status=TaskStatus.PENDING.value, updated_at=now_epoch())
+            )
+            if claimed.rowcount != 1:
+                raise ValueError("Run Child follow-up was reserved concurrently")
+            now = max(now_epoch(), previous_attempt.created_at + 1)
+            attempt_row = SqlAttempt(
+                id=uuid4().hex,
+                task_id=task_row.id,
+                agent_profile_id=previous_attempt.agent_profile_id,
+                child_session_id=child_session_id,
+                worker_name=previous_attempt.worker_name,
+                worker_config_path=previous_attempt.worker_config_path,
+                purpose=previous_attempt.purpose,
+                harness=previous_attempt.harness,
+                model=previous_attempt.model,
+                dispatch_call_id=None,
+                response_id=None,
+                turn_id=None,
+                started_at=None,
+                completed_at=None,
+                failure_code=None,
+                failure_message=None,
+                retry_of_attempt_id=previous_attempt.id,
+                source_event_id=event.source_event_id,
+                status=AttemptStatus.QUEUED.value,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(attempt_row)
+            session.add(
+                SqlRunProjectionEvent(
+                    id=uuid4().hex,
+                    run_id=run_id,
+                    task_id=task_row.id,
+                    attempt_id=attempt_row.id,
+                    session_id=child_session_id,
+                    conversation_item_id=None,
+                    source=event.source,
+                    source_event_id=event.source_event_id,
+                    event_type=event.event_type,
+                    payload=json.dumps(event.payload, sort_keys=True),
+                    created_at=time.time_ns(),
+                )
+            )
+            session.flush()
+            return ProjectionResult(
+                created=True,
+                event=event,
+                task=_task(task_row),
+                attempt=_attempt(attempt_row),
+            )
+
+    def claim_followup_dispatch(
+        self,
+        *,
+        run_id: str,
+        child_session_id: str,
+        source_id: str,
+        idempotency_key: str,
+    ) -> tuple[str, Attempt]:
+        """CAS a reserved follow-up from prepared to dispatching."""
+        source_event_id = f"{run_id}:{source_id}"
+        with self._session() as session:
+            event_row = session.execute(
+                select(SqlRunProjectionEvent).where(
+                    SqlRunProjectionEvent.workspace_id == current_workspace_id(),
+                    SqlRunProjectionEvent.source == "session-followup-reservation",
+                    SqlRunProjectionEvent.source_event_id == source_event_id,
+                    SqlRunProjectionEvent.session_id == child_session_id,
+                )
+            ).scalar_one_or_none()
+            if event_row is None or event_row.attempt_id is None:
+                raise ValueError("Run Child follow-up reservation does not exist")
+            attempt_row = session.get(
+                SqlAttempt,
+                (current_workspace_id(), event_row.attempt_id),
+            )
+            if attempt_row is None:
+                raise ValueError("Run Child follow-up Attempt does not exist")
+            if (
+                attempt_row.status == AttemptStatus.RUNNING.value
+                and attempt_row.dispatch_call_id == idempotency_key
+            ):
+                return "accepted", _attempt(attempt_row)
+            if attempt_row.status != AttemptStatus.QUEUED.value:
+                return "failed", _attempt(attempt_row)
+            claimed = session.execute(
+                update(SqlAttempt)
+                .where(
+                    SqlAttempt.workspace_id == current_workspace_id(),
+                    SqlAttempt.id == attempt_row.id,
+                    SqlAttempt.status == AttemptStatus.QUEUED.value,
+                    SqlAttempt.dispatch_call_id.is_(None),
+                )
+                .values(dispatch_call_id=idempotency_key, updated_at=now_epoch())
+            )
+            if claimed.rowcount == 1:
+                session.flush()
+                refreshed = session.get(
+                    SqlAttempt,
+                    (current_workspace_id(), attempt_row.id),
+                    populate_existing=True,
+                )
+                assert refreshed is not None
+                return "claimed", _attempt(refreshed)
+            session.expire_all()
+            current = session.get(
+                SqlAttempt,
+                (current_workspace_id(), attempt_row.id),
+            )
+            if current is None:
+                raise ValueError("Run Child follow-up Attempt disappeared")
+            if current.dispatch_call_id == idempotency_key:
+                return (
+                    "accepted"
+                    if current.status == AttemptStatus.RUNNING.value
+                    else "dispatching",
+                    _attempt(current),
+                )
+            return "conflict", _attempt(current)
+
+    def reset_followup_dispatch_claim(
+        self,
+        *,
+        attempt_id: str,
+        idempotency_key: str,
+    ) -> bool:
+        """Return an ambiguously failed dispatch to prepared for safe runner-key retry."""
+        with self._session() as session:
+            reset = session.execute(
+                update(SqlAttempt)
+                .where(
+                    SqlAttempt.workspace_id == current_workspace_id(),
+                    SqlAttempt.id == attempt_id,
+                    SqlAttempt.status == AttemptStatus.QUEUED.value,
+                    SqlAttempt.dispatch_call_id == idempotency_key,
+                )
+                .values(dispatch_call_id=None, updated_at=now_epoch())
+            )
+            return reset.rowcount == 1
+
+    def accept_followup_dispatch(
+        self,
+        *,
+        run_id: str,
+        attempt_id: str,
+        idempotency_key: str,
+    ) -> Attempt:
+        """Durably commit runner acceptance before optional projection observers run."""
+        with self._session() as session:
+            now = now_epoch()
+            accepted = session.execute(
+                update(SqlAttempt)
+                .where(
+                    SqlAttempt.workspace_id == current_workspace_id(),
+                    SqlAttempt.id == attempt_id,
+                    SqlAttempt.status == AttemptStatus.QUEUED.value,
+                    SqlAttempt.dispatch_call_id == idempotency_key,
+                )
+                .values(
+                    status=AttemptStatus.RUNNING.value,
+                    started_at=now,
+                    updated_at=now,
+                )
+            )
+            attempt_row = session.get(
+                SqlAttempt,
+                (current_workspace_id(), attempt_id),
+                populate_existing=True,
+            )
+            if attempt_row is None or attempt_row.dispatch_call_id != idempotency_key:
+                raise ValueError("Run Child follow-up dispatch claim changed")
+            if accepted.rowcount != 1 and attempt_row.status != AttemptStatus.RUNNING.value:
+                raise ValueError("Run Child follow-up was not accepted from dispatching")
+            task_row = session.get(
+                SqlRunTask,
+                (current_workspace_id(), attempt_row.task_id),
+            )
+            run_row = session.get(SqlRun, (current_workspace_id(), run_id))
+            if task_row is None or run_row is None:
+                raise ValueError("Run Child follow-up Task/Run disappeared")
+            task_row.status = TaskStatus.RUNNING.value
+            task_row.updated_at = now
+            run_row.status = RunStatus.RUNNING.value
+            run_row.updated_at = now
+            session.flush()
+            return _attempt(attempt_row)
+
     def list_tasks(self, run_id: str) -> tuple[Task, ...]:
         with self._session() as session:
             rows = session.execute(
@@ -495,6 +980,11 @@ class SqlAlchemyRunStore:
                 .order_by(SqlAttempt.created_at, SqlAttempt.id)
             ).scalars()
             return tuple(_attempt(row) for row in rows)
+
+    def get_attempt(self, attempt_id: str) -> Attempt | None:
+        with self._session() as session:
+            row = session.get(SqlAttempt, (current_workspace_id(), attempt_id))
+            return _attempt(row) if row is not None else None
 
     def get_latest_attempt_for_child(
         self, run_id: str, child_session_id: str
@@ -735,6 +1225,57 @@ class SqlAlchemyRunStore:
             ).scalars()
             return tuple(_lease(row) for row in rows)
 
+    def list_recoverable_worktree_leases(self) -> tuple[WorktreeLease, ...]:
+        """List all active or recovery-required leases in this workspace."""
+        with self._session() as session:
+            rows = session.execute(
+                select(SqlWorktreeLease)
+                .where(
+                    SqlWorktreeLease.workspace_id == current_workspace_id(),
+                    SqlWorktreeLease.state.in_(
+                        (
+                            WorktreeLeaseStatus.ACTIVE.value,
+                            WorktreeLeaseStatus.RECOVERY_REQUIRED.value,
+                        )
+                    ),
+                )
+                .order_by(SqlWorktreeLease.created_at, SqlWorktreeLease.id)
+            ).scalars()
+            return tuple(_lease(row) for row in rows)
+
+    def list_recoverable_worktree_lease_workspace_ids(self) -> tuple[int, ...]:
+        """Enumerate tenant IDs containing active recovery work."""
+        with self._session() as session:
+            rows = session.execute(
+                select(SqlWorktreeLease.workspace_id)
+                .where(
+                    SqlWorktreeLease.state.in_(
+                        (
+                            WorktreeLeaseStatus.ACTIVE.value,
+                            WorktreeLeaseStatus.RECOVERY_REQUIRED.value,
+                        )
+                    )
+                )
+                .distinct()
+                .order_by(SqlWorktreeLease.workspace_id)
+            ).scalars()
+            return tuple(int(workspace_id) for workspace_id in rows)
+
+    def mark_worktree_lease_recovery_required(
+        self, lease_id: str, *, owner_id: str
+    ) -> WorktreeLease:
+        """Persist that host cleanup must be retried by lease maintenance."""
+        with self._session() as session:
+            row = session.get(SqlWorktreeLease, (current_workspace_id(), lease_id))
+            if row is None:
+                raise ValueError(f"Worktree lease not found: {lease_id}")
+            if row.owner_id != owner_id:
+                raise ValueError("worktree lease belongs to another owner")
+            if row.state != WorktreeLeaseStatus.RELEASED.value:
+                row.state = WorktreeLeaseStatus.RECOVERY_REQUIRED.value
+            session.flush()
+            return _lease(row)
+
     def release_worktree_lease(
         self, lease_id: str, *, owner_id: str, output_commit: str | None = None
     ) -> WorktreeLease:
@@ -828,6 +1369,7 @@ def _attempt(row: SqlAttempt) -> Attempt:
         completed_at=row.completed_at,
         failure_code=row.failure_code,
         failure_message=row.failure_message,
+        retry_of_attempt_id=row.retry_of_attempt_id,
         source_event_id=row.source_event_id,
         created_at=row.created_at,
         updated_at=row.updated_at,

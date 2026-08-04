@@ -155,6 +155,48 @@ def test_create_worktree_places_sibling_of_repo_root(git_repo: Path) -> None:
     assert isinstance(created, CreatedWorktree)
 
 
+def test_two_repositories_share_exact_attempt_root_and_cleanup(git_repo: Path) -> None:
+    """AP target paths preserve the manifest layout and leave no attempt root."""
+    web_repo = git_repo.parent / "web"
+    web_repo.mkdir()
+    _git(web_repo, "init", "-q", "-b", "main")
+    (web_repo / "README.md").write_text("web")
+    _git(web_repo, "add", ".")
+    _git(web_repo, "commit", "-q", "-m", "init")
+    worktree_root = git_repo.parent.parent / f"{git_repo.parent.name}-worktrees"
+    attempt_root = worktree_root / "omnigent-attempt-real"
+
+    api = create_worktree(
+        repo_path=str(git_repo),
+        branch_name="omnigent/api-real",
+        target_path=str(attempt_root / "api"),
+    )
+    web = create_worktree(
+        repo_path=str(web_repo),
+        branch_name="omnigent/web-real",
+        target_path=str(attempt_root / "web"),
+    )
+
+    assert Path(api.worktree_path) == attempt_root / "api"
+    assert Path(web.worktree_path) == attempt_root / "web"
+    assert (attempt_root / "api" / "README.md").read_text() == "hi"
+    assert (attempt_root / "web" / "README.md").read_text() == "web"
+
+    remove_worktree(worktree_path=api.worktree_path, branch=api.branch, delete_branch=True)
+    remove_worktree(worktree_path=web.worktree_path, branch=web.branch, delete_branch=True)
+
+    assert not attempt_root.exists()
+
+
+def test_target_worktree_path_rejects_non_sibling_root(git_repo: Path) -> None:
+    with pytest.raises(WorktreeError, match="outside an allowed sibling"):
+        create_worktree(
+            repo_path=str(git_repo),
+            branch_name="omnigent/escape",
+            target_path=str(git_repo.parent / "not-allowed" / "api"),
+        )
+
+
 def test_create_worktree_resolves_repo_root_from_subdir(git_repo: Path) -> None:
     """Picking a subdir still anchors the worktree at the repo root's sibling."""
     sub = git_repo / "src"
@@ -305,15 +347,13 @@ def test_remove_worktree_keeps_branch_when_flag_false(git_repo: Path) -> None:
     assert _branch_exists(git_repo, "feature/keep")
 
 
-def test_remove_worktree_missing_path_fails(git_repo: Path) -> None:
-    """Removing a non-existent worktree path fails loud."""
-    with pytest.raises(WorktreeError) as exc:
-        remove_worktree(
-            worktree_path=str(git_repo.parent / "myrepo-worktrees" / "ghost"),
-            branch=None,
-            delete_branch=False,
-        )
-    assert "does not exist" in exc.value.message
+def test_remove_worktree_missing_path_is_idempotent(git_repo: Path) -> None:
+    """A retry after physical deletion succeeds when the path is already gone."""
+    remove_worktree(
+        worktree_path=str(git_repo.parent / "myrepo-worktrees" / "ghost"),
+        branch=None,
+        delete_branch=False,
+    )
 
 
 def test_list_worktrees_returns_main_first(git_repo: Path) -> None:

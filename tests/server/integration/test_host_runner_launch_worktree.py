@@ -18,27 +18,33 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
+from omnigent.entities import AgentBundleSnapshot
+from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.host.frames import (
     HostCreateWorktreeFrame,
     HostHelloFrame,
     HostLaunchRunnerFrame,
     HostRemoveWorktreeFrame,
     HostStatFrame,
+    HostStopRunnerFrame,
     decode_host_frame,
 )
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.app import create_app
-from omnigent.server.auth import RESERVED_USER_LOCAL
+from omnigent.server.auth import LEVEL_OWNER, RESERVED_USER_LOCAL
 from omnigent.server.host_registry import HostConnection
+from omnigent.server.routes import _host_worktree
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 from omnigent.stores.artifact_store.local import LocalArtifactStore
 from omnigent.stores.comment_store.sqlalchemy_store import SqlAlchemyCommentStore
@@ -47,6 +53,7 @@ from omnigent.stores.conversation_store.sqlalchemy_store import (
 )
 from omnigent.stores.file_store.sqlalchemy_store import SqlAlchemyFileStore
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.run_store.sqlalchemy_store import SqlAlchemyRunStore
 from tests.server.helpers import create_test_agent
 
 pytestmark = pytest.mark.asyncio
@@ -108,6 +115,7 @@ class _HostCapture:
     create: list[HostCreateWorktreeFrame] = field(default_factory=list)
     launch: list[HostLaunchRunnerFrame] = field(default_factory=list)
     remove: list[HostRemoveWorktreeFrame] = field(default_factory=list)
+    stop: list[HostStopRunnerFrame] = field(default_factory=list)
 
 
 # register(*, create_status=, create_error=, launch_status=) -> _HostCapture
@@ -142,6 +150,7 @@ async def register_host(
         create_status: str = "ok",
         create_error: str | None = None,
         launch_status: str = "launched",
+        stop_status: str | tuple[str, ...] = "ok",
     ) -> _HostCapture:
         HostStore(db_uri).upsert_on_connect(_HOST_ID, "wt-host", RESERVED_USER_LOCAL)
         conn = app.state.host_registry.register(
@@ -151,9 +160,12 @@ async def register_host(
             owner=RESERVED_USER_LOCAL,
         )
         cap = _HostCapture()
+        stop_statuses = (stop_status,) if isinstance(stop_status, str) else stop_status
+        stop_index = 0
 
         async def _drain() -> None:
             """Answer stat/create/launch/remove frames; capture them."""
+            nonlocal stop_index
             while True:
                 frame_text = await conn.outbound_queue.get()
                 if frame_text is None:
@@ -180,7 +192,8 @@ async def register_host(
                             fut.set_result(
                                 {
                                     "status": "ok",
-                                    "worktree_path": f"{frame.repo_path}-worktrees/{dirname}",
+                                    "worktree_path": frame.target_path
+                                    or f"{frame.repo_path}-worktrees/{dirname}",
                                     "branch": frame.branch_name,
                                     "error": None,
                                 }
@@ -212,6 +225,22 @@ async def register_host(
                     fut = conn.pending_remove_worktrees.pop(frame.request_id, None)
                     if fut is not None and not fut.done():
                         fut.set_result({"status": "ok", "error": None})
+                elif isinstance(frame, HostStopRunnerFrame):
+                    cap.stop.append(frame)
+                    fut = conn.pending_stops.pop(frame.request_id, None)
+                    if fut is not None and not fut.done():
+                        current_stop_status = stop_statuses[
+                            min(stop_index, len(stop_statuses) - 1)
+                        ]
+                        stop_index += 1
+                        fut.set_result(
+                            {
+                                "status": current_stop_status,
+                                "error": (
+                                    None if current_stop_status == "ok" else "stop boom"
+                                ),
+                            }
+                        )
 
         conn._drain_task_for_test = asyncio.create_task(_drain())  # type: ignore[attr-defined]
         conns.append(conn)
@@ -226,6 +255,873 @@ async def register_host(
             await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
         if not task.done():
             task.cancel()
+
+
+@pytest.mark.parametrize(
+    "followup_outcome",
+    ["launched", "launch_failed", "stop_failed", "launch_stop_failed"],
+)
+async def test_run_child_reserves_attempt_and_launches_in_two_repo_workspace(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    followup_outcome: str,
+) -> None:
+    """The real dispatch tool reserves and accepts one canonical Task/Attempt."""
+    from omnigent.runner import app as runner_app
+    from omnigent.runner.tool_dispatch import execute_tool
+    from omnigent.server.routes import sessions as sessions_mod
+
+    cap = register_host()
+    agent_payload = await create_test_agent(
+        client,
+        name="run-coordinator",
+        sub_agents=[{"name": "worker"}],
+    )
+    agent = SqlAlchemyAgentStore(db_uri).get(agent_payload["id"])
+    assert agent is not None
+    snapshot = AgentBundleSnapshot.from_agent(agent)
+    workspace_root = "/Users/alice/project"
+    run_store = SqlAlchemyRunStore(db_uri)
+    workspace = run_store.create_workspace(
+        root_path=workspace_root,
+        repositories=(("api", "api"), ("web", "web")),
+    )
+    root = SqlAlchemyConversationStore(db_uri).create_conversation(
+        agent_id=agent.id,
+        host_id=_HOST_ID,
+        workspace=workspace_root,
+        agent_bundle_version=snapshot.bundle_version,
+        agent_bundle_digest=snapshot.bundle_digest,
+        agent_bundle_location=snapshot.bundle_location,
+    )
+    run = run_store.create_run_idempotent(
+        auth_scope="user:local",
+        actor_id=RESERVED_USER_LOCAL,
+        source="api:test",
+        source_event_id="real-two-repo-child",
+        agent_id=agent.id,
+        bundle_version=snapshot.bundle_version,
+        bundle_digest=snapshot.bundle_digest,
+        bundle_location=snapshot.bundle_location,
+        workspace_id=workspace.id,
+        root_session_id=root.id,
+    ).run
+
+    runner_http = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json={})),
+        base_url="http://runner",
+    )
+
+    async def _runner_client(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
+        return runner_http
+
+    dispatch_ids = iter(("a" * 32, "b" * 32, "c" * 32, "d" * 32))
+    fail_dispatch_once = False
+    dispatch_calls: list[str | None] = []
+
+    async def _dispatch(*args: object, **_kwargs: object) -> SimpleNamespace:
+        nonlocal fail_dispatch_once
+        event = args[2]
+        dispatch_calls.append(getattr(event, "dispatch_source_id", None))
+        if fail_dispatch_once:
+            fail_dispatch_once = False
+            raise OmnigentError("dispatch failed once", code=ErrorCode.RUNNER_UNAVAILABLE)
+        return SimpleNamespace(
+            item_id=next(dispatch_ids),
+            pending_id=None,
+            terminal_error=None,
+        )
+
+    async def _relay_ready(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(runner_app, "get_session_agent_id", lambda _sid: agent.id)
+    monkeypatch.setattr(runner_app, "register_child_session", lambda *a, **k: None)
+    monkeypatch.setattr(sessions_mod, "_get_runner_client", _runner_client)
+    monkeypatch.setattr(sessions_mod, "_dispatch_session_event_to_runner", _dispatch)
+    monkeypatch.setattr(sessions_mod, "_ensure_runner_relay_ready", _relay_ready)
+    session_inbox: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    requests: list[str] = []
+
+    class _RecordingClient:
+        async def get(self, url: str, **kwargs: object) -> httpx.Response:
+            requests.append(f"GET {url}")
+            return await client.get(url, **kwargs)
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            requests.append(f"POST {url}")
+            return await client.post(url, **kwargs)
+
+        async def delete(self, url: str, **kwargs: object) -> httpx.Response:
+            requests.append(f"DELETE {url}")
+            return await client.delete(url, **kwargs)
+
+    try:
+        try:
+            output = await asyncio.wait_for(execute_tool(
+                tool_name="sys_session_send",
+                arguments=json.dumps(
+                    {
+                        "agent": "worker",
+                        "title": "implement both repos",
+                        "args": "implement both repos",
+                    }
+                ),
+                server_client=_RecordingClient(),  # type: ignore[arg-type]
+                conversation_id=root.id,
+                agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="worker")]),
+                session_inbox=session_inbox,
+            ), timeout=10.0)
+        except TimeoutError:
+            pytest.fail(f"tool dispatch timed out after requests: {requests}")
+    finally:
+        await runner_http.aclose()
+        runner_app.unregister_subagent_work(
+            next(
+                (
+                    work.child_session_id
+                    for work in runner_app.list_subagent_work(root.id)
+                    if work.title == "implement both repos"
+                ),
+                "missing",
+            )
+        )
+        runner_app._session_inboxes_ref.pop(root.id, None)
+
+    tool_result = json.loads(output)
+    assert tool_result["status"] == "launching", tool_result
+    child_id = tool_result["conversation_id"]
+    child = (await client.get(f"/v1/sessions/{child_id}")).json()
+    tasks = run_store.list_tasks(run.id)
+    attempts = run_store.list_attempts(run.id)
+    assert len(tasks) == 1
+    assert tasks[0].title == "implement both repos"
+    assert len(attempts) == 1
+    assert attempts[0].child_session_id == child_id
+    assert attempts[0].status.value == "running"
+    leases = run_store.list_active_worktree_leases(run.id)
+    assert len(leases) == 2
+    attempt_root = Path(child["workspace"])
+    assert {lease.worktree_path for lease in leases} == {
+        str(attempt_root / "api"),
+        str(attempt_root / "web"),
+    }
+    assert {frame.target_path for frame in cap.create} == {
+        str(attempt_root / "api"),
+        str(attempt_root / "web"),
+    }
+    assert cap.launch[-1].workspace == str(attempt_root)
+
+    relay_failure_once = True
+
+    async def _forward_terminal(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        nonlocal relay_failure_once
+        if relay_failure_once:
+            relay_failure_once = False
+            raise OmnigentError(
+                "original parent relay failure",
+                code=ErrorCode.RUNNER_UNAVAILABLE,
+            )
+        return SimpleNamespace(status_code=200, body="")
+
+    monkeypatch.setattr(
+        sessions_mod,
+        "_forward_session_change_to_runner",
+        _forward_terminal,
+    )
+    relay_failure = await client.post(
+        f"/v1/sessions/{child_id}/events",
+        json={"type": "external_session_status", "data": {"status": "idle"}},
+    )
+    assert relay_failure.status_code == 503, relay_failure.text
+    assert "original parent relay failure" in relay_failure.text
+    assert cap.remove == []
+    retained_terminal_leases = run_store.list_active_worktree_leases(run.id)
+    assert len(retained_terminal_leases) == 2
+    assert {lease.status.value for lease in retained_terminal_leases} == {
+        "recovery_required"
+    }
+    removed_at_terminal = len(cap.remove)
+
+    followup_cap = register_host(
+        launch_status=(
+            "failed"
+            if followup_outcome in {"launch_failed", "launch_stop_failed"}
+            else "launched"
+        ),
+        stop_status=(
+            ("ok", "failed")
+            if followup_outcome == "launch_stop_failed"
+            else "failed"
+            if followup_outcome == "stop_failed"
+            else "ok"
+        ),
+    )
+
+    followup_inbox: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+    followup = await execute_tool(
+        tool_name="sys_session_send",
+        arguments=json.dumps(
+            {
+                "agent": "worker",
+                "title": "implement both repos",
+                "args": "continue in a fresh attempt",
+            }
+        ),
+        server_client=_RecordingClient(),  # type: ignore[arg-type]
+        conversation_id=root.id,
+        agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="worker")]),
+        session_inbox=followup_inbox,
+    )
+    runner_app.unregister_subagent_work(child_id)
+    runner_app._session_inboxes_ref.pop(root.id, None)
+
+    followup_tasks = run_store.list_tasks(run.id)
+    followup_attempts = run_store.list_attempts(run.id)
+    assert len(followup_tasks) == 1
+    assert len(followup_attempts) == 2
+    assert followup_attempts[0].task_id == followup_attempts[1].task_id
+    assert followup_attempts[0].id != followup_attempts[1].id
+    if followup_outcome != "launched":
+        assert followup.startswith("Error: failed to send message to child")
+        assert followup_attempts[1].status.value == "failed"
+        assert len(followup_cap.create) == 2
+        failed_child = (await client.get(f"/v1/sessions/{child_id}")).json()
+        if followup_outcome in {"stop_failed", "launch_stop_failed"}:
+            retained = run_store.list_active_worktree_leases(run.id)
+            assert len(retained) == 4
+            assert {lease.status.value for lease in retained} == {"recovery_required"}
+            assert followup_cap.remove == []
+            if followup_outcome == "stop_failed":
+                assert failed_child["workspace"] == str(attempt_root)
+                assert failed_child["runner_id"] == child["runner_id"]
+                assert followup_cap.launch == []
+            else:
+                assert failed_child["workspace"] != str(attempt_root)
+                assert failed_child["runner_id"] is not None
+                assert failed_child["runner_id"] != child["runner_id"]
+                assert len(followup_cap.launch) == 1
+                assert len(followup_cap.stop) == 2
+
+                from omnigent.server.routes._sessions import helpers
+
+                queried_runner_ids: list[str] = []
+
+                async def _runner_alive(
+                    _host_conn: object,
+                    _host_registry: object,
+                    runner_id: str,
+                ) -> str:
+                    queried_runner_ids.append(runner_id)
+                    return "alive"
+
+                monkeypatch.setattr(helpers, "_query_host_runner_status", _runner_alive)
+                stop = asyncio.Event()
+                maintenance = asyncio.create_task(
+                    _host_worktree.maintain_attempt_worktree_leases(
+                        app.state.host_registry,
+                        stop,
+                        conversation_store=SqlAlchemyConversationStore(db_uri),
+                        interval_s=0.01,
+                    )
+                )
+                try:
+                    async with asyncio.timeout(2):
+                        while len(followup_cap.stop) < 3:
+                            await asyncio.sleep(0.01)
+                finally:
+                    stop.set()
+                    await maintenance
+                assert queried_runner_ids[-1] == failed_child["runner_id"]
+                assert followup_cap.remove == []
+                still_retained = (await client.get(f"/v1/sessions/{child_id}")).json()
+                assert still_retained["runner_id"] == failed_child["runner_id"]
+
+                async def _runner_dead(*_args: object, **_kwargs: object) -> str:
+                    return "dead"
+
+                monkeypatch.setattr(helpers, "_query_host_runner_status", _runner_dead)
+                stop = asyncio.Event()
+                maintenance = asyncio.create_task(
+                    _host_worktree.maintain_attempt_worktree_leases(
+                        app.state.host_registry,
+                        stop,
+                        conversation_store=SqlAlchemyConversationStore(db_uri),
+                        interval_s=0.01,
+                    )
+                )
+                try:
+                    async with asyncio.timeout(2):
+                        while followup_cap.remove == []:
+                            await asyncio.sleep(0.01)
+                finally:
+                    stop.set()
+                    await maintenance
+                recovered_child = (await client.get(f"/v1/sessions/{child_id}")).json()
+                assert recovered_child["runner_id"] is None
+                retained_after_recovery = run_store.list_active_worktree_leases(run.id)
+                assert len(retained_after_recovery) == 2
+                assert {lease.status.value for lease in retained_after_recovery} == {
+                    "recovery_required"
+                }
+        else:
+            assert failed_child["workspace"] == str(attempt_root)
+            retained = run_store.list_active_worktree_leases(run.id)
+            assert len(retained) == 2
+            assert {lease.status.value for lease in retained} == {
+                "recovery_required"
+            }
+            assert len(followup_cap.remove) == 2
+            assert failed_child["runner_id"] is None
+            assert len(followup_cap.launch) == 1
+        deleted = await client.delete(f"/v1/sessions/{child_id}")
+        assert deleted.status_code == 200, deleted.text
+        return
+
+    assert json.loads(followup)["conversation_id"] == child_id
+    followup_leases = run_store.list_active_worktree_leases(run.id)
+    assert len(followup_leases) == 2
+    followup_root = Path(
+        (await client.get(f"/v1/sessions/{child_id}")).json()["workspace"]
+    )
+    assert followup_root != attempt_root
+    assert {lease.worktree_path for lease in followup_leases} == {
+        str(followup_root / "api"),
+        str(followup_root / "web"),
+    }
+    assert len(followup_cap.launch) == 1
+    assert followup_cap.launch[-1].workspace == str(followup_root)
+    assert len(cap.remove) == removed_at_terminal
+
+    second_terminal = await client.post(
+        f"/v1/sessions/{child_id}/events",
+        json={"type": "external_session_status", "data": {"status": "idle"}},
+    )
+    assert second_terminal.status_code == 202, second_terminal.text
+    retained_second_attempt = run_store.list_active_worktree_leases(run.id)
+    assert len(retained_second_attempt) == 2
+    assert {lease.status.value for lease in retained_second_attempt} == {
+        "recovery_required"
+    }
+    assert len(followup_cap.remove) == 2
+
+    retry_payload = {
+        "type": "message",
+        "data": {
+            "role": "user",
+            "content": [{"type": "input_text", "text": "resume prepared dispatch"}],
+        },
+        "dispatch_source_id": "retry-after-dispatch-failure",
+    }
+    fail_dispatch_once = True
+    failed_dispatch = await client.post(
+        f"/v1/sessions/{child_id}/events",
+        json=retry_payload,
+    )
+    assert failed_dispatch.status_code == 503, failed_dispatch.text
+    prepared_attempts = run_store.list_attempts(run.id)
+    assert len(prepared_attempts) == 3
+    assert prepared_attempts[-1].status.value == "queued"
+    assert prepared_attempts[-1].dispatch_call_id is None
+    assert len(run_store.list_active_worktree_leases(run.id)) == 2
+    create_count = len(followup_cap.create)
+    launch_count = len(followup_cap.launch)
+
+    resumed = await client.post(f"/v1/sessions/{child_id}/events", json=retry_payload)
+    assert resumed.status_code == 202, resumed.text
+    assert resumed.json().get("replayed") is not True
+    assert dispatch_calls[-2:] == [
+        "retry-after-dispatch-failure",
+        "retry-after-dispatch-failure",
+    ]
+    assert len(run_store.list_attempts(run.id)) == 3
+    assert len(followup_cap.create) == create_count
+    assert len(followup_cap.launch) == launch_count
+
+    accepted_replay = await client.post(
+        f"/v1/sessions/{child_id}/events",
+        json=retry_payload,
+    )
+    assert accepted_replay.status_code == 202, accepted_replay.text
+    assert accepted_replay.json()["replayed"] is True
+    assert len(dispatch_calls) == 4
+
+    async def _stop_via_runner(*_args: object, **_kwargs: object) -> bool:
+        return True
+
+    monkeypatch.setattr(sessions_mod, "_stop_session_via_runner", _stop_via_runner)
+    prepared_terminal = await client.post(
+        f"/v1/sessions/{child_id}/events",
+        json={"type": "stop_session", "data": {}},
+    )
+    assert prepared_terminal.status_code == 202, prepared_terminal.text
+    assert run_store.list_active_worktree_leases(run.id) == ()
+    assert len(followup_cap.remove) == 6
+
+    concurrent_payloads = (
+        {
+            "type": "message",
+            "data": {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "concurrent a"}],
+            },
+            "dispatch_source_id": "concurrent-a",
+        },
+        {
+            "type": "message",
+            "data": {
+                "role": "user",
+                "content": [{"type": "input_text", "text": "concurrent b"}],
+            },
+            "dispatch_source_id": "concurrent-b",
+        },
+    )
+    concurrent = await asyncio.gather(
+        *(
+            client.post(f"/v1/sessions/{child_id}/events", json=body)
+            for body in concurrent_payloads
+        )
+    )
+    assert sorted(response.status_code for response in concurrent) == [202, 409]
+    assert len(run_store.list_tasks(run.id)) == 1
+    assert len(run_store.list_attempts(run.id)) == 4
+    assert len(run_store.list_active_worktree_leases(run.id)) == 2
+    assert len(followup_cap.launch) == 3
+    winning_index = next(i for i, response in enumerate(concurrent) if response.status_code == 202)
+
+    replay = await client.post(
+        f"/v1/sessions/{child_id}/events",
+        json=concurrent_payloads[winning_index],
+    )
+    assert replay.status_code == 202, replay.text
+    assert replay.json()["replayed"] is True
+    assert len(run_store.list_attempts(run.id)) == 4
+    assert len(followup_cap.launch) == 3
+
+    third_terminal = await client.post(
+        f"/v1/sessions/{child_id}/events",
+        json={"type": "external_session_status", "data": {"status": "idle"}},
+    )
+    assert third_terminal.status_code == 202, third_terminal.text
+    retained_third_attempt = run_store.list_active_worktree_leases(run.id)
+    assert len(retained_third_attempt) == 2
+    assert {lease.status.value for lease in retained_third_attempt} == {
+        "recovery_required"
+    }
+    assert len(followup_cap.remove) == 6
+
+    deleted = await client.delete(f"/v1/sessions/{child_id}")
+
+    assert deleted.status_code == 200, deleted.text
+    assert len(followup_cap.remove) == 8
+    assert run_store.list_active_worktree_leases(run.id) == ()
+
+
+async def test_native_run_child_terminal_failure_tears_down_and_allows_new_attempt(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from omnigent.server.routes import sessions as sessions_mod
+    from tests.server.integration.test_sessions_child_sessions import (
+        _bundle_with_harnessed_subagents,
+    )
+
+    cap = register_host()
+    bundle = _bundle_with_harnessed_subagents(
+        "native-run-coordinator",
+        [{"name": "worker", "harness": "claude-native"}],
+    )
+    created_agent = await client.post(
+        "/v1/sessions",
+        data={"metadata": json.dumps({})},
+        files={"bundle": ("agent.tar.gz", bundle, "application/gzip")},
+    )
+    assert created_agent.status_code == 201, created_agent.text
+    agent_response = await client.get(
+        f"/v1/sessions/{created_agent.json()['session_id']}/agent"
+    )
+    assert agent_response.status_code == 200, agent_response.text
+    agent = SqlAlchemyAgentStore(db_uri).get(agent_response.json()["id"])
+    assert agent is not None
+    snapshot = AgentBundleSnapshot.from_agent(agent)
+    run_store = SqlAlchemyRunStore(db_uri)
+    workspace = run_store.create_workspace(
+        root_path="/Users/alice/native-run",
+        repositories=(("api", "api"), ("web", "web")),
+    )
+    root = SqlAlchemyConversationStore(db_uri).create_conversation(
+        agent_id=agent.id,
+        host_id=_HOST_ID,
+        workspace=workspace.root_path,
+        agent_bundle_version=snapshot.bundle_version,
+        agent_bundle_digest=snapshot.bundle_digest,
+        agent_bundle_location=snapshot.bundle_location,
+    )
+    run = run_store.create_run_idempotent(
+        auth_scope="user:local",
+        actor_id=RESERVED_USER_LOCAL,
+        source="api:test",
+        source_event_id="native-terminal-failure",
+        agent_id=agent.id,
+        bundle_version=snapshot.bundle_version,
+        bundle_digest=snapshot.bundle_digest,
+        bundle_location=snapshot.bundle_location,
+        workspace_id=workspace.id,
+        root_session_id=root.id,
+    ).run
+    child_response = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent.id,
+            "parent_session_id": root.id,
+            "sub_agent_name": "worker",
+            "title": "native worker",
+            "dispatch_source_id": "create-native-worker",
+        },
+    )
+    assert child_response.status_code == 201, child_response.text
+    child_id = child_response.json()["id"]
+    forwarded_statuses: list[dict[str, object]] = []
+
+    def _runner_handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else {}
+        if request.url.path.endswith("/resources/terminals"):
+            return httpx.Response(
+                503,
+                json={
+                    "error": {
+                        "code": "native_terminal_start_failed",
+                        "message": "claude CLI unavailable",
+                    }
+                },
+            )
+        if body.get("type") == "external_session_status":
+            forwarded_statuses.append(body)
+        return httpx.Response(200, json={})
+
+    runner_http = httpx.AsyncClient(
+        transport=httpx.MockTransport(_runner_handler),
+        base_url="http://runner",
+    )
+
+    async def _runner_client(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
+        return runner_http
+
+    async def _relay_ready(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(sessions_mod, "_get_runner_client", _runner_client)
+    monkeypatch.setattr(sessions_mod, "_ensure_runner_relay_ready", _relay_ready)
+    try:
+        first_failure = await client.post(
+            f"/v1/sessions/{child_id}/events",
+            json={
+                "type": "message",
+                "data": {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "first attempt"}],
+                },
+                "dispatch_source_id": "native-failure-1",
+            },
+        )
+        assert first_failure.status_code == 202, first_failure.text
+        assert first_failure.json()["terminal"] == "failed"
+        assert first_failure.json().get("replayed") is not True
+        tasks = run_store.list_tasks(run.id)
+        attempts = run_store.list_attempts(run.id)
+        assert len(tasks) == 1
+        assert tasks[0].status.value == "failed"
+        assert len(attempts) == 1
+        assert attempts[0].status.value == "failed"
+        assert run_store.get_run(run.id).status.value == "failed"
+        retained_first_attempt = run_store.list_active_worktree_leases(run.id)
+        assert len(retained_first_attempt) == 2
+        assert {lease.status.value for lease in retained_first_attempt} == {
+            "recovery_required"
+        }
+        assert cap.remove == []
+        assert forwarded_statuses == [
+            {
+                "type": "external_session_status",
+                "data": {"status": "failed", "output": "claude CLI unavailable"},
+            }
+        ]
+
+        second_failure = await client.post(
+            f"/v1/sessions/{child_id}/events",
+            json={
+                "type": "message",
+                "data": {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "fresh attempt"}],
+                },
+                "dispatch_source_id": "native-failure-2",
+            },
+        )
+        assert second_failure.status_code == 202, second_failure.text
+        attempts = run_store.list_attempts(run.id)
+        assert len(attempts) == 2
+        assert attempts[0].id != attempts[1].id
+        assert attempts[1].status.value == "failed"
+        retained_second_attempt = run_store.list_active_worktree_leases(run.id)
+        assert len(retained_second_attempt) == 2
+        assert {lease.status.value for lease in retained_second_attempt} == {
+            "recovery_required"
+        }
+        assert len(cap.remove) == 2
+        assert len(forwarded_statuses) == 2
+    finally:
+        await runner_http.aclose()
+
+
+@pytest.mark.parametrize("denial", ["read_only_parent", "foreign_host"])
+async def test_run_child_authorizes_parent_and_host_before_reservation(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    denial: str,
+) -> None:
+    """Parent and Host authorization both precede Run and Host side effects."""
+    from omnigent.server.routes._sessions import orchestration
+
+    cap = register_host()
+    agent_payload = await create_test_agent(
+        client,
+        name="owner-gated-coordinator",
+        sub_agents=[{"name": "worker"}],
+    )
+    agent = SqlAlchemyAgentStore(db_uri).get(agent_payload["id"])
+    assert agent is not None
+    snapshot = AgentBundleSnapshot.from_agent(agent)
+    run_store = SqlAlchemyRunStore(db_uri)
+    workspace = run_store.create_workspace(
+        root_path="/Users/alice/owner-gated",
+        repositories=(("api", "api"), ("web", "web")),
+    )
+    root = SqlAlchemyConversationStore(db_uri).create_conversation(
+        agent_id=agent.id,
+        host_id=_HOST_ID,
+        workspace=workspace.root_path,
+        agent_bundle_version=snapshot.bundle_version,
+        agent_bundle_digest=snapshot.bundle_digest,
+        agent_bundle_location=snapshot.bundle_location,
+    )
+    run = run_store.create_run_idempotent(
+        auth_scope="user:reader",
+        actor_id="reader@example.com",
+        source="api:test",
+        source_event_id="owner-before-reservation",
+        agent_id=agent.id,
+        bundle_version=snapshot.bundle_version,
+        bundle_digest=snapshot.bundle_digest,
+        bundle_location=snapshot.bundle_location,
+        workspace_id=workspace.id,
+        root_session_id=root.id,
+    ).run
+
+    async def _read_only_access(
+        _user_id: str | None,
+        _session_id: str,
+        required_level: int,
+        *_args: object,
+    ) -> None:
+        if required_level == LEVEL_OWNER:
+            raise OmnigentError("owner required", code=ErrorCode.FORBIDDEN)
+
+    if denial == "read_only_parent":
+        monkeypatch.setattr(orchestration, "_require_access", _read_only_access)
+    else:
+        from omnigent.server.routes import _host_launch
+
+        def _foreign_host(**_kwargs: object) -> None:
+            raise HTTPException(status_code=403, detail="not your host")
+
+        monkeypatch.setattr(_host_launch, "resolve_host_owner", _foreign_host)
+    response = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent.id,
+            "parent_session_id": root.id,
+            "sub_agent_name": "worker",
+            "title": "worker:forbidden",
+            "dispatch_source_id": "sys_session_send:owner-before-reservation",
+        },
+    )
+    if response.status_code == 201:
+        await client.delete(f"/v1/sessions/{response.json()['id']}")
+
+    assert response.status_code == 403, response.text
+    assert run_store.list_tasks(run.id) == ()
+    assert run_store.list_attempts(run.id) == ()
+    assert cap.create == []
+    assert cap.launch == []
+
+
+@pytest.mark.parametrize("stop_status", ["ok", "failed"])
+async def test_run_child_rolls_back_after_create_time_host_launch_failure(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    app: FastAPI,
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    stop_status: str,
+) -> None:
+    """An unconfirmed runner stop retains the Child binding until maintenance."""
+    cap = register_host(launch_status="failed", stop_status=stop_status)
+    agent_payload = await create_test_agent(
+        client,
+        name="late-failure-coordinator",
+        sub_agents=[{"name": "worker"}],
+    )
+    agent = SqlAlchemyAgentStore(db_uri).get(agent_payload["id"])
+    assert agent is not None
+    snapshot = AgentBundleSnapshot.from_agent(agent)
+    conversation_store = SqlAlchemyConversationStore(db_uri)
+    run_store = SqlAlchemyRunStore(db_uri)
+    workspace = run_store.create_workspace(
+        root_path="/Users/alice/late-failure",
+        repositories=(("api", "api"), ("web", "web")),
+    )
+    root = conversation_store.create_conversation(
+        agent_id=agent.id,
+        host_id=_HOST_ID,
+        workspace=workspace.root_path,
+        agent_bundle_version=snapshot.bundle_version,
+        agent_bundle_digest=snapshot.bundle_digest,
+        agent_bundle_location=snapshot.bundle_location,
+    )
+    run = run_store.create_run_idempotent(
+        auth_scope="user:local",
+        actor_id=RESERVED_USER_LOCAL,
+        source="api:test",
+        source_event_id="late-host-launch-failure",
+        agent_id=agent.id,
+        bundle_version=snapshot.bundle_version,
+        bundle_digest=snapshot.bundle_digest,
+        bundle_location=snapshot.bundle_location,
+        workspace_id=workspace.id,
+        root_session_id=root.id,
+    ).run
+
+    response = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent.id,
+            "parent_session_id": root.id,
+            "sub_agent_name": "worker",
+            "title": "worker:late failure",
+            "dispatch_source_id": "sys_session_send:late-host-launch-failure",
+        },
+    )
+
+    assert response.status_code >= 400, response.text
+    assert "boom" in response.text
+    attempts = run_store.list_attempts(run.id)
+    assert len(attempts) == 1
+    assert attempts[0].status.value == "failed"
+    child_id = attempts[0].child_session_id
+    assert len(cap.create) == 2
+    if stop_status == "ok":
+        assert conversation_store.get_conversation(child_id) is None
+        assert run_store.list_active_worktree_leases(run.id) == ()
+        assert {frame.worktree_path for frame in cap.remove} == {
+            frame.target_path for frame in cap.create
+        }
+    else:
+        child = conversation_store.get_conversation(child_id)
+        assert child is not None
+        assert child.runner_id is not None
+        assert child.workspace is not None
+        retained = run_store.list_active_worktree_leases(run.id)
+        assert len(retained) == 2
+        assert {lease.status.value for lease in retained} == {"recovery_required"}
+        assert cap.remove == []
+
+        from omnigent.server.routes._sessions import helpers
+
+        async def _runner_status_alive(*_args: object, **_kwargs: object) -> str:
+            return "alive"
+
+        monkeypatch.setattr(helpers, "_query_host_runner_status", _runner_status_alive)
+        stop = asyncio.Event()
+        maintenance = asyncio.create_task(
+            _host_worktree.maintain_attempt_worktree_leases(
+                app.state.host_registry,
+                stop,
+                conversation_store=conversation_store,
+                interval_s=0.01,
+            )
+        )
+        try:
+            async with asyncio.timeout(2):
+                while len(cap.stop) < 2:
+                    await asyncio.sleep(0.01)
+        finally:
+            stop.set()
+            await maintenance
+        assert cap.remove == []
+        retained_child = conversation_store.get_conversation(child_id)
+        assert retained_child is not None
+        assert retained_child.runner_id == child.runner_id
+        assert retained_child.workspace == child.workspace
+        assert {lease.status.value for lease in run_store.list_active_worktree_leases(run.id)} == {
+            "recovery_required"
+        }
+
+        async def _runner_status_dead(*_args: object, **_kwargs: object) -> str:
+            return "dead"
+
+        monkeypatch.setattr(helpers, "_query_host_runner_status", _runner_status_dead)
+        original_recover = _host_worktree.recover_expired_attempt_worktree_leases
+        concurrent_rebind_results: list[object] = []
+
+        async def _recover_after_concurrent_rebind_attempt(**kwargs: object) -> object:
+            current = conversation_store.get_conversation(child_id)
+            if current is not None and not concurrent_rebind_results:
+                concurrent_rebind_results.append(
+                    conversation_store.compare_and_swap_host_runner_binding(
+                        child_id,
+                        expected_runner_id=current.runner_id,
+                        expected_workspace=current.workspace,
+                        host_id=current.host_id,
+                        workspace=f"{current.workspace}-replacement",
+                        runner_id="runner-concurrent-rebind",
+                    )
+                )
+            return await original_recover(**kwargs)
+
+        monkeypatch.setattr(
+            _host_worktree,
+            "recover_expired_attempt_worktree_leases",
+            _recover_after_concurrent_rebind_attempt,
+        )
+        stop = asyncio.Event()
+        maintenance = asyncio.create_task(
+            _host_worktree.maintain_attempt_worktree_leases(
+                app.state.host_registry,
+                stop,
+                conversation_store=conversation_store,
+                interval_s=0.01,
+            )
+        )
+        try:
+            async with asyncio.timeout(2):
+                while cap.remove == []:
+                    await asyncio.sleep(0.01)
+        finally:
+            stop.set()
+            await maintenance
+        assert len(cap.remove) == 2
+        assert concurrent_rebind_results == [None]
+        assert run_store.list_active_worktree_leases(run.id) == ()
+        assert conversation_store.get_conversation(child_id) is None
 
 
 async def _bare_session(client: httpx.AsyncClient, name: str) -> str:

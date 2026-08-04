@@ -1469,9 +1469,9 @@ async def test_native_subagent_message_uses_native_terminal_forward(
     A ``sys_session_send`` call creates a child session and then posts a
     user message to that child. If the child sub-agent uses
     ``claude-native`` or ``codex-native``, Omnigent must forward the prompt to
-    the runner's native terminal event shape and must not persist its
-    own AP-side copy; the native transcript forwarder is the single
-    writer for conversation items.
+    the runner's native terminal event shape. Omnigent persists one hidden
+    recovery source, while the native transcript forwarder remains the single
+    writer for visible conversation items.
 
     :param client: Test HTTP client.
     :param monkeypatch: Pytest monkeypatch fixture.
@@ -1555,40 +1555,44 @@ async def test_native_subagent_message_uses_native_terminal_forward(
 
     assert message_resp.status_code == 202, message_resp.text
     # Native (claude-/codex-native) message bypass returns queued=True plus a
-    # pending-input id: the message isn't persisted AP-side (the transcript
-    # forwarder is the single writer), so the server records a pending-input
-    # entry for the optimistic bubble and returns its id.
+    # hidden durable item id and a pending-input id for the optimistic bubble.
     message_body = message_resp.json()
     assert message_body["queued"] is True
+    assert isinstance(message_body["item_id"], str)
     assert message_body["pending_id"].startswith("pending_")
-    assert forwarded == [
-        {
-            "path": f"/v1/sessions/{child['id']}/resources/terminals",
-            "body": {
-                "terminal": expected_terminal,
-                "session_key": "main",
-                "ensure_native_terminal": True,
-            },
+    assert forwarded[0] == {
+        "path": f"/v1/sessions/{child['id']}/resources/terminals",
+        "body": {
+            "terminal": expected_terminal,
+            "session_key": "main",
+            "ensure_native_terminal": True,
         },
-        {
-            "path": f"/v1/sessions/{child['id']}/events",
-            "body": {
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": "build the patch"}],
-                "model": expected_model,
-                "harness": harness,
-                "agent_id": parent["agent_id"],
-            },
-        },
-    ]
+    }
+    forwarded_event = forwarded[1]
+    assert forwarded_event["path"] == f"/v1/sessions/{child['id']}/events"
+    assert forwarded_event["body"] == {
+        **forwarded_event["body"],
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "build the patch"}],
+        "model": expected_model,
+        "harness": harness,
+        "agent_id": parent["agent_id"],
+        "persisted_item_id": message_body["item_id"],
+        "runner_id": None,
+    }
+    assert (
+        forwarded_event["body"]["idempotency_key"]
+        == forwarded_event["body"]["dispatch_source_id"]
+    )
 
     items_resp = await client.get(f"/v1/sessions/{child['id']}/items")
     assert items_resp.status_code == 200, items_resp.text
-    assert items_resp.json()["data"] == [], (
-        "Native sub-agent prompts must not be persisted by AP; the native "
-        "forwarder mirrors accepted terminal transcript items later."
-    )
+    items = items_resp.json()["data"]
+    assert len(items) == 1
+    assert items[0]["id"] == message_body["item_id"]
+    assert items[0]["role"] == "user"
+    assert items[0]["is_meta"] is True
 
 
 async def test_non_native_subagent_session_has_no_terminal_ui_labels(

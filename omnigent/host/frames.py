@@ -439,6 +439,7 @@ class HostCreateWorktreeFrame:
     repo_path: str
     branch_name: str
     base_branch: str | None = None
+    target_path: str | None = None
 
 
 @dataclass
@@ -1020,6 +1021,7 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "repo_path": frame.repo_path,
                 "branch_name": frame.branch_name,
                 "base_branch": frame.base_branch,
+                "target_path": frame.target_path,
             }
         )
     if isinstance(frame, HostCreateWorktreeResultFrame):
@@ -1546,6 +1548,7 @@ def _decode_create_worktree(msg: _JsonObject) -> HostCreateWorktreeFrame:
         repo_path=_required_str(msg, "repo_path"),
         branch_name=_required_str(msg, "branch_name"),
         base_branch=_optional_nullable_str(msg, "base_branch"),
+        target_path=_optional_nullable_str(msg, "target_path"),
     )
 
 

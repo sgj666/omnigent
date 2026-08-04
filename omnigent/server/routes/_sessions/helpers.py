@@ -5596,6 +5596,7 @@ class _SessionEventDispatchResult:
 
     item_id: str | None
     pending_id: str | None
+    terminal_error: ErrorData | None = None
 
 
 def _extract_persistent_item_from_sse(

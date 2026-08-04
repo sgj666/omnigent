@@ -102,6 +102,7 @@ class Attempt:
     completed_at: int | None = None
     failure_code: str | None = None
     failure_message: str | None = None
+    retry_of_attempt_id: str | None = None
     source_event_id: str | None = None
     created_at: int = 0
     updated_at: int | None = None

@@ -23,12 +23,17 @@ class ASGISessionGateway:
             if key.lower() not in {"content-length", "content-type", "host"}
         }
 
-    async def create_root(self, command: RootSessionRequest, _actor_id: str) -> str:
+    async def create_root(self, command: RootSessionRequest, actor_id: str) -> str:
         payload: dict[str, Any] = {
             "agent_id": command.agent_id,
             "workspace": command.workspace,
             "host_id": command.host_id,
             "labels": {"run.execution_mode": command.execution_mode},
+            "expected_agent_bundle": {
+                "version": command.bundle_version,
+                "digest": command.bundle_digest,
+                "location": command.bundle_location,
+            },
         }
         response = await self._post("/v1/sessions", payload)
         session_id = response.get("id") or response.get("session_id")
@@ -40,11 +45,13 @@ class ASGISessionGateway:
         response_version = response.get("agent_bundle_version")
         response_digest = response.get("agent_bundle_digest")
         if response_version is not None and response_version != command.bundle_version:
+            await self.cleanup(session_id, actor_id)
             raise OmnigentError(
                 "Root Session Agent Bundle version changed during Run creation",
                 code=ErrorCode.CONFLICT,
             )
         if response_digest is not None and response_digest != command.bundle_digest:
+            await self.cleanup(session_id, actor_id)
             raise OmnigentError(
                 "Root Session Agent Bundle digest changed during Run creation",
                 code=ErrorCode.CONFLICT,
@@ -72,6 +79,10 @@ class ASGISessionGateway:
             f"/v1/sessions/{session_id}/events",
             {"type": "stop_session", "data": {}},
         )
+
+    async def cleanup(self, session_id: str, _actor_id: str) -> None:
+        """Delete a partially-created Root through Session lifecycle cleanup."""
+        await self._delete(f"/v1/sessions/{session_id}?delete_branch=true")
 
     async def decide_approval(
         self,
@@ -110,6 +121,22 @@ class ASGISessionGateway:
         }.get(response.status_code, ErrorCode.INTERNAL_ERROR)
         message = _error_message(response)
         raise OmnigentError(message, code=code)
+
+    async def _delete(self, path: str) -> None:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self._app),
+            base_url="http://omnigent.internal",
+            headers=self._headers,
+        ) as client:
+            response = await client.delete(path)
+        if response.is_success or response.status_code == 404:
+            return
+        code = {
+            401: ErrorCode.UNAUTHORIZED,
+            403: ErrorCode.FORBIDDEN,
+            409: ErrorCode.CONFLICT,
+        }.get(response.status_code, ErrorCode.INTERNAL_ERROR)
+        raise OmnigentError(_error_message(response), code=code)
 
 
 def _error_message(response: httpx.Response) -> str:

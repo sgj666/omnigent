@@ -87,6 +87,14 @@ class _TrackingAsyncClient:
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         self.closed = False
+        self.get_calls = 0
+
+    async def get(self, url: str, **_kwargs: Any) -> httpx.Response:
+        self.get_calls += 1
+        return httpx.Response(
+            503,
+            request=httpx.Request("GET", f"http://runner.test{url}"),
+        )
 
     async def aclose(self) -> None:
         self.closed = True
@@ -1458,7 +1466,8 @@ async def test_runner_shutdown_closes_terminal_registry(
     app = entry_mod.create_app()
     # starlette 1.x removed Router.startup/shutdown; drive the lifespan instead.
     async with app.router.lifespan_context(app):
-        pass
+        await asyncio.sleep(0)
+        assert async_clients and async_clients[0].get_calls == 1
 
     assert process_managers and process_managers[0].shutdown_called
     assert terminal_registries and terminal_registries[0].shutdown_called

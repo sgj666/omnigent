@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any, Protocol, cast
+from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import (
     ColumnElement,
@@ -20,6 +21,7 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import QueryableAttribute, Session, aliased, load_only
 from sqlalchemy.sql.selectable import Subquery
 
@@ -35,6 +37,7 @@ from omnigent.db.db_models import (
     SqlConversationMetadata,
     SqlPolicy,
     SqlProject,
+    SqlRunnerDispatchReceipt,
     SqlSessionPermission,
     SqlUserDailyCost,
     current_workspace_id,
@@ -2050,6 +2053,48 @@ class SqlAlchemyConversationStore(ConversationStore):
         conversation_id: str,
         items: list[NewConversationItem],
     ) -> list[ConversationItem]:
+        return self._append(conversation_id, items, item_ids=None)
+
+    def append_idempotent(
+        self,
+        conversation_id: str,
+        items: list[NewConversationItem],
+        *,
+        idempotency_key: str,
+    ) -> list[ConversationItem]:
+        """Append one item with a deterministic primary key shared by AP replicas."""
+        if len(items) != 1:
+            raise ValueError("append_idempotent requires exactly one item")
+        item_id = uuid5(
+            NAMESPACE_URL,
+            f"omnigent:conversation-item:{conversation_id}:{idempotency_key}",
+        ).hex
+        try:
+            return self._append(conversation_id, items, item_ids=(item_id,))
+        except IntegrityError:
+            with self._conv_session() as session:
+                row = session.execute(
+                    select(SqlConversationItem).where(
+                        SqlConversationItem.workspace_id == current_workspace_id(),
+                        SqlConversationItem.conversation_id == conversation_id,
+                        SqlConversationItem.id == item_id,
+                    )
+                ).scalar_one_or_none()
+                if row is None:
+                    raise
+                return [self._to_item_from_row(row)]
+
+    def _to_item_from_row(self, row: SqlConversationItem) -> ConversationItem:
+        data_json = self._decode_item_data_batch([row.data])[0]
+        return _to_item(row, data_json)
+
+    def _append(
+        self,
+        conversation_id: str,
+        items: list[NewConversationItem],
+        *,
+        item_ids: tuple[str, ...] | None,
+    ) -> list[ConversationItem]:
         """
         Append items to a conversation.
 
@@ -2105,7 +2150,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                 )
 
             fts_rows: list[tuple[str, str, str]] = []
-            for item in items:
+            for index, item in enumerate(items):
                 position = next_pos
                 next_pos += 1
                 data_dict = item.data.model_dump(exclude_none=True)
@@ -2115,7 +2160,11 @@ class SqlAlchemyConversationStore(ConversationStore):
                 # the whole INSERT aborts and the item never persists.
                 data = self._encode_item_data(strip_nul_bytes(json.dumps(data_dict)))
                 search = self._item_search_text(item)
-                item_id = generate_item_id(item.type)
+                item_id = (
+                    item_ids[index]
+                    if item_ids is not None
+                    else generate_item_id(item.type)
+                )
                 row = SqlConversationItem(
                     id=item_id,
                     conversation_id=conversation_id,
@@ -2899,6 +2948,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                     SqlConversationMetadata.id == conversation_id,
                 )
                 .where(SqlConversationMetadata.runner_id.is_(None))
+                .where(SqlConversationMetadata.recovery_attempt_id.is_(None))
                 .values(runner_id=runner_id)
             )
             result = cast(_RowCountResult, session.execute(stmt))
@@ -3016,6 +3066,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                 raise ConversationNotFoundError(
                     f"conversation {conversation_id!r} does not exist",
                 )
+            if meta.recovery_attempt_id is not None:
+                raise RuntimeError("conversation Host binding is claimed for recovery")
             meta.runner_id = runner_id
         with self._conv_session() as ap_sess:
             ap_row = ap_sess.get(SqlConversation, (current_workspace_id(), conversation_id))
@@ -3043,6 +3095,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                 raise ConversationNotFoundError(
                     f"conversation {conversation_id!r} does not exist",
                 )
+            if meta.recovery_attempt_id is not None:
+                raise RuntimeError("conversation Host binding is claimed for recovery")
             meta.runner_id = None
         with self._conv_session() as ap_sess:
             ap_row = ap_sess.get(SqlConversation, (current_workspace_id(), conversation_id))
@@ -3053,6 +3107,561 @@ class SqlAlchemyConversationStore(ConversationStore):
             ap_row.updated_at = now_epoch()
             labels = _fetch_labels(ap_sess, conversation_id)
         return _to_conversation(ap_row, meta, labels)
+
+    def compare_and_swap_host_runner_binding(
+        self,
+        conversation_id: str,
+        *,
+        expected_runner_id: str | None,
+        expected_workspace: str,
+        host_id: str,
+        workspace: str,
+        runner_id: str | None,
+    ) -> Conversation | None:
+        """Atomically rotate a Host-bound Session when its old binding still matches."""
+        from sqlalchemy import update
+
+        runner_match = (
+            SqlConversationMetadata.runner_id.is_(None)
+            if expected_runner_id is None
+            else SqlConversationMetadata.runner_id == expected_runner_id
+        )
+        with self._session() as session:
+            result = session.execute(
+                update(SqlConversationMetadata)
+                .where(
+                    SqlConversationMetadata.workspace_id == current_workspace_id(),
+                    SqlConversationMetadata.id == conversation_id,
+                    SqlConversationMetadata.host_id == host_id,
+                    SqlConversationMetadata.workspace == expected_workspace,
+                    SqlConversationMetadata.recovery_attempt_id.is_(None),
+                    runner_match,
+                )
+                .values(workspace=workspace, runner_id=runner_id)
+            )
+            if result.rowcount != 1:
+                return None
+        with self._conv_session() as ap_sess:
+            ap_row = ap_sess.get(SqlConversation, (current_workspace_id(), conversation_id))
+            if ap_row is None:
+                raise ConversationNotFoundError(
+                    f"conversation {conversation_id!r} does not exist",
+                )
+            ap_row.updated_at = now_epoch()
+        return self.get_conversation(conversation_id)
+
+    def claim_host_runner_recovery(
+        self,
+        conversation_id: str,
+        *,
+        attempt_id: str,
+        expected_runner_id: str | None,
+        expected_workspace: str,
+        host_id: str,
+    ) -> bool:
+        """Atomically freeze the exact Host binding selected for recovery."""
+        runner_match = (
+            SqlConversationMetadata.runner_id.is_(None)
+            if expected_runner_id is None
+            else SqlConversationMetadata.runner_id == expected_runner_id
+        )
+        claimed_runner_match = (
+            SqlConversationMetadata.recovery_runner_id.is_(None)
+            if expected_runner_id is None
+            else SqlConversationMetadata.recovery_runner_id == expected_runner_id
+        )
+        with self._session() as session:
+            result = session.execute(
+                update(SqlConversationMetadata)
+                .where(
+                    SqlConversationMetadata.workspace_id == current_workspace_id(),
+                    SqlConversationMetadata.id == conversation_id,
+                    SqlConversationMetadata.host_id == host_id,
+                    SqlConversationMetadata.workspace == expected_workspace,
+                    runner_match,
+                    or_(
+                        SqlConversationMetadata.recovery_attempt_id.is_(None),
+                        and_(
+                            SqlConversationMetadata.recovery_attempt_id == attempt_id,
+                            claimed_runner_match,
+                            SqlConversationMetadata.recovery_workspace == expected_workspace,
+                        ),
+                    ),
+                )
+                .values(
+                    recovery_attempt_id=attempt_id,
+                    recovery_runner_id=expected_runner_id,
+                    recovery_workspace=expected_workspace,
+                )
+            )
+            return result.rowcount == 1
+
+    def finalize_host_runner_recovery(
+        self,
+        conversation_id: str,
+        *,
+        attempt_id: str,
+        expected_runner_id: str | None,
+        expected_workspace: str,
+        host_id: str,
+    ) -> bool:
+        """Clear a claimed retry binding only when every claim field matches."""
+        runner_match = (
+            SqlConversationMetadata.runner_id.is_(None)
+            if expected_runner_id is None
+            else SqlConversationMetadata.runner_id == expected_runner_id
+        )
+        claimed_runner_match = (
+            SqlConversationMetadata.recovery_runner_id.is_(None)
+            if expected_runner_id is None
+            else SqlConversationMetadata.recovery_runner_id == expected_runner_id
+        )
+        with self._session() as session:
+            result = session.execute(
+                update(SqlConversationMetadata)
+                .where(
+                    SqlConversationMetadata.workspace_id == current_workspace_id(),
+                    SqlConversationMetadata.id == conversation_id,
+                    SqlConversationMetadata.host_id == host_id,
+                    SqlConversationMetadata.workspace == expected_workspace,
+                    SqlConversationMetadata.recovery_attempt_id == attempt_id,
+                    SqlConversationMetadata.recovery_workspace == expected_workspace,
+                    claimed_runner_match,
+                    runner_match,
+                )
+                .values(
+                    runner_id=None,
+                    recovery_attempt_id=None,
+                    recovery_runner_id=None,
+                    recovery_workspace=None,
+                )
+            )
+            return result.rowcount == 1
+
+    def list_host_runner_recovery_claims(self) -> list[dict[str, Any]]:
+        """Return active claims independently of the worktree-lease table."""
+        with self._session() as session:
+            rows = session.execute(
+                select(SqlConversationMetadata).where(
+                    SqlConversationMetadata.workspace_id == current_workspace_id(),
+                    SqlConversationMetadata.recovery_attempt_id.is_not(None),
+                )
+            ).scalars()
+            return [
+                {
+                    "conversation_id": row.id,
+                    "attempt_id": row.recovery_attempt_id,
+                    "runner_id": row.recovery_runner_id,
+                    "workspace": row.recovery_workspace,
+                    "host_id": row.host_id,
+                }
+                for row in rows
+            ]
+
+    def list_host_runner_recovery_claim_workspace_ids(self) -> list[int]:
+        """Enumerate tenant IDs containing durable Host recovery claims."""
+        with self._session() as session:
+            rows = session.execute(
+                select(SqlConversationMetadata.workspace_id)
+                .where(SqlConversationMetadata.recovery_attempt_id.is_not(None))
+                .distinct()
+                .order_by(SqlConversationMetadata.workspace_id)
+            ).scalars()
+            return [int(workspace_id) for workspace_id in rows]
+
+    async def delete_conversation_if_host_runner_recovery_claimed(
+        self,
+        conversation_id: str,
+        *,
+        attempt_id: str,
+        expected_runner_id: str | None,
+        expected_workspace: str,
+        host_id: str,
+    ) -> bool:
+        """Delete only the Child frozen by the exact durable recovery claim."""
+        runner_match = (
+            SqlConversationMetadata.runner_id.is_(None)
+            if expected_runner_id is None
+            else SqlConversationMetadata.runner_id == expected_runner_id
+        )
+        claimed_runner_match = (
+            SqlConversationMetadata.recovery_runner_id.is_(None)
+            if expected_runner_id is None
+            else SqlConversationMetadata.recovery_runner_id == expected_runner_id
+        )
+        with self._session() as session:
+            claimed = session.execute(
+                select(SqlConversationMetadata.id).where(
+                    SqlConversationMetadata.workspace_id == current_workspace_id(),
+                    SqlConversationMetadata.id == conversation_id,
+                    SqlConversationMetadata.host_id == host_id,
+                    SqlConversationMetadata.workspace == expected_workspace,
+                    SqlConversationMetadata.recovery_attempt_id == attempt_id,
+                    SqlConversationMetadata.recovery_workspace == expected_workspace,
+                    claimed_runner_match,
+                    runner_match,
+                )
+            ).scalar_one_or_none()
+        if claimed is None:
+            return False
+        # All binding writers reject a live claim.  Keeping the claim in place
+        # through delete_conversation closes the check/delete window.
+        return await self.delete_conversation(conversation_id)
+
+    @staticmethod
+    def _runner_dispatch_receipt_dict(row: SqlRunnerDispatchReceipt) -> dict[str, Any]:
+        return {
+            "conversation_id": row.conversation_id,
+            "idempotency_key": row.idempotency_key,
+            "runner_id": row.runner_id,
+            "phase": row.phase,
+            "persisted_item_id": row.persisted_item_id,
+            "enqueue_position": row.enqueue_position,
+            "execution_owner_id": row.execution_owner_id,
+            "result": json.loads(row.result) if row.result is not None else None,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+            "started_at": row.started_at,
+            "completed_at": row.completed_at,
+            "effects_status": row.effects_status,
+            "effects_attempt_count": row.effects_attempt_count,
+            "effects_last_error": row.effects_last_error,
+            "effects_completed_at": row.effects_completed_at,
+        }
+
+    def claim_runner_dispatch_receipt(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str,
+        runner_id: str,
+        persisted_item_id: str,
+        execution_owner_id: str,
+    ) -> dict[str, Any]:
+        """Durably enqueue one persisted conversation item exactly once."""
+        if not idempotency_key or len(idempotency_key) > 128:
+            raise ValueError("idempotency_key must contain 1..128 characters")
+        with self._conv_session() as ap_session:
+            enqueue_position = ap_session.execute(
+                select(SqlConversationItem.position).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.id == persisted_item_id,
+                )
+            ).scalar_one_or_none()
+        if enqueue_position is None:
+            raise ValueError("persisted item does not belong to the conversation")
+        now = now_epoch()
+        key = (current_workspace_id(), conversation_id, idempotency_key)
+        try:
+            with self._session_immediate() as session:
+                session.execute(
+                    delete(SqlRunnerDispatchReceipt).where(
+                        SqlRunnerDispatchReceipt.workspace_id == current_workspace_id(),
+                        SqlRunnerDispatchReceipt.phase.in_(
+                            ("completed", "failed", "cancelled")
+                        ),
+                        SqlRunnerDispatchReceipt.effects_status == "completed",
+                        SqlRunnerDispatchReceipt.completed_at.is_not(None),
+                        SqlRunnerDispatchReceipt.completed_at < now - 30 * 24 * 60 * 60,
+                    )
+                )
+                meta = session.get(
+                    SqlConversationMetadata,
+                    (current_workspace_id(), conversation_id),
+                )
+                if meta is None or meta.runner_id != runner_id:
+                    raise ValueError("runner is not bound to the conversation")
+                row = session.get(SqlRunnerDispatchReceipt, key)
+                created = row is None
+                if row is None:
+                    row = SqlRunnerDispatchReceipt(
+                        workspace_id=current_workspace_id(),
+                        conversation_id=conversation_id,
+                        idempotency_key=idempotency_key,
+                        runner_id=runner_id,
+                        phase="queued",
+                        persisted_item_id=persisted_item_id,
+                        enqueue_position=enqueue_position,
+                        execution_owner_id=execution_owner_id,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    session.add(row)
+                    session.flush()
+                elif row.runner_id != runner_id or row.persisted_item_id != persisted_item_id:
+                    raise ValueError("idempotency key conflicts with an existing dispatch")
+                result = self._runner_dispatch_receipt_dict(row)
+                result["created"] = created
+            return result
+        except IntegrityError:
+            # A non-SQLite backend may race two first claims past the read.
+            # The composite primary key chooses the winner; return that same
+            # durable receipt to the loser instead of surfacing a transient 500.
+            existing = self.get_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=idempotency_key,
+            )
+            if (
+                existing is None
+                or existing["runner_id"] != runner_id
+                or existing["persisted_item_id"] != persisted_item_id
+            ):
+                raise
+            existing["created"] = False
+            return existing
+
+    def get_runner_dispatch_receipt(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        with self._session() as session:
+            row = session.get(
+                SqlRunnerDispatchReceipt,
+                (current_workspace_id(), conversation_id, idempotency_key),
+            )
+            return self._runner_dispatch_receipt_dict(row) if row is not None else None
+
+    def list_recoverable_runner_dispatch_receipts(
+        self,
+        runner_id: str,
+    ) -> list[dict[str, Any]]:
+        with self._session() as session:
+            rows = session.execute(
+                select(SqlRunnerDispatchReceipt)
+                .where(
+                    SqlRunnerDispatchReceipt.workspace_id == current_workspace_id(),
+                    SqlRunnerDispatchReceipt.runner_id == runner_id,
+                    SqlRunnerDispatchReceipt.phase.in_(("queued", "running")),
+                )
+                .order_by(
+                    SqlRunnerDispatchReceipt.conversation_id,
+                    SqlRunnerDispatchReceipt.enqueue_position,
+                )
+            ).scalars()
+            return [self._runner_dispatch_receipt_dict(row) for row in rows]
+
+    def transition_runner_dispatch_receipt(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str,
+        runner_id: str,
+        execution_owner_id: str,
+        expected_phases: tuple[str, ...],
+        phase: str,
+        result: dict[str, Any] | None = None,
+        allow_takeover: bool = False,
+    ) -> dict[str, Any] | None:
+        """CAS a receipt phase and its runner-process execution owner."""
+        allowed_edges = {
+            ("queued", "running"),
+            ("running", "completed"),
+            ("running", "failed"),
+            ("running", "cancelled"),
+        }
+        if len(expected_phases) != 1 or (expected_phases[0], phase) not in allowed_edges:
+            raise ValueError("invalid dispatch receipt transition")
+        indeterminate_takeover = (
+            allow_takeover
+            and expected_phases == ("running",)
+            and phase == "failed"
+            and isinstance(result, dict)
+            and result.get("failure_code") == "runner_restarted_during_execution"
+        )
+        if allow_takeover and not indeterminate_takeover:
+            raise ValueError("dispatch receipt takeover is only valid for indeterminate failure")
+        now = now_epoch()
+        owner_match = or_(
+            SqlRunnerDispatchReceipt.phase == "queued",
+            SqlRunnerDispatchReceipt.execution_owner_id == execution_owner_id,
+        )
+        if indeterminate_takeover:
+            owner_match = SqlRunnerDispatchReceipt.phase == "running"
+        values: dict[str, Any] = {
+            "phase": phase,
+            "execution_owner_id": execution_owner_id,
+            "updated_at": now,
+        }
+        if phase == "running":
+            values["started_at"] = now
+            values["completed_at"] = None
+            values["result"] = None
+            values["effects_status"] = "completed"
+            values["effects_completed_at"] = None
+            values["effects_last_error"] = None
+        if phase in {"completed", "failed", "cancelled"}:
+            values["completed_at"] = now
+            values["result"] = json.dumps(result or {}, separators=(",", ":"))
+            values["effects_status"] = "completed"
+            values["effects_completed_at"] = now
+            values["effects_last_error"] = None
+        if (
+            phase == "failed"
+            and isinstance(result, dict)
+            and result.get("failure_code") == "runner_restarted_during_execution"
+        ):
+            values["effects_status"] = "pending"
+            values["effects_completed_at"] = None
+            values["effects_last_error"] = None
+        with self._session() as session:
+            updated = session.execute(
+                update(SqlRunnerDispatchReceipt)
+                .where(
+                    SqlRunnerDispatchReceipt.workspace_id == current_workspace_id(),
+                    SqlRunnerDispatchReceipt.conversation_id == conversation_id,
+                    SqlRunnerDispatchReceipt.idempotency_key == idempotency_key,
+                    SqlRunnerDispatchReceipt.runner_id == runner_id,
+                    SqlRunnerDispatchReceipt.phase.in_(expected_phases),
+                    owner_match,
+                )
+                .values(**values)
+            )
+            if updated.rowcount != 1:
+                return None
+            row = session.get(
+                SqlRunnerDispatchReceipt,
+                (current_workspace_id(), conversation_id, idempotency_key),
+            )
+            return self._runner_dispatch_receipt_dict(row)
+
+    def list_pending_runner_dispatch_effects(self) -> list[dict[str, Any]]:
+        """Return indeterminate terminal receipts with incomplete effects."""
+        with self._session() as session:
+            rows = session.execute(
+                select(SqlRunnerDispatchReceipt)
+                .where(
+                    SqlRunnerDispatchReceipt.workspace_id == current_workspace_id(),
+                    SqlRunnerDispatchReceipt.effects_status == "pending",
+                )
+                .order_by(
+                    SqlRunnerDispatchReceipt.updated_at,
+                    SqlRunnerDispatchReceipt.conversation_id,
+                    SqlRunnerDispatchReceipt.idempotency_key,
+                )
+            ).scalars()
+            return [self._runner_dispatch_receipt_dict(row) for row in rows]
+
+    def list_pending_runner_dispatch_effect_workspace_ids(self) -> list[int]:
+        """Enumerate tenant IDs for the internal pending-effects maintenance loop."""
+        with self._session() as session:
+            workspace_ids = session.execute(
+                select(SqlRunnerDispatchReceipt.workspace_id)
+                .where(SqlRunnerDispatchReceipt.effects_status == "pending")
+                .distinct()
+                .order_by(SqlRunnerDispatchReceipt.workspace_id)
+            ).scalars()
+            return [int(workspace_id) for workspace_id in workspace_ids]
+
+    def complete_runner_dispatch_effects(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        """CAS one effects outbox entry from pending to completed."""
+        now = now_epoch()
+        with self._session() as session:
+            updated = session.execute(
+                update(SqlRunnerDispatchReceipt)
+                .where(
+                    SqlRunnerDispatchReceipt.workspace_id == current_workspace_id(),
+                    SqlRunnerDispatchReceipt.conversation_id == conversation_id,
+                    SqlRunnerDispatchReceipt.idempotency_key == idempotency_key,
+                    SqlRunnerDispatchReceipt.effects_status == "pending",
+                )
+                .values(
+                    effects_status="completed",
+                    effects_completed_at=now,
+                    effects_last_error=None,
+                    effects_attempt_count=SqlRunnerDispatchReceipt.effects_attempt_count + 1,
+                    updated_at=now,
+                )
+            )
+            if updated.rowcount != 1:
+                return None
+            row = session.get(
+                SqlRunnerDispatchReceipt,
+                (current_workspace_id(), conversation_id, idempotency_key),
+            )
+            return self._runner_dispatch_receipt_dict(row)
+
+    def record_runner_dispatch_effect_failure(
+        self,
+        conversation_id: str,
+        *,
+        idempotency_key: str,
+        error: str,
+    ) -> dict[str, Any] | None:
+        """Record one failed attempt without consuming the pending outbox entry."""
+        now = now_epoch()
+        with self._session() as session:
+            updated = session.execute(
+                update(SqlRunnerDispatchReceipt)
+                .where(
+                    SqlRunnerDispatchReceipt.workspace_id == current_workspace_id(),
+                    SqlRunnerDispatchReceipt.conversation_id == conversation_id,
+                    SqlRunnerDispatchReceipt.idempotency_key == idempotency_key,
+                    SqlRunnerDispatchReceipt.effects_status == "pending",
+                )
+                .values(
+                    effects_last_error=error[:2048],
+                    effects_attempt_count=SqlRunnerDispatchReceipt.effects_attempt_count + 1,
+                    updated_at=now,
+                )
+            )
+            if updated.rowcount != 1:
+                return None
+            row = session.get(
+                SqlRunnerDispatchReceipt,
+                (current_workspace_id(), conversation_id, idempotency_key),
+            )
+            return self._runner_dispatch_receipt_dict(row)
+
+    def build_runner_dispatch_request(
+        self,
+        conversation_id: str,
+        *,
+        persisted_item_id: str,
+        idempotency_key: str,
+        runner_id: str,
+    ) -> dict[str, Any] | None:
+        """Reconstruct recovery input without duplicating message content in receipts."""
+        conv = self.get_conversation(conversation_id)
+        if conv is None or conv.runner_id != runner_id:
+            return None
+        with self._conv_session() as session:
+            row = session.execute(
+                select(SqlConversationItem).where(
+                    SqlConversationItem.workspace_id == current_workspace_id(),
+                    SqlConversationItem.conversation_id == conversation_id,
+                    SqlConversationItem.id == persisted_item_id,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            item = self._to_item_from_row(row)
+        if item.type != "message" or not hasattr(item.data, "model_dump"):
+            return None
+        body: dict[str, Any] = {
+            "type": "message",
+            **item.data.model_dump(mode="json", exclude_none=True),
+            "agent_id": conv.agent_id,
+            "model": conv.agent_id or "",
+            "persisted_item_id": persisted_item_id,
+            "dispatch_source_id": idempotency_key,
+            "idempotency_key": idempotency_key,
+            "runner_id": runner_id,
+        }
+        if item.created_by is not None:
+            body["created_by"] = item.created_by
+        if conv.model_override is not None:
+            body["model_override"] = conv.model_override
+        if conv.harness_override is not None and conv.harness_override != "auto":
+            body["harness_override"] = conv.harness_override
+        return body
 
     def clear_host_binding(self, conversation_id: str) -> Conversation:
         """
@@ -3075,6 +3684,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                 raise ConversationNotFoundError(
                     f"conversation {conversation_id!r} does not exist",
                 )
+            if meta.recovery_attempt_id is not None:
+                raise RuntimeError("conversation Host binding is claimed for recovery")
             meta.host_id = None
             meta.workspace = None
             meta.git_branch = None
@@ -3184,6 +3795,8 @@ class SqlAlchemyConversationStore(ConversationStore):
                 raise ConversationNotFoundError(
                     f"conversation {conversation_id!r} does not exist",
                 )
+            if meta.recovery_attempt_id is not None:
+                raise RuntimeError("conversation Host binding is claimed for recovery")
             meta.host_id = host_id
             if workspace is not None:
                 meta.workspace = workspace
@@ -4121,6 +4734,12 @@ class SqlAlchemyConversationStore(ConversationStore):
                 delete(SqlSessionPermission).where(
                     SqlSessionPermission.workspace_id == current_workspace_id(),
                     SqlSessionPermission.conversation_id.in_(subtree_ids),
+                )
+            )
+            session.execute(
+                delete(SqlRunnerDispatchReceipt).where(
+                    SqlRunnerDispatchReceipt.workspace_id == current_workspace_id(),
+                    SqlRunnerDispatchReceipt.conversation_id.in_(subtree_ids),
                 )
             )
             session.execute(

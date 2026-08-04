@@ -351,6 +351,7 @@ def create_worktree(
     repo_path: str,
     branch_name: str,
     base_branch: str | None = None,
+    target_path: str | None = None,
 ) -> CreatedWorktree:
     """Create a git worktree with a new branch checked out.
 
@@ -386,7 +387,11 @@ def create_worktree(
         )
     if base_branch is not None:
         _ensure_base_resolvable(repo_root, base_branch)
-    worktree_path = _resolve_worktree_path(repo_root, branch_name)
+    worktree_path = (
+        _validated_target_worktree_path(repo_root, target_path)
+        if target_path is not None
+        else _resolve_worktree_path(repo_root, branch_name)
+    )
     worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
     add_args = ["worktree", "add", "-b", branch_name, str(worktree_path)]
@@ -398,6 +403,28 @@ def create_worktree(
     if result.returncode != 0:
         raise _git_error("git worktree add failed", result)
     return CreatedWorktree(worktree_path=str(worktree_path), branch=branch_name)
+
+
+def _validated_target_worktree_path(repo_root: str, target_path: str) -> Path:
+    """Validate an AP-selected target inside a canonical sibling worktree root."""
+    target = Path(target_path)
+    if not target.is_absolute():
+        raise WorktreeError("target worktree path must be absolute")
+    canonical_target = target.resolve(strict=False)
+    canonical_repo = Path(repo_root).resolve()
+    if canonical_target == canonical_repo or canonical_target.exists():
+        raise WorktreeError("target worktree path already exists")
+    allowed = False
+    for ancestor in canonical_repo.parents:
+        if ancestor == ancestor.parent:
+            break
+        allowed_root = ancestor.parent / f"{ancestor.name}-worktrees"
+        if canonical_target.is_relative_to(allowed_root):
+            allowed = canonical_target != allowed_root
+            break
+    if not allowed:
+        raise WorktreeError("target worktree path is outside an allowed sibling worktree root")
+    return canonical_target
 
 
 def _main_repo_for_worktree(worktree_path: str) -> str:
@@ -446,9 +473,14 @@ def remove_worktree(
         deletion.
     :param delete_branch: When ``True``, run ``git branch -D`` on
         ``branch`` after removing the worktree directory.
-    :raises WorktreeError: If the worktree path is missing/invalid, or
-        a git command fails.
+    A missing path is an idempotent success: a previous process may have
+    removed it and crashed before persisting the durable lease release.
+
+    :raises WorktreeError: If the worktree path is invalid, or a git command
+        fails.
     """
+    if not Path(worktree_path).exists():
+        return
     main_repo = _main_repo_for_worktree(worktree_path)
     remove_result = _run_git(
         ["worktree", "remove", "--force", worktree_path],
@@ -460,3 +492,15 @@ def remove_worktree(
         branch_result = _run_git(["branch", "-D", branch], cwd=main_repo)
         if branch_result.returncode != 0:
             raise _git_error("git branch -D failed", branch_result)
+    _prune_empty_attempt_directories(Path(worktree_path).resolve())
+
+
+def _prune_empty_attempt_directories(worktree_path: Path) -> None:
+    """Remove only empty descendants below a canonical ``*-worktrees`` root."""
+    current = worktree_path.parent
+    while not current.name.endswith("-worktrees") and current != current.parent:
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent

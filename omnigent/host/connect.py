@@ -2057,6 +2057,7 @@ class HostProcess:
                     repo_path=frame.repo_path,
                     branch_name=frame.branch_name,
                     base_branch=frame.base_branch,
+                    target_path=frame.target_path,
                 )
         except WorktreeError as exc:
             return HostCreateWorktreeResultFrame(

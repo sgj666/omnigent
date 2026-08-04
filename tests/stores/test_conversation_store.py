@@ -620,6 +620,52 @@ def test_append_and_list_items(conversation_store: SqlAlchemyConversationStore) 
     assert page.data[1].data.role == "assistant"
 
 
+def test_idempotent_append_deduplicates_across_store_instances(
+    conversation_store: SqlAlchemyConversationStore,
+    db_uri: str,
+) -> None:
+    import threading
+
+    conv = conversation_store.create_conversation()
+    stores = (conversation_store, SqlAlchemyConversationStore(db_uri))
+    barrier = threading.Barrier(2)
+    item_ids: list[str] = []
+    errors: list[BaseException] = []
+    result_lock = threading.Lock()
+    item = NewConversationItem(
+        type="message",
+        response_id="turn_retry_safe",
+        data=MessageData(
+            role="user",
+            content=[{"type": "input_text", "text": "retry-safe"}],
+        ),
+    )
+
+    def _append(store: SqlAlchemyConversationStore) -> None:
+        try:
+            barrier.wait()
+            [persisted] = store.append_idempotent(
+                conv.id,
+                [item],
+                idempotency_key="stable-dispatch-key",
+            )
+            with result_lock:
+                item_ids.append(persisted.id)
+        except BaseException as exc:
+            with result_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=_append, args=(store,)) for store in stores]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert len(set(item_ids)) == 1
+    assert [item.id for item in conversation_store.list_items(conv.id).data] == item_ids[:1]
+
+
 def test_append_records_human_author_attribution(
     conversation_store: SqlAlchemyConversationStore,
 ) -> None:
@@ -2828,6 +2874,384 @@ def test_set_host_id_with_workspace_satisfies_constraint(
     )
     assert updated.host_id == "8f48061706cb92d5e7cd7c4aadc56ef0"
     assert updated.workspace == "/Users/corey/projects/myapp"
+
+
+def test_compare_and_swap_host_runner_binding(
+    conversation_store: SqlAlchemyConversationStore,
+    db_uri: str,
+) -> None:
+    host_id = "7f48061706cb92d5e7cd7c4aadc56ef1"
+    _register_host(db_uri, host_id)
+    conv = conversation_store.create_conversation(
+        host_id=host_id,
+        workspace="/workspace/attempt-1",
+        runner_id="runner-1",
+    )
+
+    rebound = conversation_store.compare_and_swap_host_runner_binding(
+        conv.id,
+        expected_runner_id="runner-1",
+        expected_workspace="/workspace/attempt-1",
+        host_id=host_id,
+        workspace="/workspace/attempt-2",
+        runner_id="runner-2",
+    )
+    stale = conversation_store.compare_and_swap_host_runner_binding(
+        conv.id,
+        expected_runner_id="runner-1",
+        expected_workspace="/workspace/attempt-1",
+        host_id=host_id,
+        workspace="/workspace/stale",
+        runner_id="runner-stale",
+    )
+
+    assert rebound is not None
+    assert rebound.workspace == "/workspace/attempt-2"
+    assert rebound.runner_id == "runner-2"
+    assert stale is None
+
+
+def test_recovery_claim_blocks_host_runner_rebind_until_finalized(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    """A claimed recovery workspace cannot be rebound while it is being removed."""
+    conv = conversation_store.create_conversation(
+        host_id="11111111111111111111111111111111",
+        workspace="/tmp/attempt-old",
+        runner_id="runner-old",
+    )
+
+    assert conversation_store.claim_host_runner_recovery(
+        conv.id,
+        attempt_id="22222222222222222222222222222222",
+        expected_runner_id="runner-old",
+        expected_workspace="/tmp/attempt-old",
+        host_id="11111111111111111111111111111111",
+    )
+    assert (
+        conversation_store.compare_and_swap_host_runner_binding(
+            conv.id,
+            expected_runner_id="runner-old",
+            expected_workspace="/tmp/attempt-old",
+            host_id="11111111111111111111111111111111",
+            workspace="/tmp/attempt-new",
+            runner_id="runner-new",
+        )
+        is None
+    )
+    claimed = conversation_store.get_conversation(conv.id)
+    assert claimed is not None
+    assert claimed.runner_id == "runner-old"
+    assert claimed.workspace == "/tmp/attempt-old"
+
+    assert conversation_store.finalize_host_runner_recovery(
+        conv.id,
+        attempt_id="22222222222222222222222222222222",
+        expected_runner_id="runner-old",
+        expected_workspace="/tmp/attempt-old",
+        host_id="11111111111111111111111111111111",
+    )
+    finalized = conversation_store.get_conversation(conv.id)
+    assert finalized is not None
+    assert finalized.runner_id is None
+    assert finalized.workspace == "/tmp/attempt-old"
+
+
+def test_stranded_recovery_claim_is_finalized_without_remaining_leases(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    """A worker crash after lease release cannot leave the binding frozen forever."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from omnigent.server.routes._host_worktree import (
+        _finalize_stranded_recovery_claims,
+    )
+
+    conv = conversation_store.create_conversation(
+        host_id="11111111111111111111111111111111",
+        workspace="/tmp/stranded-attempt",
+        runner_id="runner-stranded",
+    )
+    attempt_id = "33333333333333333333333333333333"
+    assert conversation_store.claim_host_runner_recovery(
+        conv.id,
+        attempt_id=attempt_id,
+        expected_runner_id="runner-stranded",
+        expected_workspace="/tmp/stranded-attempt",
+        host_id="11111111111111111111111111111111",
+    )
+
+    manager = SimpleNamespace(
+        for_attempt=lambda _attempt_id: (),
+        recovery_should_delete_child=lambda _attempt_id: False,
+    )
+    asyncio.run(
+        _finalize_stranded_recovery_claims(
+            manager=manager,
+            claims=conversation_store.list_host_runner_recovery_claims(),
+            conversation_store=conversation_store,
+        )
+    )
+
+    recovered = conversation_store.get_conversation(conv.id)
+    assert recovered is not None
+    assert recovered.runner_id is None
+    assert conversation_store.set_runner_id(conv.id, "runner-after-recovery")
+
+
+def test_runner_dispatch_receipt_is_durable_and_deleted_with_session(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    """Receipt ownership and terminal state survive store re-instantiation."""
+    conv = conversation_store.create_conversation(runner_id="runner-durable")
+    item = conversation_store.append_idempotent(
+        conv.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn_durable",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "resume me"}],
+                ),
+            )
+        ],
+        idempotency_key="dispatch-durable",
+    )[0]
+
+    queued = conversation_store.claim_runner_dispatch_receipt(
+        conv.id,
+        idempotency_key="dispatch-durable",
+        runner_id="runner-durable",
+        persisted_item_id=item.id,
+        execution_owner_id="generation-a",
+    )
+    assert queued["phase"] == "queued"
+    running = conversation_store.transition_runner_dispatch_receipt(
+        conv.id,
+        idempotency_key="dispatch-durable",
+        runner_id="runner-durable",
+        execution_owner_id="generation-a",
+        expected_phases=("queued",),
+        phase="running",
+    )
+    assert running is not None
+    assert running["phase"] == "running"
+
+    restarted = SqlAlchemyConversationStore(conversation_store.storage_location)
+    recovered = restarted.list_recoverable_runner_dispatch_receipts("runner-durable")
+    assert [(r["idempotency_key"], r["phase"]) for r in recovered] == [
+        ("dispatch-durable", "running")
+    ]
+    completed = restarted.transition_runner_dispatch_receipt(
+        conv.id,
+        idempotency_key="dispatch-durable",
+        runner_id="runner-durable",
+        execution_owner_id="generation-a",
+        expected_phases=("running",),
+        phase="completed",
+        result={"status": "accepted", "detail": "Turn completed."},
+    )
+    assert completed is not None
+    assert completed["phase"] == "completed"
+
+    import asyncio
+
+    assert asyncio.run(restarted.delete_conversation(conv.id))
+    assert (
+        restarted.get_runner_dispatch_receipt(
+            conv.id,
+            idempotency_key="dispatch-durable",
+        )
+        is None
+    )
+
+
+def test_runner_dispatch_receipt_enforces_state_graph_and_item_fifo(
+    conversation_store: SqlAlchemyConversationStore,
+) -> None:
+    """Receipt order follows item position and illegal lifecycle edges fail."""
+    conv = conversation_store.create_conversation(runner_id="runner-state-graph")
+    items = conversation_store.append(
+        conv.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn_z_first",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "first"}],
+                ),
+            ),
+            NewConversationItem(
+                type="message",
+                response_id="turn_a_second",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "second"}],
+                ),
+            ),
+        ],
+    )
+    for key, item in zip(("z-first", "a-second"), items, strict=True):
+        conversation_store.claim_runner_dispatch_receipt(
+            conv.id,
+            idempotency_key=key,
+            runner_id="runner-state-graph",
+            persisted_item_id=item.id,
+            execution_owner_id="generation-a",
+        )
+
+    recovered = conversation_store.list_recoverable_runner_dispatch_receipts(
+        "runner-state-graph"
+    )
+    assert [receipt["idempotency_key"] for receipt in recovered] == [
+        "z-first",
+        "a-second",
+    ]
+    with pytest.raises(ValueError, match="invalid dispatch receipt transition"):
+        conversation_store.transition_runner_dispatch_receipt(
+            conv.id,
+            idempotency_key="z-first",
+            runner_id="runner-state-graph",
+            execution_owner_id="generation-a",
+            expected_phases=("queued",),
+            phase="failed",
+        )
+    running = conversation_store.transition_runner_dispatch_receipt(
+        conv.id,
+        idempotency_key="z-first",
+        runner_id="runner-state-graph",
+        execution_owner_id="generation-a",
+        expected_phases=("queued",),
+        phase="running",
+    )
+    assert running is not None
+    completed = conversation_store.transition_runner_dispatch_receipt(
+        conv.id,
+        idempotency_key="z-first",
+        runner_id="runner-state-graph",
+        execution_owner_id="generation-a",
+        expected_phases=("running",),
+        phase="completed",
+        result={"status": "completed"},
+    )
+    assert completed is not None
+    assert completed["effects_status"] == "completed"
+    assert completed["effects_completed_at"] is not None
+    with pytest.raises(ValueError, match="invalid dispatch receipt transition"):
+        conversation_store.transition_runner_dispatch_receipt(
+            conv.id,
+            idempotency_key="z-first",
+            runner_id="runner-state-graph",
+            execution_owner_id="generation-a",
+            expected_phases=("completed",),
+            phase="running",
+        )
+    with pytest.raises(ValueError, match="takeover is only valid"):
+        conversation_store.transition_runner_dispatch_receipt(
+            conv.id,
+            idempotency_key="a-second",
+            runner_id="runner-state-graph",
+            execution_owner_id="generation-b",
+            expected_phases=("queued",),
+            phase="running",
+            allow_takeover=True,
+        )
+
+
+def test_runner_dispatch_receipt_gc_never_deletes_pending_effects(
+    conversation_store: SqlAlchemyConversationStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retention removes completed effects only, using terminal completion time."""
+    from omnigent.stores.conversation_store import sqlalchemy_store as store_module
+
+    conv = conversation_store.create_conversation(runner_id="runner-gc")
+    monkeypatch.setattr(store_module, "now_epoch", lambda: 100)
+
+    def _seed(key: str, *, indeterminate: bool) -> None:
+        item = conversation_store.append(
+            conv.id,
+            [
+                NewConversationItem(
+                    type="message",
+                    response_id=f"turn_{key}",
+                    data=MessageData(
+                        role="user",
+                        content=[{"type": "input_text", "text": key}],
+                    ),
+                )
+            ],
+        )[0]
+        conversation_store.claim_runner_dispatch_receipt(
+            conv.id,
+            idempotency_key=key,
+            runner_id="runner-gc",
+            persisted_item_id=item.id,
+            execution_owner_id="generation-a",
+        )
+        conversation_store.transition_runner_dispatch_receipt(
+            conv.id,
+            idempotency_key=key,
+            runner_id="runner-gc",
+            execution_owner_id="generation-a",
+            expected_phases=("queued",),
+            phase="running",
+        )
+        conversation_store.transition_runner_dispatch_receipt(
+            conv.id,
+            idempotency_key=key,
+            runner_id="runner-gc",
+            execution_owner_id=("generation-b" if indeterminate else "generation-a"),
+            expected_phases=("running",),
+            phase="failed" if indeterminate else "completed",
+            result=(
+                {"failure_code": "runner_restarted_during_execution"}
+                if indeterminate
+                else {"status": "completed"}
+            ),
+            allow_takeover=indeterminate,
+        )
+
+    _seed("pending-old", indeterminate=True)
+    _seed("completed-old", indeterminate=False)
+    monkeypatch.setattr(store_module, "now_epoch", lambda: 30 * 24 * 60 * 60 + 101)
+    trigger = conversation_store.append(
+        conv.id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn_gc_trigger",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "trigger"}],
+                ),
+            )
+        ],
+    )[0]
+    conversation_store.claim_runner_dispatch_receipt(
+        conv.id,
+        idempotency_key="gc-trigger",
+        runner_id="runner-gc",
+        persisted_item_id=trigger.id,
+        execution_owner_id="generation-c",
+    )
+
+    pending = conversation_store.get_runner_dispatch_receipt(
+        conv.id,
+        idempotency_key="pending-old",
+    )
+    assert pending is not None
+    assert pending["effects_status"] == "pending"
+    assert (
+        conversation_store.get_runner_dispatch_receipt(
+            conv.id,
+            idempotency_key="completed-old",
+        )
+        is None
+    )
 
 
 def test_clear_host_binding_nulls_all_binding_fields(

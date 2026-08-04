@@ -116,6 +116,7 @@ class _ConversationStore:
             ),
         }
         self.appended_items: list[Any] = []
+        self.idempotent_items: dict[tuple[str, str], list[Any]] = {}
 
     def get_conversation(self, conversation_id: str) -> Conversation | None:
         """Return the conversation or None."""
@@ -206,6 +207,18 @@ class _ConversationStore:
             self.appended_items.append(persisted)
             result.append(persisted)
         return result
+
+    def append_idempotent(
+        self,
+        conversation_id: str,
+        items: list[Any],
+        *,
+        idempotency_key: str,
+    ) -> list[Any]:
+        key = (conversation_id, idempotency_key)
+        if key not in self.idempotent_items:
+            self.idempotent_items[key] = self.append(conversation_id, items)
+        return self.idempotent_items[key]
 
     def list_items(
         self,
@@ -454,9 +467,11 @@ def app(runner_globals_reset: None) -> FastAPI:
             """
             return
 
+    conversation_store = _ConversationStore()
+    app.state.conversation_store = conversation_store
     app.include_router(
         create_sessions_router(
-            _ConversationStore(),  # type: ignore[arg-type]
+            conversation_store,  # type: ignore[arg-type]
             _StubAgentStore(),  # type: ignore[arg-type]
         ),
         prefix="/v1",
@@ -614,11 +629,13 @@ async def test_list_session_resources_local_fallback_lists_default(
 
 
 @pytest.mark.asyncio
-async def test_claude_native_message_forwards_to_runner_without_persisting(
+async def test_claude_native_message_persists_hidden_recovery_item_before_forwarding(
     client: httpx.AsyncClient,
+    app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
-    Claude-native web-chat input is runner injection, not Omnigent persistence.
+    Claude-native web-chat input persists one hidden recovery item before injection.
 
     This fails if the route regresses to the legacy create-or-steer
     path, which would either start a duplicate Omnigent agent task or make
@@ -627,6 +644,17 @@ async def test_claude_native_message_forwards_to_runner_without_persisting(
     fake_runner = _FakeRunnerClient(payload={})
     set_runner_router(_FakeRunnerRouter(fake_runner))  # type: ignore[arg-type]
     set_runner_client(fake_runner)  # type: ignore[arg-type]
+    app.state.conversation_store._conversations[
+        "64a784c3aa907d1774f44313546947c6"
+    ].runner_id = "runner_one"
+
+    async def _relay_ready(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "omnigent.server.routes.sessions._ensure_runner_relay_ready",
+        _relay_ready,
+    )
 
     resp = await client.post(
         "/v1/sessions/64a784c3aa907d1774f44313546947c6/events",
@@ -640,40 +668,41 @@ async def test_claude_native_message_forwards_to_runner_without_persisting(
     )
 
     assert resp.status_code == 202, resp.text
-    # Native message bypass returns queued=True plus a pending-input id: the
-    # message isn't persisted AP-side (the transcript forwarder is the single
-    # writer), so the server records a pending-input entry for the optimistic
-    # bubble and hands back its id (see pending_inputs.record).
+    # The visible transcript remains native-owned, while a hidden deterministic
+    # item gives the durable runner receipt an auditable recovery source.
     body = resp.json()
     assert body["queued"] is True
+    assert body["item_id"] == "item_0"
     assert body["pending_id"].startswith("pending_")
     assert fake_runner.calls == [
         ("POST", "/v1/sessions/64a784c3aa907d1774f44313546947c6/resources/terminals"),
         ("POST", "/v1/sessions/64a784c3aa907d1774f44313546947c6/events"),
     ]
-    assert fake_runner.post_json_calls == [
-        (
-            "/v1/sessions/64a784c3aa907d1774f44313546947c6/resources/terminals",
-            {
-                "terminal": "claude",
-                "session_key": "main",
-                "ensure_native_terminal": True,
-            },
-        ),
-        (
-            "/v1/sessions/64a784c3aa907d1774f44313546947c6/events",
-            {
-                "type": "message",
-                "role": "user",
-                "content": [{"type": "input_text", "text": "hello claude"}],
-                "model": "claude-native-ui",
-                "harness": "claude-native",
-                # Forwarded so the runner resolves the harness spec on the
-                # first message (before POST /v1/sessions caches it).
-                "agent_id": "087b7cb7ac30abf4debfaa578d052ec6",
-            },
-        ),
-    ]
+    assert fake_runner.post_json_calls[0] == (
+        "/v1/sessions/64a784c3aa907d1774f44313546947c6/resources/terminals",
+        {
+            "terminal": "claude",
+            "session_key": "main",
+            "ensure_native_terminal": True,
+        },
+    )
+    forwarded = fake_runner.post_json_calls[1]
+    assert forwarded[0] == "/v1/sessions/64a784c3aa907d1774f44313546947c6/events"
+    assert forwarded[1] == {
+        **forwarded[1],
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "hello claude"}],
+        "model": "claude-native-ui",
+        "harness": "claude-native",
+        "agent_id": "087b7cb7ac30abf4debfaa578d052ec6",
+        "persisted_item_id": "item_0",
+        "runner_id": "runner_one",
+    }
+    assert forwarded[1]["idempotency_key"] == forwarded[1]["dispatch_source_id"]
+    assert len(forwarded[1]["idempotency_key"]) == 32
+    assert len(app.state.conversation_store.appended_items) == 1
+    assert app.state.conversation_store.appended_items[0].data.is_meta is True
 
 
 @pytest.mark.asyncio
@@ -3610,8 +3639,8 @@ async def test_native_dispatch_fast_fails_and_consumes_message_on_terminal_error
 
 
 @pytest.mark.asyncio
-async def test_kiro_native_dispatch_forwards_without_persisting() -> None:
-    """Kiro web-chat input is mirrored by Kiro's session forwarder."""
+async def test_kiro_native_dispatch_persists_hidden_recovery_item_before_forwarding() -> None:
+    """Kiro keeps visible history forwarder-owned but durably sources its receipt."""
     from omnigent.runtime import pending_inputs
     from omnigent.server.routes.sessions import _dispatch_session_event_to_runner
 
@@ -3619,6 +3648,7 @@ async def test_kiro_native_dispatch_forwards_without_persisting() -> None:
     store = _ConversationStore()
     conv = store.get_conversation("823dbd1aab969b5a813fac59bb977a77")
     assert conv is not None
+    conv.runner_id = "runner-kiro"
     client = _FakeRunnerClient()
     body = SessionEventInput(
         type="message",
@@ -3638,7 +3668,7 @@ async def test_kiro_native_dispatch_forwards_without_persisting() -> None:
             created_by="alice@example.com",
         )
 
-        assert result.item_id is None
+        assert result.item_id == "item_0"
         assert result.pending_id is not None
         assert result.pending_id.startswith("pending_")
         assert [call[0] for call in client.post_json_calls] == [
@@ -3648,12 +3678,46 @@ async def test_kiro_native_dispatch_forwards_without_persisting() -> None:
         pending = pending_inputs.snapshot_for("823dbd1aab969b5a813fac59bb977a77")
         assert len(pending) == 1
         assert pending[0]["content"] == [{"type": "input_text", "text": "hello"}]
-        assert store.appended_items == []
+        assert len(store.appended_items) == 1
+        assert store.appended_items[0].data.is_meta is True
         forwarded = client.post_json_calls[1][1]
         assert forwarded["agent_id"] == "2c515637c67d0717ad0bebc2747b71bc"
         assert forwarded["model"] == "kiro-native-ui"
+        assert forwarded["persisted_item_id"] == "item_0"
+        assert forwarded["runner_id"] == "runner-kiro"
     finally:
         pending_inputs.reset_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_scaffold_dispatch_without_client_source_uses_persisted_item_key() -> None:
+    """Every scaffold dispatch receives a server-derived durable receipt key."""
+    from omnigent.server.routes.sessions import _forward_event_to_runner
+
+    store = _ConversationStore()
+    conv = store.get_conversation("823dbd1aab969b5a813fac59bb977a77")
+    assert conv is not None
+    conv.runner_id = "runner-scaffold"
+    client = _FakeRunnerClient()
+    body = SessionEventInput(
+        type="message",
+        data={"role": "user", "content": [{"type": "input_text", "text": "hello"}]},
+    )
+
+    item_id = await _forward_event_to_runner(
+        conv.id,
+        conv,
+        body,
+        store,  # type: ignore[arg-type]
+        client,  # type: ignore[arg-type]
+        agent_name="scaffold",
+    )
+
+    assert item_id == "item_0"
+    forwarded = client.post_json_calls[-1][1]
+    assert forwarded["persisted_item_id"] == "item_0"
+    assert forwarded["idempotency_key"] == "item:item_0"
+    assert forwarded["dispatch_source_id"] == "item:item_0"
 
 
 @pytest.mark.asyncio
@@ -3666,6 +3730,7 @@ async def test_kiro_native_dispatch_clears_pending_when_injection_fails() -> Non
     store = _ConversationStore()
     conv = store.get_conversation("823dbd1aab969b5a813fac59bb977a77")
     assert conv is not None
+    conv.runner_id = "runner-kiro"
     client = _FakeRunnerClient(
         responses={
             "/v1/sessions/823dbd1aab969b5a813fac59bb977a77/events": (500, {"error": "tmux failed"})
@@ -3694,7 +3759,8 @@ async def test_kiro_native_dispatch_clears_pending_when_injection_fails() -> Non
             "/v1/sessions/823dbd1aab969b5a813fac59bb977a77/resources/terminals",
             "/v1/sessions/823dbd1aab969b5a813fac59bb977a77/events",
         ]
-        assert store.appended_items == []
+        assert len(store.appended_items) == 1
+        assert store.appended_items[0].data.is_meta is True
         assert pending_inputs.snapshot_for("823dbd1aab969b5a813fac59bb977a77") == []
     finally:
         pending_inputs.reset_for_tests()

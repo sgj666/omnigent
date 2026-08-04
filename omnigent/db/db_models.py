@@ -653,6 +653,12 @@ class SqlConversationMetadata(OmnigentBase):
     # Required when host_id is set; enforced by check constraint below.
     workspace: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     git_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # A stale-attempt recovery worker sets these fields before removing the
+    # worktree.  Binding writes are refused while the claim is present, so a
+    # new runner cannot inherit a cwd that is concurrently being deleted.
+    recovery_attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    recovery_runner_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    recovery_workspace: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     # Live-state columns, written by the replica holding the runner
     # tunnel so any replica can serve the sidebar's live fields.
     # Writes must never bump conversations.updated_at (it drives
@@ -680,6 +686,78 @@ class SqlConversationMetadata(OmnigentBase):
         Index("ix_conversation_metadata_runner_id", "workspace_id", "runner_id", "id"),
         # "list sessions in project X" + per-project counts (GROUP BY project_id).
         Index("ix_conversation_metadata_project_id", "workspace_id", "project_id", "id"),
+        Index(
+            "ix_conversation_metadata_recovery_attempt_id",
+            "workspace_id",
+            "recovery_attempt_id",
+            "id",
+        ),
+    )
+
+
+class SqlRunnerDispatchReceipt(OmnigentBase):
+    """Durable idempotency and execution ownership for runner dispatches."""
+
+    __tablename__ = "runner_dispatch_receipts"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    conversation_id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    runner_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    phase: Mapped[str] = mapped_column(String(16), nullable=False)
+    persisted_item_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    enqueue_position: Mapped[int] = mapped_column(Integer, nullable=False)
+    execution_owner_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    effects_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="completed", server_default="completed"
+    )
+    effects_attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    effects_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    effects_completed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "phase IN ('queued', 'running', 'completed', 'failed', 'cancelled')",
+            name="ck_runner_dispatch_receipts_phase",
+        ),
+        CheckConstraint(
+            "effects_status IN ('pending', 'completed')",
+            name="ck_runner_dispatch_receipts_effects_status",
+        ),
+        Index(
+            "ix_runner_dispatch_receipts_recoverable",
+            "workspace_id",
+            "runner_id",
+            "phase",
+            "conversation_id",
+            "enqueue_position",
+        ),
+        Index(
+            "ix_runner_dispatch_receipts_gc",
+            "workspace_id",
+            "phase",
+            "completed_at",
+        ),
+        Index(
+            "ix_runner_dispatch_receipts_pending_effects",
+            "workspace_id",
+            "effects_status",
+            "updated_at",
+            "conversation_id",
+        ),
     )
 
 

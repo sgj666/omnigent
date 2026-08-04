@@ -202,6 +202,105 @@ async def test_failed_rollback_retains_unremoved_worktree_for_recovery(
 
 
 @pytest.mark.asyncio
+async def test_recovery_required_waits_for_runner_stop_or_authoritative_absence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    created = _Created(worktree_path="/leases/recovery", branch="attempt-recovery")
+    removed: list[str] = []
+    runner_status = "alive"
+    stop_calls: list[str] = []
+
+    async def create(**kwargs: object) -> _Created:
+        return created
+
+    async def remove(**kwargs: object) -> None:
+        removed.append(str(kwargs["worktree_path"]))
+
+    async def query_status(*args: object, **kwargs: object) -> str:
+        return runner_status
+
+    async def stop_runner(
+        session_id: str,
+        host_id: str,
+        runner_id: str,
+        host_registry: object,
+    ) -> bool:
+        del session_id, host_id, host_registry
+        stop_calls.append(runner_id)
+        return False
+
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.create_worktree_on_host", create)
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.remove_worktree_on_host", remove)
+    monkeypatch.setattr(
+        "omnigent.server.routes._sessions.helpers._query_host_runner_status",
+        query_status,
+    )
+    monkeypatch.setattr(
+        "omnigent.server.routes._sessions.helpers._stop_session_host_runner",
+        stop_runner,
+    )
+    manager = WorktreeLeaseManager(ttl_s=60)
+    leases = await manager.acquire(
+        host_id="host-1",
+        host_registry=object(),
+        host_conn=_Host(),
+        workspace_root=tmp_path,
+        repositories=(WorkspaceRepository(id="api", path="api"),),
+        attempt_id="attempt-recovery",
+        owner_id="runner-1",
+        child_session_id="child-1",
+    )
+    await manager.defer_recovery(leases)
+    registry = SimpleNamespace(get=lambda host_id: _Host())
+    conversations = SimpleNamespace(
+        get_conversation=lambda child_id: SimpleNamespace(
+            id=child_id,
+            runner_id="runner-1",
+            workspace=str(tmp_path),
+            host_id="host-1",
+        ),
+        claim_host_runner_recovery=lambda *args, **kwargs: True,
+    )
+
+    safe = await _host_worktree._confirm_recovery_attempts_stopped(
+        manager=manager,
+        host_registry=registry,
+        host_conn=_Host(),
+        conversation_store=conversations,
+    )
+    recovered = await manager.recover_expired(
+        host_registry=registry,
+        host_conn=_Host(),
+        safe_attempt_ids=set(safe),
+    )
+
+    assert safe == {}
+    assert recovered == ()
+    assert stop_calls == ["runner-1"]
+    assert removed == []
+    assert leases[0].status is LeaseStatus.RECOVERY_REQUIRED
+    assert manager._heartbeat_tasks == {}
+
+    runner_status = "dead"
+    safe = await _host_worktree._confirm_recovery_attempts_stopped(
+        manager=manager,
+        host_registry=registry,
+        host_conn=_Host(),
+        conversation_store=conversations,
+    )
+    recovered = await manager.recover_expired(
+        host_registry=registry,
+        host_conn=_Host(),
+        safe_attempt_ids=set(safe),
+    )
+
+    assert safe == {"attempt-recovery": "runner-1"}
+    assert recovered == leases
+    assert removed == [created.worktree_path]
+    assert leases[0].status is LeaseStatus.RELEASED
+
+
+@pytest.mark.asyncio
 async def test_expiry_recovery_does_not_remove_lease_released_while_waiting_for_repo_lock(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -448,6 +547,53 @@ async def test_live_attempt_heartbeat_survives_beyond_lease_ttl(
         host_registry=object(), host_conn=_Host(), leases=leases, owner_id="runner-live"
     )
     assert not manager._heartbeat_tasks
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runner_stop_confirmed", [None, False])
+async def test_attempt_teardown_requires_confirmed_runner_stop_before_removal(
+    monkeypatch: pytest.MonkeyPatch,
+    runner_stop_confirmed: bool | None,
+) -> None:
+    removed: list[str] = []
+
+    async def remove(**kwargs: object) -> None:
+        removed.append(str(kwargs["worktree_path"]))
+
+    monkeypatch.setattr("omnigent.workspaces.worktree_lease.remove_worktree_on_host", remove)
+    manager = WorktreeLeaseManager(ttl_s=60)
+    lease = WorktreeLease(
+        host_id="host-1",
+        repository_id="session-repository",
+        repo_path="/repos/api",
+        attempt_id="attempt-stop-proof",
+        worktree_path="/leases/stop-proof",
+        branch="feature/stop-proof",
+        owner="runner-stop-proof",
+        status=LeaseStatus.ACTIVE,
+        heartbeat_at=1_000.0,
+    )
+    manager._records.append(lease)
+    monkeypatch.setattr(_host_worktree, "_attempt_worktree_lease_manager", manager)
+    registry = SimpleNamespace(get=lambda _: _Host())
+
+    await _host_worktree.teardown_attempt_worktree_leases_for_attempt(
+        host_registry=registry,
+        attempt_id=lease.attempt_id,
+        runner_stop_confirmed=runner_stop_confirmed,
+    )
+
+    assert lease.status is LeaseStatus.RECOVERY_REQUIRED
+    assert removed == []
+
+    await _host_worktree.teardown_attempt_worktree_leases_for_attempt(
+        host_registry=registry,
+        attempt_id=lease.attempt_id,
+        runner_stop_confirmed=True,
+    )
+
+    assert lease.status is LeaseStatus.RELEASED
+    assert removed == [lease.worktree_path]
 
 
 @pytest.mark.asyncio

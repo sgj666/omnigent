@@ -250,9 +250,13 @@ def observe(projection: Any, method: str, *args: Any, **kwargs: Any) -> Any:
 def _worker_and_title(child: Any) -> tuple[str, str]:
     raw_title = str(getattr(child, "title", "") or child.id)
     worker = str(getattr(child, "sub_agent_name", "") or raw_title.partition(":")[0])
+    return worker, canonical_dispatch_title(worker, raw_title)
+
+
+def canonical_dispatch_title(worker: str, raw_title: str) -> str:
+    """Return the Task title shared by reservation and Session projection."""
     prefix = f"{worker}:"
-    title = raw_title[len(prefix) :] if raw_title.startswith(prefix) else raw_title
-    return worker, title
+    return raw_title[len(prefix) :] if raw_title.startswith(prefix) else raw_title
 
 
 def _failure_payload(code: str | None, message: str | None) -> dict[str, str]:

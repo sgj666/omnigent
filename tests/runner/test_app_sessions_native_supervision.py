@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from typing import Any
 
@@ -927,6 +928,65 @@ async def test_native_subagent_completion_wakes_idle_parent() -> None:
     # Notice names the finished worker and steers the parent to drain the inbox.
     assert "sub-agent claude_code/auth finished (completed)" in wake_text
     assert "sys_read_inbox" in wake_text
+
+
+@pytest.mark.asyncio
+async def test_durable_terminal_status_retries_parent_wake_after_inbox_delivery(
+    _no_wake_backoff: list[float],
+) -> None:
+    """A failed wake ACK is replayed even after the inbox item was delivered."""
+    from omnigent.runner import app as runner_app
+
+    parent_id = "1f78caeb9d84491a84a6c68673a66ce6"
+    child_id = "dcfb12d5b3ae482f8665dbc03a559343"
+    source_id = f"dispatch-effects:{child_id}:receipt-key"
+    wake_bodies: list[dict[str, Any]] = []
+
+    async def _wake_handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        wake_bodies.append(body)
+        status_code = 503 if len(wake_bodies) <= 3 else 200
+        return httpx.Response(status_code, request=request)
+
+    parent_inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    server_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(_wake_handler),
+        base_url="http://ap",
+    )
+    app = create_runner_app(
+        process_manager=_FakeProcessManager(_ScriptedHarnessClient([])),  # type: ignore[arg-type]
+        server_client=server_client,
+    )
+    runner_app._session_inboxes_ref[parent_id] = parent_inbox
+    runner_app.register_subagent_work(
+        parent_session_id=parent_id,
+        child_session_id=child_id,
+        agent="worker",
+        title="durable-wake",
+    )
+
+    event = {
+        "type": "external_session_status",
+        "data": {"status": "failed", "output": "indeterminate execution"},
+        "dispatch_source_id": source_id,
+        "require_wake_ack": True,
+    }
+    try:
+        async with _runner_client(app) as client:
+            first = await client.post(f"/v1/sessions/{child_id}/events", json=event)
+            second = await client.post(f"/v1/sessions/{child_id}/events", json=event)
+    finally:
+        await server_client.aclose()
+        runner_app.unregister_subagent_work(child_id)
+        runner_app._session_inboxes_ref.pop(parent_id, None)
+
+    assert first.status_code == 503
+    assert first.json()["error"] == "subagent_wake_not_confirmed"
+    assert second.status_code == 204
+    assert parent_inbox.qsize() == 1
+    assert len(wake_bodies) == 4
+    assert {body["dispatch_source_id"] for body in wake_bodies} == {source_id}
+    assert len(_no_wake_backoff) == 2
 
 
 @pytest.mark.asyncio

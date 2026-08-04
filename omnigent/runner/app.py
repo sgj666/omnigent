@@ -73,6 +73,7 @@ from omnigent.runner.background_titles import (
 )
 from omnigent.runner.background_titles.service import BACKGROUND_TITLE_MAX_PROMPT_CHARS
 from omnigent.runner.codex.goal import CodexGoalRunner
+from omnigent.runner.identity import RUNNER_ID_HEADER
 from omnigent.runner.native import (
     _AUTO_OPENCODE_SERVERS,
     _COST_POPUP_REPOP_TASKS,
@@ -327,6 +328,12 @@ _ASK_GATE_DELIVERY_TIMEOUT = httpx.Timeout(_ASK_GATE_DELIVERY_READ_TIMEOUT_S, co
 _WAKE_POST_MAX_ATTEMPTS = 3
 _WAKE_POST_RETRY_BASE_DELAY_S = 0.5
 _WAKE_POST_RETRY_MAX_DELAY_S = 4.0
+_TERMINAL_RECEIPT_RETRY_BASE_DELAY_S = 0.25
+_TERMINAL_RECEIPT_RETRY_MAX_DELAY_S = 5.0
+
+
+class _RetryableDispatchReceiptTransitionError(RuntimeError):
+    """A transient AP response that may be retried without re-executing work."""
 # 4xx statuses that are transient and worth retrying (mirrors the forwarder's
 # classification): everything else in 4xx is a permanent client-side rejection.
 _WAKE_POST_TRANSIENT_4XX = frozenset({408, 409, 425, 429})
@@ -1308,6 +1315,7 @@ async def _deliver_subagent_wake_post(
     notice: str,
     *,
     created_by: str | None = None,
+    source_event_id: str | None = None,
 ) -> bool:
     """
     POST a sub-agent wake notice with a bounded retry on transient failure.
@@ -1342,6 +1350,11 @@ async def _deliver_subagent_wake_post(
                     **(
                         {"created_by": attribution_created_by}
                         if attribution_created_by is not None
+                        else {}
+                    ),
+                    **(
+                        {"dispatch_source_id": source_event_id}
+                        if source_event_id is not None
                         else {}
                     ),
                 },
@@ -1740,6 +1753,7 @@ def create_runner_app(
     mcp_manager: Any | None = None,
     auth_token: str | None = None,
     auth_token_factory: Callable[[], str | None] | None = None,
+    runner_id: str | None = None,
 ) -> FastAPI:
     """Build a fresh runner FastAPI app.
 
@@ -1775,6 +1789,7 @@ def create_runner_app(
     :param auth_token_factory: Refresh-capable server bearer factory owned by
         the runner process. Native terminal helpers reuse it instead of
         resolving host credentials again for every terminal launch.
+    :param runner_id: Stable runner identity used to recover durable dispatches.
     """
     import hmac
 
@@ -1889,10 +1904,213 @@ def create_runner_app(
     _ingest_next_seq: dict[str, int] = {}
     _ingest_now_serving: dict[str, int] = {}
     _ingest_cond: dict[str, asyncio.Condition] = {}
+    _dispatch_execution_owner_id = uuid.uuid4().hex
+    _active_dispatch_receipts: dict[str, list[tuple[str, str]]] = {}
+    _dispatch_recovery_barriers: set[str] = set()
+    _dispatch_recovery_scan_buffered: set[str] = set()
+    _dispatch_recovery_scan_in_progress = False
+    _dispatch_recovery_task: asyncio.Task[None] | None = None
     _interrupted_sessions: set[str] = set()
     app.state.interrupted_sessions = _interrupted_sessions
     _background_tasks: set[asyncio.Task[Any]] = set()
     _subagent_wake_pending: set[str] = set()
+
+    def _receipt_auth_headers() -> dict[str, str]:
+        return {RUNNER_ID_HEADER: runner_id} if runner_id is not None else {}
+
+    def _dispatch_descriptor(body: dict[str, Any]) -> tuple[str, str, str] | None:
+        key = body.get("idempotency_key")
+        body_runner_id = body.get("runner_id")
+        item_id = body.get("persisted_item_id")
+        if not all(isinstance(value, str) and value for value in (key, body_runner_id, item_id)):
+            return None
+        return key, body_runner_id, item_id
+
+    async def _claim_dispatch_receipt(
+        conversation_id: str,
+        body: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        descriptor = _dispatch_descriptor(body)
+        if descriptor is None:
+            return None
+        key, _body_runner_id, item_id = descriptor
+        response = await server_client.post(
+            "/v1/runner-dispatch-receipts/claim",
+            json={
+                "conversation_id": conversation_id,
+                "idempotency_key": key,
+                "persisted_item_id": item_id,
+                "execution_owner_id": _dispatch_execution_owner_id,
+            },
+            headers=_receipt_auth_headers(),
+            timeout=10.0,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError(f"durable dispatch enqueue failed ({response.status_code})")
+        receipt = response.json()
+        if not isinstance(receipt, dict) or receipt.get("phase") not in {
+            "queued",
+            "running",
+            "completed",
+            "failed",
+            "cancelled",
+        }:
+            raise RuntimeError("durable dispatch enqueue returned an invalid receipt")
+        return receipt
+
+    async def _transition_dispatch_receipt(
+        conversation_id: str,
+        *,
+        key: str,
+        body_runner_id: str,
+        expected_phases: tuple[str, ...],
+        phase: str,
+        result: dict[str, Any] | None = None,
+        allow_takeover: bool = False,
+    ) -> dict[str, Any] | None:
+        del body_runner_id, expected_phases, allow_takeover
+        transition_body = {
+            "conversation_id": conversation_id,
+            "idempotency_key": key,
+            "execution_owner_id": _dispatch_execution_owner_id,
+            "phase": phase,
+            "result": result,
+        }
+        for attempt in range(3):
+            try:
+                response = await server_client.post(
+                    "/v1/runner-dispatch-receipts/transition",
+                    json=transition_body,
+                    headers=_receipt_auth_headers(),
+                    timeout=10.0,
+                )
+            except (httpx.HTTPError, ConnectionError, asyncio.TimeoutError):
+                if attempt == 2:
+                    raise
+                await asyncio.sleep(0)
+                continue
+            if response.status_code == 409:
+                existing = await server_client.get(
+                    "/v1/runner-dispatch-receipts",
+                    params={
+                        "conversation_id": conversation_id,
+                        "idempotency_key": key,
+                    },
+                    headers=_receipt_auth_headers(),
+                    timeout=10.0,
+                )
+                if existing.status_code >= 500:
+                    raise _RetryableDispatchReceiptTransitionError(
+                        f"dispatch receipt lookup failed ({existing.status_code})"
+                    )
+                if existing.status_code >= 400:
+                    raise RuntimeError(
+                        f"dispatch receipt lookup failed ({existing.status_code})"
+                    )
+                if existing.status_code < 400:
+                    receipt = existing.json()
+                    if isinstance(receipt, dict) and receipt.get("phase") == phase:
+                        return receipt
+                return None
+            if response.status_code >= 500:
+                if attempt == 2:
+                    raise _RetryableDispatchReceiptTransitionError(
+                        f"dispatch receipt transition failed ({response.status_code})"
+                    )
+                await asyncio.sleep(0)
+                continue
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"dispatch receipt transition failed ({response.status_code})"
+                )
+            receipt = response.json()
+            return receipt if isinstance(receipt, dict) else None
+        return None
+
+    async def _transition_terminal_dispatch_receipt_until_confirmed(
+        conversation_id: str,
+        *,
+        key: str,
+        body_runner_id: str,
+        phase: str,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        delay_s = _TERMINAL_RECEIPT_RETRY_BASE_DELAY_S
+        while True:
+            try:
+                receipt = await _transition_dispatch_receipt(
+                    conversation_id,
+                    key=key,
+                    body_runner_id=body_runner_id,
+                    expected_phases=("running",),
+                    phase=phase,
+                    result=result,
+                )
+                if receipt is not None:
+                    return receipt
+                _logger.warning(
+                    "Terminal dispatch receipt transition was not confirmed; retrying: "
+                    "conversation=%s key=%s phase=%s",
+                    conversation_id,
+                    key,
+                    phase,
+                )
+            except asyncio.CancelledError:
+                raise
+            except (
+                httpx.HTTPError,
+                ConnectionError,
+                asyncio.TimeoutError,
+                _RetryableDispatchReceiptTransitionError,
+            ):
+                _logger.warning(
+                    "Terminal dispatch receipt transition failed; retrying: "
+                    "conversation=%s key=%s phase=%s",
+                    conversation_id,
+                    key,
+                    phase,
+                    exc_info=True,
+                )
+            await asyncio.sleep(delay_s)
+            delay_s = min(
+                max(delay_s * 2, _TERMINAL_RECEIPT_RETRY_BASE_DELAY_S),
+                _TERMINAL_RECEIPT_RETRY_MAX_DELAY_S,
+            )
+
+    def _dispatch_receipt_response(receipt: dict[str, Any]) -> dict[str, Any]:
+        phase = receipt.get("phase")
+        result = receipt.get("result")
+        if phase in {"completed", "failed", "cancelled"} and isinstance(result, dict):
+            return {**result, "phase": phase}
+        return {
+            "status": "accepted",
+            "detail": "Dispatch is durably queued." if phase == "queued" else "Turn started.",
+            "phase": phase,
+        }
+
+    def _finish_active_dispatch_receipts(
+        conversation_id: str,
+        *,
+        phase: str,
+        result: dict[str, Any],
+    ) -> list[asyncio.Task[dict[str, Any] | None]]:
+        receipts = _active_dispatch_receipts.pop(conversation_id, [])
+        tasks: list[asyncio.Task[dict[str, Any] | None]] = []
+        for key, body_runner_id in receipts:
+            task = asyncio.create_task(
+                _transition_terminal_dispatch_receipt_until_confirmed(
+                    conversation_id,
+                    key=key,
+                    body_runner_id=body_runner_id,
+                    phase=phase,
+                    result=result,
+                ),
+                name=f"dispatch-receipt-{phase}-{conversation_id}",
+            )
+            task.add_done_callback(_background_tasks.discard)
+            _background_tasks.add(task)
+            tasks.append(task)
+        return tasks
 
     _session_histories = _session_histories_ref
     _last_server_item_id: dict[str, str] = {}
@@ -3110,6 +3328,7 @@ def create_runner_app(
         _ingest_next_seq.pop(session_id, None)
         _ingest_now_serving.pop(session_id, None)
         _ingest_cond.pop(session_id, None)
+        _active_dispatch_receipts.pop(session_id, None)
         _codex_terminal_ensure_locks.pop(session_id, None)
         _claude_terminal_ensure_locks.pop(session_id, None)
         _pi_terminal_ensure_locks.pop(session_id, None)
@@ -4524,13 +4743,31 @@ def create_runner_app(
         has_buffered = bool(_session_message_buffers.get(conv_id))
         was_interrupted = conv_id in _interrupted_sessions
         if was_interrupted:
+            receipt_tasks = _finish_active_dispatch_receipts(
+                conv_id,
+                phase="cancelled",
+                result={"status": "cancelled", "detail": "Turn was interrupted."},
+            )
             _interrupted_sessions.discard(conv_id)
             _append_cancellation_items(conv_id)
             if not has_buffered:
                 _publish_turn_status(conv_id, "idle")
         elif error is not None:
+            receipt_tasks = _finish_active_dispatch_receipts(
+                conv_id,
+                phase="failed",
+                result={
+                    "status": "failed",
+                    "detail": str(error.get("message") or "Turn failed."),
+                },
+            )
             _publish_turn_status(conv_id, "failed", error=_normalize_turn_error(error))
         else:
+            receipt_tasks = _finish_active_dispatch_receipts(
+                conv_id,
+                phase="completed",
+                result={"status": "completed", "detail": "Turn completed."},
+            )
             if not has_buffered:
                 children = _subagent_work_by_parent.get(conv_id, set())
                 has_running_children = any(
@@ -4557,10 +4794,25 @@ def create_runner_app(
                 status="completed",
                 output=_extract_last_assistant_text(conv_id),
             )
+
+        async def _finish_receipts_then_continue() -> None:
+            try:
+                if receipt_tasks:
+                    await asyncio.gather(*receipt_tasks)
+                await _check_and_start_next_turn(conv_id)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _logger.exception(
+                    "Failed to confirm terminal dispatch receipts; "
+                    "leaving buffered work queued for %s",
+                    conv_id,
+                )
+
         try:
             loop = asyncio.get_running_loop()
             _cont = loop.create_task(
-                _check_and_start_next_turn(conv_id),
+                _finish_receipts_then_continue(),
             )
             _cont.add_done_callback(_background_tasks.discard)
             _background_tasks.add(_cont)
@@ -4657,6 +4909,15 @@ def create_runner_app(
         event["content"] = prepared[0]["content"]
         return event
 
+    def _buffer_message_once(session_id: str, body: dict[str, Any]) -> None:
+        key = body.get("idempotency_key")
+        buffered = _session_message_buffers.setdefault(session_id, [])
+        if isinstance(key, str) and any(
+            existing.get("idempotency_key") == key for existing in buffered
+        ):
+            return
+        buffered.append(body)
+
     async def _check_and_start_next_turn(
         session_id: str,
     ) -> None:
@@ -4679,6 +4940,24 @@ def create_runner_app(
                 _rewake_parent_if_inbox_stranded(session_id)
                 return
 
+            selected_bodies = [buf[0]] if _is_native_harness(session_id) else list(buf)
+            claimed_receipts: list[tuple[str, str]] = []
+            for buffered_body in selected_bodies:
+                descriptor = _dispatch_descriptor(buffered_body)
+                if descriptor is None:
+                    continue
+                key, body_runner_id, _ = descriptor
+                receipt = await _transition_dispatch_receipt(
+                    session_id,
+                    key=key,
+                    body_runner_id=body_runner_id,
+                    expected_phases=("queued",),
+                    phase="running",
+                )
+                if receipt is None:
+                    return
+                claimed_receipts.append((key, body_runner_id))
+
             if _is_native_harness(session_id):
                 next_body = buf.pop(0)
                 if not buf:
@@ -4696,6 +4975,9 @@ def create_runner_app(
                         _history_message_from_body(body)
                     )
                 next_body = all_bodies[-1]
+
+            if claimed_receipts:
+                _active_dispatch_receipts[session_id] = claimed_receipts
 
             _active_turns[session_id] = None
             _publish_turn_status(session_id, "running")
@@ -4776,10 +5058,14 @@ def create_runner_app(
         _schedule_subagent_wake(latest)
 
     def _mark_subagent_terminal_and_wake(
-        child_session_id: str, *, status: str, output: str | None
+        child_session_id: str,
+        *,
+        status: str,
+        output: str | None,
+        schedule_wake: bool = True,
     ) -> _SubagentDeliveryAck:
         ack = mark_subagent_work_terminal(child_session_id, status=status, output=output)
-        if ack.entry is not None and ack.delivered_now:
+        if schedule_wake and ack.entry is not None and ack.delivered_now:
             _schedule_subagent_wake(ack.entry)
         return ack
 
@@ -5836,7 +6122,6 @@ def create_runner_app(
                 )
             message_body = dict(body)
             message_body["conversation_id"] = conversation_id
-
             if _is_native_harness(conversation_id):
                 resource_registry.note_session_turn_started(conversation_id)
 
@@ -5850,6 +6135,54 @@ def create_runner_app(
                 while _ingest_now_serving.get(conversation_id, 0) != _seq:
                     await _cond.wait()
             try:
+                try:
+                    durable_receipt = await _claim_dispatch_receipt(
+                        conversation_id,
+                        message_body,
+                    )
+                except (httpx.HTTPError, RuntimeError) as exc:
+                    return JSONResponse(
+                        status_code=503,
+                        content={
+                            "error": "dispatch_receipt_unavailable",
+                            "detail": str(exc),
+                        },
+                    )
+                descriptor = _dispatch_descriptor(message_body)
+                if durable_receipt is not None and not durable_receipt.get("created", False):
+                    phase = durable_receipt.get("phase")
+                    owner = durable_receipt.get("execution_owner_id")
+                    if phase in {"completed", "failed", "cancelled"} or owner == (
+                        _dispatch_execution_owner_id
+                    ):
+                        return JSONResponse(
+                            status_code=202,
+                            content=_dispatch_receipt_response(durable_receipt),
+                        )
+                    if phase == "running":
+                        return JSONResponse(
+                            status_code=202,
+                            content=_dispatch_receipt_response(durable_receipt),
+                        )
+                if (
+                    durable_receipt is not None
+                    and descriptor is not None
+                    and (
+                        _dispatch_recovery_scan_in_progress
+                        or conversation_id in _dispatch_recovery_barriers
+                    )
+                ):
+                    _buffer_message_once(conversation_id, message_body)
+                    if _dispatch_recovery_scan_in_progress:
+                        _dispatch_recovery_scan_buffered.add(conversation_id)
+                    return JSONResponse(
+                        status_code=202,
+                        content={
+                            "status": "buffered",
+                            "detail": "Message queued behind durable dispatch recovery.",
+                            "phase": "queued",
+                        },
+                    )
                 _raw_content = message_body.get("content")
                 if isinstance(_raw_content, list):
                     message_body["content"] = await _resolve_forwarded_message_content(
@@ -5860,6 +6193,26 @@ def create_runner_app(
                 _note_message_author(conversation_id, message_body)
 
                 if conversation_id in _active_turns:
+                    if durable_receipt is not None and descriptor is not None:
+                        key, body_runner_id, _ = descriptor
+                        if not durable_receipt.get("created", False):
+                            durable_receipt = await _transition_dispatch_receipt(
+                                conversation_id,
+                                key=key,
+                                body_runner_id=body_runner_id,
+                                expected_phases=("queued",),
+                                phase="queued",
+                                allow_takeover=True,
+                            )
+                            if durable_receipt is None:
+                                return JSONResponse(
+                                    status_code=202,
+                                    content={
+                                        "status": "accepted",
+                                        "detail": "Dispatch is already owned.",
+                                        "phase": "queued",
+                                    },
+                                )
                     _native = _is_native_harness(conversation_id)
                     _awaiting_approval = pending_approvals.has_pending(conversation_id)
                     _can_forward = (
@@ -5916,13 +6269,34 @@ def create_runner_app(
                                 conversation_id,
                                 exc_info=True,
                             )
-                    return JSONResponse(
-                        status_code=202,
-                        content={
-                            "status": "buffered",
-                            "detail": ("Message buffered; active turn will process it."),
-                        },
+                    buffered_receipt = {
+                        "status": "buffered",
+                        "detail": "Message buffered; active turn will process it.",
+                        **({"phase": "queued"} if durable_receipt is not None else {}),
+                    }
+                    return JSONResponse(status_code=202, content=buffered_receipt)
+
+                if durable_receipt is not None and descriptor is not None:
+                    key, body_runner_id, _ = descriptor
+                    running_receipt = await _transition_dispatch_receipt(
+                        conversation_id,
+                        key=key,
+                        body_runner_id=body_runner_id,
+                        expected_phases=("queued",),
+                        phase="running",
+                        allow_takeover=not durable_receipt.get("created", False),
                     )
+                    if running_receipt is None:
+                        return JSONResponse(
+                            status_code=202,
+                            content={
+                                "status": "accepted",
+                                "detail": "Dispatch is already owned.",
+                                "phase": durable_receipt.get("phase"),
+                            },
+                        )
+                    durable_receipt = running_receipt
+                    _active_dispatch_receipts[conversation_id] = [(key, body_runner_id)]
 
                 new_item = _history_message_from_body(message_body)
                 if conversation_id in _session_histories:
@@ -5963,13 +6337,12 @@ def create_runner_app(
                 )
                 _background_tasks.add(_turn_task)
 
-                return JSONResponse(
-                    status_code=202,
-                    content={
-                        "status": "accepted",
-                        "detail": "Turn started.",
-                    },
-                )
+                accepted_receipt = {
+                    "status": "accepted",
+                    "detail": "Turn started.",
+                    **({"phase": "running"} if durable_receipt is not None else {}),
+                }
+                return JSONResponse(status_code=202, content=accepted_receipt)
             finally:
                 async with _cond:
                     _ingest_now_serving[conversation_id] = _seq + 1
@@ -5985,6 +6358,8 @@ def create_runner_app(
 
         if body_type == "external_session_status":
             data = body.get("data") if isinstance(body, dict) else None
+            require_wake_ack = body.get("require_wake_ack") is True
+            wake_source_id = body.get("dispatch_source_id")
             status = data.get("status") if isinstance(data, dict) else None
             forwarded_output = data.get("output") if isinstance(data, dict) else None
             output = forwarded_output if isinstance(forwarded_output, str) else None
@@ -6005,12 +6380,14 @@ def create_runner_app(
                     conversation_id,
                     status="completed",
                     output=output if output is not None else "",
+                    schedule_wake=not require_wake_ack,
                 )
             elif status == "failed":
                 delivery_ack = _mark_subagent_terminal_and_wake(
                     conversation_id,
                     status="failed",
                     output=output or "Error: native sub-agent turn failed",
+                    schedule_wake=not require_wake_ack,
                 )
             if delivery_ack is not None:
                 is_known = (
@@ -6022,6 +6399,33 @@ def create_runner_app(
                 )
                 if not_confirmed is not None:
                     return not_confirmed
+                if require_wake_ack and delivery_ack.entry is not None:
+                    entry = delivery_ack.entry
+                    parent_inbox = _session_inboxes.get(entry.parent_session_id)
+                    pending = parent_inbox.qsize() if parent_inbox is not None else 0
+                    notice = _format_subagent_wake_notice(
+                        agent=entry.agent,
+                        title=entry.title,
+                        status=entry.status,
+                        pending=pending,
+                    )
+                    wake_confirmed = await _deliver_subagent_wake_post(
+                        server_client,
+                        entry.parent_session_id,
+                        notice,
+                        created_by=entry.created_by,
+                        source_event_id=(
+                            wake_source_id if isinstance(wake_source_id, str) else None
+                        ),
+                    )
+                    if not wake_confirmed:
+                        return JSONResponse(
+                            status_code=503,
+                            content={
+                                "error": "subagent_wake_not_confirmed",
+                                "detail": "Parent wake did not receive an HTTP acknowledgement.",
+                            },
+                        )
             return Response(status_code=204)
 
         if body_type == "stop_session":
@@ -8455,6 +8859,213 @@ def create_runner_app(
         )
     else:
         app.state.native_pane_reaper = None
+
+    async def _recover_durable_dispatches() -> None:
+        """Recover queued work and fail indeterminate cross-generation work."""
+        nonlocal _dispatch_recovery_scan_in_progress
+        if process_manager is None or runner_id is None:
+            _dispatch_recovery_scan_in_progress = False
+            return
+
+        async def _fetch_recoverable_entries() -> list[dict[str, Any]]:
+            response = await server_client.get(
+                "/v1/runner-dispatch-receipts",
+                params={"recoverable": "true"},
+                headers=_receipt_auth_headers(),
+                timeout=10.0,
+            )
+            if response.status_code >= 400:
+                raise RuntimeError(
+                    f"dispatch receipt recovery failed ({response.status_code})"
+                )
+            payload = response.json()
+            entries = payload.get("data") if isinstance(payload, dict) else None
+            return [entry for entry in entries if isinstance(entry, dict)] if isinstance(
+                entries, list
+            ) else []
+
+        async def _recover_queued_entries(
+            conversation_id: str,
+            conversation_entries: list[dict[str, Any]],
+        ) -> None:
+            if conversation_id in _active_turns:
+                return
+            queued_entries = [
+                entry for entry in conversation_entries if entry.get("phase") == "queued"
+            ]
+            active_entries = queued_entries[:1]
+            buffered_entries = queued_entries[1:]
+            active_receipts: list[tuple[str, str]] = []
+            for entry in active_entries:
+                key = entry.get("idempotency_key")
+                if not isinstance(key, str):
+                    continue
+                transitioned = await _transition_dispatch_receipt(
+                    conversation_id,
+                    key=key,
+                    body_runner_id=runner_id,
+                    expected_phases=("queued",),
+                    phase="running",
+                    allow_takeover=True,
+                )
+                if transitioned is not None:
+                    active_receipts.append((key, runner_id))
+            if not active_receipts:
+                return
+            active_keys = {key for key, _body_runner_id in active_receipts}
+            buffered = _session_message_buffers.get(conversation_id)
+            if buffered is not None:
+                remaining = [
+                    body
+                    for body in buffered
+                    if body.get("idempotency_key") not in active_keys
+                ]
+                if remaining:
+                    _session_message_buffers[conversation_id] = remaining
+                else:
+                    _session_message_buffers.pop(conversation_id, None)
+            for entry in buffered_entries:
+                request_body = entry["request"]
+                key = entry.get("idempotency_key")
+                if not isinstance(key, str) or entry.get("phase") != "queued":
+                    continue
+                _buffer_message_once(conversation_id, request_body)
+
+            message_body = dict(active_entries[-1]["request"])
+            raw_content = message_body.get("content")
+            if isinstance(raw_content, list):
+                message_body["content"] = await _resolve_forwarded_message_content(
+                    raw_content,
+                    session_id=conversation_id,
+                    server_client=server_client,
+                )
+            _note_message_author(conversation_id, message_body)
+            loaded = await _load_history_as_input(
+                conversation_id,
+                drop_item_id=message_body.get("persisted_item_id"),
+            )
+            loaded.append(_history_message_from_body(message_body))
+            _session_histories[conversation_id] = loaded
+            _active_dispatch_receipts[conversation_id] = active_receipts
+            _active_turns[conversation_id] = None
+            _publish_turn_status(conversation_id, "running")
+            turn_task = asyncio.create_task(
+                _run_turn_bg(message_body, conversation_id),
+                name=f"turn-recovered-{conversation_id}",
+            )
+            _active_turns[conversation_id] = turn_task
+            turn_task.add_done_callback(_background_tasks.discard)
+            _background_tasks.add(turn_task)
+
+        entries = await _fetch_recoverable_entries()
+        by_conversation: dict[str, list[dict[str, Any]]] = {}
+        for entry in entries:
+            conversation_id = entry.get("conversation_id")
+            request_body = entry.get("request")
+            if isinstance(conversation_id, str) and isinstance(request_body, dict):
+                by_conversation.setdefault(conversation_id, []).append(entry)
+
+        recovery_conversations = {
+            conversation_id
+            for conversation_id, conversation_entries in by_conversation.items()
+            if any(entry.get("phase") == "running" for entry in conversation_entries)
+        }
+        _dispatch_recovery_barriers.update(recovery_conversations)
+        _dispatch_recovery_scan_in_progress = False
+        scan_buffered = set(_dispatch_recovery_scan_buffered)
+        _dispatch_recovery_scan_buffered.clear()
+        for conversation_id in scan_buffered - recovery_conversations:
+            await _check_and_start_next_turn(conversation_id)
+
+        for conversation_id, conversation_entries in by_conversation.items():
+            if conversation_id not in recovery_conversations:
+                await _recover_queued_entries(conversation_id, conversation_entries)
+                continue
+            try:
+                for entry in conversation_entries:
+                    if entry.get("phase") != "running":
+                        continue
+                    key = entry.get("idempotency_key")
+                    if not isinstance(key, str):
+                        continue
+                    await _transition_terminal_dispatch_receipt_until_confirmed(
+                        conversation_id,
+                        key=key,
+                        body_runner_id=runner_id,
+                        phase="failed",
+                        result={
+                            "status": "failed",
+                            "failure_code": "runner_restarted_during_execution",
+                            "detail": (
+                                "Runner restarted after execution began; the outcome is "
+                                "indeterminate and the dispatch will not be replayed."
+                            ),
+                        },
+                    )
+                refreshed = await _fetch_recoverable_entries()
+                refreshed_entries = [
+                    entry
+                    for entry in refreshed
+                    if entry.get("conversation_id") == conversation_id
+                ]
+                await _recover_queued_entries(conversation_id, refreshed_entries)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _logger.exception(
+                    "Cross-generation dispatch recovery failed; barrier retained for %s",
+                    conversation_id,
+                )
+                raise
+            else:
+                _dispatch_recovery_barriers.discard(conversation_id)
+
+    app.state.recover_dispatch_receipts = _recover_durable_dispatches
+
+    def _start_dispatch_receipt_recovery() -> asyncio.Task[None]:
+        nonlocal _dispatch_recovery_scan_in_progress, _dispatch_recovery_task
+        if _dispatch_recovery_task is not None and not _dispatch_recovery_task.done():
+            return _dispatch_recovery_task
+        _dispatch_recovery_scan_in_progress = True
+        task = asyncio.create_task(
+            _recover_durable_dispatches(),
+            name="dispatch-receipt-recovery",
+        )
+
+        def _consume_recovery_result(completed: asyncio.Task[None]) -> None:
+            nonlocal _dispatch_recovery_task
+            _background_tasks.discard(completed)
+            if _dispatch_recovery_task is completed:
+                _dispatch_recovery_task = None
+            if completed.cancelled():
+                return
+            error = completed.exception()
+            if error is not None:
+                _logger.error(
+                    "Durable dispatch recovery stopped; queued work remains durable",
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+
+        task.add_done_callback(_consume_recovery_result)
+        _background_tasks.add(task)
+        _dispatch_recovery_task = task
+        return task
+
+    app.state.start_dispatch_receipt_recovery = _start_dispatch_receipt_recovery
+
+    async def _shutdown_background_tasks() -> None:
+        nonlocal _dispatch_recovery_scan_in_progress
+        while _background_tasks:
+            tasks = list(_background_tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            _background_tasks.difference_update(tasks)
+        _dispatch_recovery_scan_in_progress = False
+        _dispatch_recovery_barriers.clear()
+        _dispatch_recovery_scan_buffered.clear()
+
+    app.state.shutdown_background_tasks = _shutdown_background_tasks
 
     return app
 

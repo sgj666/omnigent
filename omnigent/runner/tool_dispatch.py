@@ -1078,6 +1078,7 @@ async def _post_child_message_event(
     *,
     content: list[_JsonObject],
     created_by: str | None,
+    dispatch_source_id: str,
 ) -> httpx.Response:
     """Post a child message, retrying once without best-effort attribution."""
 
@@ -1088,6 +1089,7 @@ async def _post_child_message_event(
                 "role": "user",
                 "content": content,
             },
+            "dispatch_source_id": dispatch_source_id,
             **({"created_by": actor} if actor is not None else {}),
         }
 
@@ -1690,6 +1692,7 @@ async def _execute_subagent_tool(
         server_client=server_client,
         conversation_id=conversation_id,
     )
+    dispatch_source_id = uuid.uuid4().hex
 
     # Use the PARENT's agent_id — inline sub-agents are part of
     # the same bundle, not separately registered. The runner
@@ -1847,6 +1850,13 @@ async def _execute_subagent_tool(
             "parent_session_id": conversation_id,
             "title": f"{sub_agent_name}:{session_name}",
             "sub_agent_name": sub_agent_name,
+            "dispatch_source_id": (
+                "sys_session_send:"
+                + uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"{conversation_id}:{sub_agent_name}:{session_name}",
+                ).hex
+            ),
         }
         if harness_override_canonical is not None:
             create_body["harness_override"] = harness_override_canonical
@@ -2009,6 +2019,7 @@ async def _execute_subagent_tool(
             child_session_id,
             content=message_content,
             created_by=dispatch_created_by,
+            dispatch_source_id=dispatch_source_id,
         )
     except httpx.HTTPError as exc:
         teardown_warning = await _teardown_failed_child(
@@ -2160,6 +2171,7 @@ async def _send_to_existing_session(
             target_session_id,
             content=[{"type": "input_text", "text": message}],
             created_by=created_by,
+            dispatch_source_id=uuid.uuid4().hex,
         )
     except httpx.HTTPError as exc:
         _runner_app.unregister_child_session(target_session_id)

@@ -1126,11 +1126,13 @@ def create_app(
         mcp_manager=mcp_manager,
         auth_token=runner_auth_token,
         auth_token_factory=auth_token_factory,
+        runner_id=_runner_id,
     )
 
     async def _start_pm() -> None:
         """Start harness process manager; register MCP prewarm metadata if requested."""
         await pm.start()
+        app.state.start_dispatch_receipt_recovery()
         prewarm_path = os.environ.get(_RUNNER_PREWARM_SPEC_PATH_ENV_VAR)
         if prewarm_path and mcp_manager is not None:
             try:
@@ -1159,6 +1161,7 @@ def create_app(
 
         :returns: None.
         """
+        await app.state.shutdown_background_tasks()
         _pane_reaper = getattr(app.state, "native_pane_reaper", None)
         if _pane_reaper is not None:
             await _pane_reaper.shutdown()

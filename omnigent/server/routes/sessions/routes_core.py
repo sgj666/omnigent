@@ -238,19 +238,37 @@ def register_core_routes(
             # message survives in each entry's `msg`.
             raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
 
-        resp = await _create_session_from_existing_agent(
-            conversation_store,
-            agent_store,
-            runner_router,
-            body,
-            request,
-            agent_cache=agent_cache,
-            user_id=user_id,
-            permission_store=permission_store,
-            liveness_lookup=liveness_lookup,
-            file_store=file_store,
-            artifact_store=artifact_store,
-            background_title_coordinator=background_title_coordinator,
+        run_child_rollback = _RunChildCreateRollback()
+
+        async def _guard_run_child_create(awaitable: Any) -> Any:
+            try:
+                return await awaitable
+            except Exception as exc:
+                await _rollback_run_child_create(
+                    run_child_rollback,
+                    request=request,
+                    conversation_store=conversation_store,
+                    code="session_create_failed",
+                    message=str(exc) or type(exc).__name__,
+                )
+                raise
+
+        resp = await _guard_run_child_create(
+            _create_session_from_existing_agent(
+                conversation_store,
+                agent_store,
+                runner_router,
+                body,
+                request,
+                agent_cache=agent_cache,
+                user_id=user_id,
+                permission_store=permission_store,
+                liveness_lookup=liveness_lookup,
+                file_store=file_store,
+                artifact_store=artifact_store,
+                background_title_coordinator=background_title_coordinator,
+                run_child_rollback=run_child_rollback,
+            )
         )
         # Notify the runner about the new session so it can resolve
         # the spec and cache sub_agent_name before the first turn.
@@ -305,9 +323,15 @@ def register_core_routes(
         # POST /v1/hosts/{host_id}/runners via resolve_host_launch)
         # sees the grant.
         if permission_store is not None and user_id is not None:
-            await asyncio.to_thread(permission_store.ensure_user, user_id)
-            await asyncio.to_thread(permission_store.grant, user_id, resp.id, LEVEL_OWNER)
-            resp.permission_level = await _get_permission_level(user_id, resp.id, permission_store)
+            await _guard_run_child_create(
+                asyncio.to_thread(permission_store.ensure_user, user_id)
+            )
+            await _guard_run_child_create(
+                asyncio.to_thread(permission_store.grant, user_id, resp.id, LEVEL_OWNER)
+            )
+            resp.permission_level = await _guard_run_child_create(
+                _get_permission_level(user_id, resp.id, permission_store)
+            )
             resp.can_approve = True
         # Push the new session to this user's other open tabs (see the
         # multipart path above for the rationale).
@@ -398,30 +422,42 @@ def register_core_routes(
                 from omnigent.runner.identity import token_bound_runner_id
                 from omnigent.server.routes._host_launch import resolve_host_launch
 
-                target = await asyncio.to_thread(
-                    resolve_host_launch,
-                    user_id=user_id,
-                    host_id=launch_host_id,
-                    session_id=resp.id,
-                    host_store=host_store_inst,
-                    host_registry=host_registry,
-                    conversation_store=conversation_store,
-                    permission_store=permission_store,
+                target = await _guard_run_child_create(
+                    asyncio.to_thread(
+                        resolve_host_launch,
+                        user_id=user_id,
+                        host_id=launch_host_id,
+                        session_id=resp.id,
+                        host_store=host_store_inst,
+                        host_registry=host_registry,
+                        conversation_store=conversation_store,
+                        permission_store=permission_store,
+                    )
                 )
                 conn = target.conn
                 binding_token = secrets.token_urlsafe(32)
                 runner_id = token_bound_runner_id(binding_token)
                 # Atomic bind (WHERE runner_id IS NULL) closes the TOCTOU.
-                bound = await asyncio.to_thread(
-                    conversation_store.set_runner_id,
-                    resp.id,
-                    runner_id,
+                bound = await _guard_run_child_create(
+                    asyncio.to_thread(
+                        conversation_store.set_runner_id,
+                        resp.id,
+                        runner_id,
+                    )
                 )
                 if not bound:
-                    raise OmnigentError(
+                    error = OmnigentError(
                         f"Session {resp.id!r} already has a runner bound",
                         code=ErrorCode.CONFLICT,
                     )
+                    await _rollback_run_child_create(
+                        run_child_rollback,
+                        request=request,
+                        conversation_store=conversation_store,
+                        code="runner_bind_failed",
+                        message=str(error),
+                    )
+                    raise error
                 # host_id and workspace were already written by
                 # _create_session_from_existing_agent; we only need
                 # to set runner_id atomically (above) and send the
@@ -432,11 +468,19 @@ def register_core_routes(
                 )
                 conn.pending_launches[request_id] = future
                 if resp.workspace is None:  # pragma: no cover — schema guards
-                    raise OmnigentError(
+                    error = OmnigentError(
                         "session has host_id but no workspace; "
                         "schema constraint should have prevented this",
                         code=ErrorCode.INTERNAL_ERROR,
                     )
+                    await _rollback_run_child_create(
+                        run_child_rollback,
+                        request=request,
+                        conversation_store=conversation_store,
+                        code="invalid_workspace",
+                        message=str(error),
+                    )
+                    raise error
                 launch_frame = encode_host_frame(
                     HostLaunchRunnerFrame(
                         request_id=request_id,
@@ -450,13 +494,36 @@ def register_core_routes(
                         harness=resp.harness,
                     )
                 )
-                host_registry.send_text(conn, launch_frame)
+                try:
+                    host_registry.send_text(conn, launch_frame)
+                except Exception as exc:
+                    await _rollback_run_child_create(
+                        run_child_rollback,
+                        request=request,
+                        conversation_store=conversation_store,
+                        code="host_launch_failed",
+                        message=str(exc) or type(exc).__name__,
+                    )
+                    raise
                 try:
                     launch_result = await asyncio.wait_for(future, timeout=30.0)
                 except asyncio.TimeoutError:
                     conn.pending_launches.pop(request_id, None)
                     launch_result = {"status": "failed", "error": "host launch timed out"}
                 if launch_result.get("status") == "failed":
+                    if run_child_rollback.attempt_id is not None:
+                        error = str(launch_result.get("error") or "Host runner launch failed")
+                        await _rollback_run_child_create(
+                            run_child_rollback,
+                            request=request,
+                            conversation_store=conversation_store,
+                            code="host_launch_failed",
+                            message=error,
+                        )
+                        raise OmnigentError(
+                            f"Host {launch_host_id!r} failed to launch Run Child runner: {error}",
+                            code=ErrorCode.RUNNER_UNAVAILABLE,
+                        )
                     # Lenient on every create-time launch failure, including
                     # an unconfigured harness: the picker's readiness data
                     # can be stale (the user may have run `omnigent setup`

@@ -35,6 +35,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -269,6 +270,7 @@ class _FakeHarnessClient:
         :param chunks: SSE chunks returned by the fake stream.
         """
         self._chunks = chunks
+        self.stream_calls = 0
 
     def stream(
         self,
@@ -288,6 +290,7 @@ class _FakeHarnessClient:
         :returns: Fake stream context manager.
         """
         del method, url, json, timeout
+        self.stream_calls += 1
         return _FakeHarnessStream(self._chunks)
 
 
@@ -412,6 +415,1511 @@ async def test_runner_post_without_manager_returns_501() -> None:
         )
         assert response.status_code == 501
         assert "HarnessProcessManager" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_runner_recovers_durable_dispatch_after_process_restart(db_uri: str) -> None:
+    """A fresh runner generation takes queued work and same-key retries do not rerun it."""
+    from omnigent.entities import MessageData, NewConversationItem
+    from omnigent.runner import app as runner_app
+    from omnigent.server.routes.runner_dispatch_receipts import (
+        create_runner_dispatch_receipts_router,
+    )
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    conversation_id = "d" * 32
+    runner_id = "runner-durable-restart"
+    key = "f" * 32
+    store = SqlAlchemyConversationStore(db_uri)
+    store.create_conversation(conversation_id=conversation_id, runner_id=runner_id)
+    persisted = store.append_idempotent(
+        conversation_id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn_restart",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "retry once"}],
+                ),
+            )
+        ],
+        idempotency_key=key,
+    )[0]
+
+    ap = FastAPI()
+    ap.include_router(
+        create_runner_dispatch_receipts_router(
+            store,
+            allowed_tunnel_tokens=frozenset({"test-runner-token"}),
+        ),
+        prefix="/v1",
+    )
+
+    @ap.get("/v1/sessions/{session_id}/items")
+    async def _items(session_id: str) -> dict[str, object]:
+        page = store.list_items(session_id)
+        return {
+            "data": [item.to_api_dict() for item in page.data],
+            "has_more": page.has_more,
+        }
+
+    claim_persisted = asyncio.Event()
+    block_transition = asyncio.Event()
+
+    class _CrashWindowClient:
+        def __init__(self, delegate: httpx.AsyncClient) -> None:
+            self._delegate = delegate
+
+        async def get(self, url: str, **kwargs: object) -> httpx.Response:
+            return await self._delegate.get(url, **kwargs)
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            if url.endswith("/claim"):
+                response = await self._delegate.post(url, **kwargs)
+                claim_persisted.set()
+                return response
+            if url.endswith("/transition"):
+                await block_transition.wait()
+            return await self._delegate.post(url, **kwargs)
+
+    harness_client = _FakeHarnessClient([])
+    body = {
+        "type": "message",
+        "role": "user",
+        "harness": _TEST_HARNESS_NAME,
+        "model": "fake/model",
+        "content": [{"type": "input_text", "text": "retry once"}],
+        "dispatch_source_id": "source-1",
+        "idempotency_key": key,
+        "persisted_item_id": persisted.id,
+        "runner_id": runner_id,
+    }
+    ap_transport = httpx.ASGITransport(app=ap)
+    try:
+        async with httpx.AsyncClient(
+            transport=ap_transport,
+            base_url="http://ap",
+            headers={"X-Omnigent-Runner-Tunnel-Token": "test-runner-token"},
+        ) as ap_http:
+            app_a = create_runner_app(
+                process_manager=cast(
+                    HarnessProcessManager,
+                    _FakeProcessManager(harness_client),
+                ),
+                server_client=cast(httpx.AsyncClient, _CrashWindowClient(ap_http)),
+                runner_id=runner_id,
+            )
+            async with _runner_test_client(app_a) as runner_a:
+                interrupted_post = asyncio.create_task(
+                    runner_a.post(
+                        f"/v1/sessions/{conversation_id}/events",
+                        json=body,
+                    )
+                )
+                await asyncio.wait_for(claim_persisted.wait(), timeout=2)
+                assert store.get_runner_dispatch_receipt(
+                    conversation_id,
+                    idempotency_key=key,
+                )["phase"] == "queued"
+                interrupted_post.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await interrupted_post
+
+            app_b = create_runner_app(
+                process_manager=cast(
+                    HarnessProcessManager,
+                    _FakeProcessManager(harness_client),
+                ),
+                server_client=ap_http,
+                runner_id=runner_id,
+            )
+            await app_b.state.recover_dispatch_receipts()
+            for _ in range(100):
+                receipt = store.get_runner_dispatch_receipt(
+                    conversation_id,
+                    idempotency_key=key,
+                )
+                if receipt is not None and receipt["phase"] == "completed":
+                    break
+                await asyncio.sleep(0.01)
+            assert receipt is not None
+            assert receipt["phase"] == "completed"
+            assert harness_client.stream_calls == 1
+
+            async with _runner_test_client(app_b) as runner_b:
+                replay = await runner_b.post(
+                    f"/v1/sessions/{conversation_id}/events",
+                    json=body,
+                )
+
+            assert replay.status_code == 202
+            assert replay.json()["phase"] == "completed"
+            assert harness_client.stream_calls == 1
+
+            app_c = create_runner_app(
+                process_manager=cast(
+                    HarnessProcessManager,
+                    _FakeProcessManager(harness_client),
+                ),
+                server_client=ap_http,
+                runner_id=runner_id,
+            )
+            await app_c.state.recover_dispatch_receipts()
+            assert harness_client.stream_calls == 1
+
+            stream_started = asyncio.Event()
+            release_first_stream = asyncio.Event()
+
+            class _GateStream(_FakeHarnessStream):
+                def __init__(self, *, block: bool) -> None:
+                    super().__init__([])
+                    self._block = block
+
+                async def aiter_text(self) -> AsyncIterator[str]:
+                    stream_started.set()
+                    if self._block:
+                        await release_first_stream.wait()
+                    yield 'data: {"type":"response.completed"}\n\n'
+
+            class _GateHarnessClient(_FakeHarnessClient):
+                def __init__(self) -> None:
+                    super().__init__([])
+
+                def stream(
+                    self,
+                    method: str,
+                    url: str,
+                    *,
+                    json: dict[str, object],
+                    timeout: float | None,
+                ) -> _GateStream:
+                    del method, url, json, timeout
+                    self.stream_calls += 1
+                    return _GateStream(block=self.stream_calls == 1)
+
+            batch_client = _GateHarnessClient()
+            batch_bodies: list[dict[str, object]] = []
+            for suffix in ("a", "b", "c"):
+                batch_key = suffix * 32
+                batch_item = store.append_idempotent(
+                    conversation_id,
+                    [
+                        NewConversationItem(
+                            type="message",
+                            response_id=f"turn_batch_{suffix}",
+                            data=MessageData(
+                                role="user",
+                                content=[
+                                    {"type": "input_text", "text": f"batch {suffix}"}
+                                ],
+                            ),
+                        )
+                    ],
+                    idempotency_key=batch_key,
+                )[0]
+                batch_bodies.append(
+                    {
+                        **body,
+                        "content": [
+                            {"type": "input_text", "text": f"batch {suffix}"}
+                        ],
+                        "idempotency_key": batch_key,
+                        "persisted_item_id": batch_item.id,
+                    }
+                )
+            runner_app._session_histories_ref.pop(conversation_id, None)
+            app_d = create_runner_app(
+                process_manager=cast(
+                    HarnessProcessManager,
+                    _FakeProcessManager(batch_client),
+                ),
+                server_client=ap_http,
+                runner_id=runner_id,
+            )
+            async with _runner_test_client(app_d) as runner_d:
+                first_batch = await runner_d.post(
+                    f"/v1/sessions/{conversation_id}/events",
+                    json=batch_bodies[0],
+                )
+                assert first_batch.status_code == 202
+                await asyncio.wait_for(stream_started.wait(), timeout=2)
+                buffered = [
+                    await runner_d.post(
+                        f"/v1/sessions/{conversation_id}/events",
+                        json=batch_body,
+                    )
+                    for batch_body in batch_bodies[1:]
+                ]
+                assert [response.json()["phase"] for response in buffered] == [
+                    "queued",
+                    "queued",
+                ]
+                release_first_stream.set()
+
+                for _ in range(200):
+                    phases = [
+                        store.get_runner_dispatch_receipt(
+                            conversation_id,
+                            idempotency_key=str(batch_body["idempotency_key"]),
+                        )["phase"]
+                        for batch_body in batch_bodies
+                    ]
+                    if phases == ["completed", "completed", "completed"]:
+                        break
+                    await asyncio.sleep(0.01)
+                assert phases == ["completed", "completed", "completed"]
+                assert batch_client.stream_calls == 2
+    finally:
+        runner_app._session_histories_ref.pop(conversation_id, None)
+
+
+@pytest.mark.asyncio
+async def test_runner_restart_recovers_multiple_native_dispatches_in_enqueue_order(
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Queued native receipts recover by persisted position, not key ordering."""
+    from omnigent.entities import MessageData, NewConversationItem
+    from omnigent.runner import app as runner_app
+    from omnigent.server.routes.runner_dispatch_receipts import (
+        create_runner_dispatch_receipts_router,
+    )
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    conversation_id = "2" * 32
+    agent_id = "7" * 32
+    runner_id = "runner-multi-queued-restart"
+    keys = ("z" * 32, "a" * 32)
+    store = SqlAlchemyConversationStore(db_uri)
+    store.create_conversation(
+        conversation_id=conversation_id,
+        agent_id=agent_id,
+        runner_id=runner_id,
+        agent_bundle_version=1,
+        agent_bundle_digest="9" * 64,
+        agent_bundle_location=f"{agent_id}/{'9' * 64}",
+    )
+    monkeypatch.setattr(
+        "omnigent.stores.conversation_store.sqlalchemy_store.now_epoch",
+        lambda: 1_800_000_000,
+    )
+    monkeypatch.setattr(
+        "omnigent.runner.app._TERMINAL_RECEIPT_RETRY_BASE_DELAY_S",
+        0,
+    )
+    for key, text in zip(keys, ("first z", "second a"), strict=True):
+        item = store.append_idempotent(
+            conversation_id,
+            [
+                NewConversationItem(
+                    type="message",
+                    response_id=f"turn_{key}",
+                    data=MessageData(
+                        role="user",
+                        content=[{"type": "input_text", "text": text}],
+                        is_meta=True,
+                    ),
+                )
+            ],
+            idempotency_key=key,
+        )[0]
+        store.claim_runner_dispatch_receipt(
+            conversation_id,
+            idempotency_key=key,
+            runner_id=runner_id,
+            persisted_item_id=item.id,
+            execution_owner_id="crashed-before-start",
+        )
+
+    initial = [
+        store.get_runner_dispatch_receipt(conversation_id, idempotency_key=key)
+        for key in keys
+    ]
+    assert [receipt["phase"] for receipt in initial if receipt is not None] == [
+        "queued",
+        "queued",
+    ]
+    assert [receipt["created_at"] for receipt in initial if receipt is not None] == [
+        1_800_000_000,
+        1_800_000_000,
+    ]
+    assert initial[0] is not None and initial[1] is not None
+    assert initial[0]["enqueue_position"] < initial[1]["enqueue_position"]
+
+    ap = FastAPI()
+    ap.include_router(
+        create_runner_dispatch_receipts_router(
+            store,
+            allowed_tunnel_tokens=frozenset({"test-runner-token"}),
+        ),
+        prefix="/v1",
+    )
+
+    @ap.get("/v1/sessions/{session_id}/items")
+    async def _items(session_id: str) -> dict[str, object]:
+        page = store.list_items(session_id)
+        return {
+            "data": [item.to_api_dict() for item in page.data],
+            "has_more": page.has_more,
+        }
+
+    first_stream_started = asyncio.Event()
+    second_stream_started = asyncio.Event()
+    release_first_stream = asyncio.Event()
+    release_second_stream = asyncio.Event()
+
+    class _GateStream(_FakeHarnessStream):
+        def __init__(self, *, started: asyncio.Event, release: asyncio.Event) -> None:
+            super().__init__([])
+            self._started = started
+            self._release = release
+
+        async def aiter_text(self) -> AsyncIterator[str]:
+            self._started.set()
+            await self._release.wait()
+            yield 'data: {"type":"response.completed"}\n\n'
+
+    class _OrderedGateHarnessClient(_FakeHarnessClient):
+        def stream(
+            self,
+            method: str,
+            url: str,
+            *,
+            json: dict[str, object],
+            timeout: float | None,
+        ) -> _GateStream:
+            del method, url, json, timeout
+            self.stream_calls += 1
+            if self.stream_calls == 1:
+                return _GateStream(
+                    started=first_stream_started,
+                    release=release_first_stream,
+                )
+            return _GateStream(
+                started=second_stream_started,
+                release=release_second_stream,
+            )
+
+    async def _native_spec(_agent_id: str, _session_id: str) -> AgentSpec:
+        return AgentSpec(
+            spec_version=1,
+            name="native-multi-restart",
+            executor=ExecutorSpec(
+                type="omnigent",
+                config={"harness": "claude-native"},
+            ),
+        )
+
+    harness_client = _OrderedGateHarnessClient([])
+    terminal_attempts = 0
+    fourth_terminal_attempt_started = asyncio.Event()
+    allow_fourth_terminal_attempt = asyncio.Event()
+
+    class _ThreeTerminalFailuresClient:
+        def __init__(self, delegate: httpx.AsyncClient) -> None:
+            self._delegate = delegate
+
+        async def get(self, url: str, **kwargs: object) -> httpx.Response:
+            return await self._delegate.get(url, **kwargs)
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            nonlocal terminal_attempts
+            body = kwargs.get("json")
+            if (
+                url.endswith("/transition")
+                and isinstance(body, dict)
+                and body.get("phase") == "completed"
+            ):
+                terminal_attempts += 1
+                if terminal_attempts <= 3:
+                    return httpx.Response(
+                        503,
+                        request=httpx.Request("POST", f"http://ap{url}"),
+                    )
+                if terminal_attempts == 4:
+                    fourth_terminal_attempt_started.set()
+                    await allow_fourth_terminal_attempt.wait()
+            return await self._delegate.post(url, **kwargs)
+
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=ap),
+            base_url="http://ap",
+            headers={"X-Omnigent-Runner-Tunnel-Token": "test-runner-token"},
+        ) as ap_http:
+            restarted = create_runner_app(
+                process_manager=cast(
+                    HarnessProcessManager,
+                    _FakeProcessManager(harness_client),
+                ),
+                spec_resolver=_native_spec,
+                server_client=cast(
+                    httpx.AsyncClient,
+                    _ThreeTerminalFailuresClient(ap_http),
+                ),
+                runner_id=runner_id,
+            )
+            await restarted.state.recover_dispatch_receipts()
+            await asyncio.wait_for(first_stream_started.wait(), timeout=2)
+
+            first = store.get_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=keys[0],
+            )
+            second = store.get_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=keys[1],
+            )
+            assert first is not None and first["phase"] == "running"
+            assert second is not None and second["phase"] == "queued"
+            assert second["result"] is None
+            assert harness_client.stream_calls == 1
+
+            release_first_stream.set()
+            await asyncio.wait_for(fourth_terminal_attempt_started.wait(), timeout=2)
+            first = store.get_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=keys[0],
+            )
+            second = store.get_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=keys[1],
+            )
+            assert terminal_attempts == 4
+            assert first is not None and first["phase"] == "running"
+            assert second is not None and second["phase"] == "queued"
+            assert not second_stream_started.is_set()
+
+            allow_fourth_terminal_attempt.set()
+            await asyncio.wait_for(second_stream_started.wait(), timeout=2)
+            first = store.get_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=keys[0],
+            )
+            second = store.get_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=keys[1],
+            )
+            assert first is not None and first["phase"] == "completed"
+            assert second is not None and second["phase"] == "running"
+            assert harness_client.stream_calls == 2
+
+            release_second_stream.set()
+            for _ in range(200):
+                phases = [
+                    store.get_runner_dispatch_receipt(
+                        conversation_id,
+                        idempotency_key=key,
+                    )["phase"]
+                    for key in keys
+                ]
+                if phases == ["completed", "completed"]:
+                    break
+                await asyncio.sleep(0.01)
+
+        assert phases == ["completed", "completed"]
+        assert harness_client.stream_calls == 2
+    finally:
+        allow_fourth_terminal_attempt.set()
+        release_first_stream.set()
+        release_second_stream.set()
+        runner_app._session_histories_ref.pop(conversation_id, None)
+
+
+@pytest.mark.asyncio
+async def test_runner_retries_terminal_receipt_transition_after_ap_503(db_uri: str) -> None:
+    """A transient AP failure cannot leave a successful live process running."""
+    from omnigent.entities import MessageData, NewConversationItem
+    from omnigent.server.routes.runner_dispatch_receipts import (
+        create_runner_dispatch_receipts_router,
+    )
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    conversation_id = "3" * 32
+    runner_id = "runner-terminal-retry"
+    key = "terminal-retry"
+    store = SqlAlchemyConversationStore(db_uri)
+    store.create_conversation(conversation_id=conversation_id, runner_id=runner_id)
+    persisted = store.append_idempotent(
+        conversation_id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn_terminal_retry",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "finish once"}],
+                ),
+            )
+        ],
+        idempotency_key=key,
+    )[0]
+    ap = FastAPI()
+    ap.include_router(
+        create_runner_dispatch_receipts_router(
+            store,
+            allowed_tunnel_tokens=frozenset({"test-runner-token"}),
+        ),
+        prefix="/v1",
+    )
+
+    terminal_attempts = 0
+
+    class _TransientTerminalClient:
+        def __init__(self, delegate: httpx.AsyncClient) -> None:
+            self._delegate = delegate
+
+        async def get(self, url: str, **kwargs: object) -> httpx.Response:
+            return await self._delegate.get(url, **kwargs)
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            nonlocal terminal_attempts
+            body = kwargs.get("json")
+            if (
+                url.endswith("/transition")
+                and isinstance(body, dict)
+                and body.get("phase") == "completed"
+            ):
+                terminal_attempts += 1
+                if terminal_attempts <= 3:
+                    return httpx.Response(
+                        503,
+                        request=httpx.Request("POST", f"http://ap{url}"),
+                    )
+            return await self._delegate.post(url, **kwargs)
+
+    harness_client = _FakeHarnessClient([])
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=ap),
+        base_url="http://ap",
+        headers={"X-Omnigent-Runner-Tunnel-Token": "test-runner-token"},
+    ) as ap_http:
+        runner = create_runner_app(
+            process_manager=cast(
+                HarnessProcessManager,
+                _FakeProcessManager(harness_client),
+            ),
+            server_client=cast(httpx.AsyncClient, _TransientTerminalClient(ap_http)),
+            runner_id=runner_id,
+        )
+        async with _runner_test_client(runner) as client:
+            response = await client.post(
+                f"/v1/sessions/{conversation_id}/events",
+                json={
+                    "type": "message",
+                    "role": "user",
+                    "harness": _TEST_HARNESS_NAME,
+                    "model": "fake/model",
+                    "content": [{"type": "input_text", "text": "finish once"}],
+                    "idempotency_key": key,
+                    "persisted_item_id": persisted.id,
+                    "runner_id": runner_id,
+                },
+            )
+            assert response.status_code == 202
+            for _ in range(100):
+                receipt = store.get_runner_dispatch_receipt(
+                    conversation_id,
+                    idempotency_key=key,
+                )
+                if receipt is not None and receipt["phase"] == "completed":
+                    break
+                await asyncio.sleep(0.01)
+            replay = await client.post(
+                f"/v1/sessions/{conversation_id}/events",
+                json={
+                    "type": "message",
+                    "role": "user",
+                    "harness": _TEST_HARNESS_NAME,
+                    "model": "fake/model",
+                    "content": [{"type": "input_text", "text": "finish once"}],
+                    "idempotency_key": key,
+                    "persisted_item_id": persisted.id,
+                    "runner_id": runner_id,
+                },
+            )
+
+    assert receipt is not None
+    assert receipt["phase"] == "completed"
+    assert terminal_attempts == 4
+    assert replay.status_code == 202
+    assert replay.json()["phase"] == "completed"
+    assert harness_client.stream_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_retry_fatal_terminal_receipt_401(
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A fatal AP rejection is logged once and leaves later work queued."""
+    from omnigent.entities import MessageData, NewConversationItem
+    from omnigent.server.routes.runner_dispatch_receipts import (
+        create_runner_dispatch_receipts_router,
+    )
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    monkeypatch.setattr(
+        "omnigent.runner.app._TERMINAL_RECEIPT_RETRY_BASE_DELAY_S",
+        0,
+    )
+    conversation_id = "5" * 32
+    runner_id = "runner-terminal-fatal"
+    key = "terminal-fatal"
+    store = SqlAlchemyConversationStore(db_uri)
+    store.create_conversation(conversation_id=conversation_id, runner_id=runner_id)
+    persisted = store.append_idempotent(
+        conversation_id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn_terminal_fatal",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "finish once"}],
+                ),
+            )
+        ],
+        idempotency_key=key,
+    )[0]
+    ap = FastAPI()
+    ap.include_router(
+        create_runner_dispatch_receipts_router(
+            store,
+            allowed_tunnel_tokens=frozenset({"test-runner-token"}),
+        ),
+        prefix="/v1",
+    )
+
+    attempts = 0
+    rejected = asyncio.Event()
+
+    class _FatalTerminalClient:
+        def __init__(self, delegate: httpx.AsyncClient) -> None:
+            self._delegate = delegate
+
+        async def get(self, url: str, **kwargs: object) -> httpx.Response:
+            return await self._delegate.get(url, **kwargs)
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            nonlocal attempts
+            body = kwargs.get("json")
+            if (
+                url.endswith("/transition")
+                and isinstance(body, dict)
+                and body.get("phase") == "completed"
+            ):
+                attempts += 1
+                rejected.set()
+                return httpx.Response(
+                    401,
+                    request=httpx.Request("POST", f"http://ap{url}"),
+                )
+            return await self._delegate.post(url, **kwargs)
+
+    caplog.set_level(logging.ERROR, logger="omnigent.runner.app")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=ap),
+        base_url="http://ap",
+        headers={"X-Omnigent-Runner-Tunnel-Token": "test-runner-token"},
+    ) as ap_http:
+        harness_client = _FakeHarnessClient([])
+        runner = create_runner_app(
+            process_manager=cast(
+                HarnessProcessManager,
+                _FakeProcessManager(harness_client),
+            ),
+            server_client=cast(httpx.AsyncClient, _FatalTerminalClient(ap_http)),
+            runner_id=runner_id,
+        )
+        async with _runner_test_client(runner) as client:
+            response = await client.post(
+                f"/v1/sessions/{conversation_id}/events",
+                json={
+                    "type": "message",
+                    "role": "user",
+                    "harness": _TEST_HARNESS_NAME,
+                    "model": "fake/model",
+                    "content": [{"type": "input_text", "text": "finish once"}],
+                    "idempotency_key": key,
+                    "persisted_item_id": persisted.id,
+                    "runner_id": runner_id,
+                },
+            )
+            assert response.status_code == 202
+            await asyncio.wait_for(rejected.wait(), timeout=2)
+            await asyncio.sleep(0.05)
+            await runner.state.shutdown_background_tasks()
+
+    receipt = store.get_runner_dispatch_receipt(
+        conversation_id,
+        idempotency_key=key,
+    )
+    assert receipt is not None and receipt["phase"] == "running"
+    assert attempts == 1
+    assert harness_client.stream_calls == 1
+    assert "Failed to confirm terminal dispatch receipts" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_runner_shutdown_cancels_persistent_terminal_receipt_retry(
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A permanently unavailable AP leaves no unobserved retry-task failure."""
+    from omnigent.entities import MessageData, NewConversationItem
+    from omnigent.server.routes.runner_dispatch_receipts import (
+        create_runner_dispatch_receipts_router,
+    )
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    monkeypatch.setattr(
+        "omnigent.runner.app._TERMINAL_RECEIPT_RETRY_BASE_DELAY_S",
+        0,
+    )
+    conversation_id = "4" * 32
+    runner_id = "runner-terminal-cancel"
+    key = "terminal-cancel"
+    store = SqlAlchemyConversationStore(db_uri)
+    store.create_conversation(conversation_id=conversation_id, runner_id=runner_id)
+    persisted = store.append_idempotent(
+        conversation_id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn_terminal_cancel",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "finish then cancel"}],
+                ),
+            )
+        ],
+        idempotency_key=key,
+    )[0]
+    ap = FastAPI()
+    ap.include_router(
+        create_runner_dispatch_receipts_router(
+            store,
+            allowed_tunnel_tokens=frozenset({"test-runner-token"}),
+        ),
+        prefix="/v1",
+    )
+
+    attempts = 0
+    retrying = asyncio.Event()
+
+    class _UnavailableTerminalClient:
+        def __init__(self, delegate: httpx.AsyncClient) -> None:
+            self._delegate = delegate
+
+        async def get(self, url: str, **kwargs: object) -> httpx.Response:
+            return await self._delegate.get(url, **kwargs)
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            nonlocal attempts
+            body = kwargs.get("json")
+            if (
+                url.endswith("/transition")
+                and isinstance(body, dict)
+                and body.get("phase") == "completed"
+            ):
+                attempts += 1
+                if attempts >= 4:
+                    retrying.set()
+                return httpx.Response(
+                    503,
+                    request=httpx.Request("POST", f"http://ap{url}"),
+                )
+            return await self._delegate.post(url, **kwargs)
+
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    unhandled: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=ap),
+            base_url="http://ap",
+            headers={"X-Omnigent-Runner-Tunnel-Token": "test-runner-token"},
+        ) as ap_http:
+            harness_client = _FakeHarnessClient([])
+            runner = create_runner_app(
+                process_manager=cast(
+                    HarnessProcessManager,
+                    _FakeProcessManager(harness_client),
+                ),
+                server_client=cast(
+                    httpx.AsyncClient,
+                    _UnavailableTerminalClient(ap_http),
+                ),
+                runner_id=runner_id,
+            )
+            async with _runner_test_client(runner) as client:
+                response = await client.post(
+                    f"/v1/sessions/{conversation_id}/events",
+                    json={
+                        "type": "message",
+                        "role": "user",
+                        "harness": _TEST_HARNESS_NAME,
+                        "model": "fake/model",
+                        "content": [
+                            {"type": "input_text", "text": "finish then cancel"}
+                        ],
+                        "idempotency_key": key,
+                        "persisted_item_id": persisted.id,
+                        "runner_id": runner_id,
+                    },
+                )
+                assert response.status_code == 202
+                await asyncio.wait_for(retrying.wait(), timeout=2)
+                await runner.state.shutdown_background_tasks()
+                await asyncio.sleep(0)
+
+        receipt = store.get_runner_dispatch_receipt(
+            conversation_id,
+            idempotency_key=key,
+        )
+        assert receipt is not None and receipt["phase"] == "running"
+        assert attempts >= 4
+        assert unhandled == []
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_cross_generation_running_dispatch_indeterminate(
+    db_uri: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup never replays a receipt that an older process began executing."""
+    from omnigent.entities import MessageData, NewConversationItem
+    from omnigent.server.routes.runner_dispatch_receipts import (
+        create_runner_dispatch_receipts_router,
+    )
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    conversation_id = "e" * 32
+    fatal_conversation_id = "f" * 32
+    runner_id = "runner-running-crash"
+    key = "9" * 32
+    queued_key = "8" * 32
+    fatal_key = "7" * 32
+    fatal_queued_key = "6" * 32
+    monkeypatch.setattr(
+        "omnigent.runner.app._TERMINAL_RECEIPT_RETRY_BASE_DELAY_S",
+        0,
+    )
+    store = SqlAlchemyConversationStore(db_uri)
+    store.create_conversation(conversation_id=conversation_id, runner_id=runner_id)
+    persisted = store.append_idempotent(
+        conversation_id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn_running_crash",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "do not replay"}],
+                ),
+            )
+        ],
+        idempotency_key=key,
+    )[0]
+    store.claim_runner_dispatch_receipt(
+        conversation_id,
+        idempotency_key=key,
+        runner_id=runner_id,
+        persisted_item_id=persisted.id,
+        execution_owner_id="old-generation",
+    )
+    running = store.transition_runner_dispatch_receipt(
+        conversation_id,
+        idempotency_key=key,
+        runner_id=runner_id,
+        execution_owner_id="old-generation",
+        expected_phases=("queued",),
+        phase="running",
+    )
+    assert running is not None
+    store.create_conversation(
+        conversation_id=fatal_conversation_id,
+        runner_id=runner_id,
+    )
+    fatal_persisted = store.append_idempotent(
+        fatal_conversation_id,
+        [
+            NewConversationItem(
+                type="message",
+                response_id="turn_fatal_running_crash",
+                data=MessageData(
+                    role="user",
+                    content=[{"type": "input_text", "text": "fatal recovery"}],
+                ),
+            )
+        ],
+        idempotency_key=fatal_key,
+    )[0]
+    store.claim_runner_dispatch_receipt(
+        fatal_conversation_id,
+        idempotency_key=fatal_key,
+        runner_id=runner_id,
+        persisted_item_id=fatal_persisted.id,
+        execution_owner_id="old-generation",
+    )
+    assert (
+        store.transition_runner_dispatch_receipt(
+            fatal_conversation_id,
+            idempotency_key=fatal_key,
+            runner_id=runner_id,
+            execution_owner_id="old-generation",
+            expected_phases=("queued",),
+            phase="running",
+        )
+        is not None
+    )
+    ap = FastAPI()
+    ap.include_router(
+        create_runner_dispatch_receipts_router(
+            store,
+            allowed_tunnel_tokens=frozenset({"test-runner-token"}),
+        ),
+        prefix="/v1",
+    )
+
+    @ap.get("/v1/sessions/{session_id}/items")
+    async def _items(session_id: str) -> dict[str, object]:
+        page = store.list_items(session_id)
+        return {
+            "data": [item.to_api_dict() for item in page.data],
+            "has_more": page.has_more,
+        }
+
+    terminal_attempts = 0
+    fatal_attempts = 0
+    fourth_attempt_started = asyncio.Event()
+    allow_fourth_attempt = asyncio.Event()
+    fatal_attempted = asyncio.Event()
+
+    class _TransientRecoveryClient:
+        def __init__(self, delegate: httpx.AsyncClient) -> None:
+            self._delegate = delegate
+
+        async def get(self, url: str, **kwargs: object) -> httpx.Response:
+            return await self._delegate.get(url, **kwargs)
+
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            nonlocal fatal_attempts, terminal_attempts
+            body = kwargs.get("json")
+            result = body.get("result") if isinstance(body, dict) else None
+            if (
+                url.endswith("/transition")
+                and isinstance(body, dict)
+                and body.get("phase") == "failed"
+                and isinstance(result, dict)
+                and result.get("failure_code") == "runner_restarted_during_execution"
+            ):
+                if body.get("conversation_id") == fatal_conversation_id:
+                    fatal_attempts += 1
+                    fatal_attempted.set()
+                    return httpx.Response(
+                        401,
+                        request=httpx.Request("POST", f"http://ap{url}"),
+                    )
+                terminal_attempts += 1
+                if terminal_attempts <= 3:
+                    return httpx.Response(
+                        503,
+                        request=httpx.Request("POST", f"http://ap{url}"),
+                    )
+                if terminal_attempts == 4:
+                    fourth_attempt_started.set()
+                    await allow_fourth_attempt.wait()
+            return await self._delegate.post(url, **kwargs)
+
+    harness_client = _FakeHarnessClient([])
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=ap),
+        base_url="http://ap",
+        headers={"X-Omnigent-Runner-Tunnel-Token": "test-runner-token"},
+    ) as ap_http:
+        restarted = create_runner_app(
+            process_manager=cast(
+                HarnessProcessManager,
+                _FakeProcessManager(harness_client),
+            ),
+            server_client=cast(httpx.AsyncClient, _TransientRecoveryClient(ap_http)),
+            runner_id=runner_id,
+        )
+        async with _runner_test_client(restarted) as runner_http:
+            recovery_task = restarted.state.start_dispatch_receipt_recovery()
+            await asyncio.wait_for(fourth_attempt_started.wait(), timeout=2)
+            queued_item = store.append_idempotent(
+                conversation_id,
+                [
+                    NewConversationItem(
+                        type="message",
+                        response_id="turn_after_running_crash",
+                        data=MessageData(
+                            role="user",
+                            content=[
+                                {"type": "input_text", "text": "run only after failure"}
+                            ],
+                        ),
+                    )
+                ],
+                idempotency_key=queued_key,
+            )[0]
+            queued_body = {
+                "type": "message",
+                "role": "user",
+                "harness": _TEST_HARNESS_NAME,
+                "model": "fake/model",
+                "content": [
+                    {"type": "input_text", "text": "run only after failure"}
+                ],
+                "idempotency_key": queued_key,
+                "persisted_item_id": queued_item.id,
+                "runner_id": runner_id,
+            }
+            queued_post = await runner_http.post(
+                f"/v1/sessions/{conversation_id}/events",
+                json=queued_body,
+            )
+            same_key_replay = await runner_http.post(
+                f"/v1/sessions/{conversation_id}/events",
+                json=queued_body,
+            )
+            queued_receipt = store.get_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=queued_key,
+            )
+            assert queued_post.status_code == 202
+            assert queued_post.json()["phase"] == "queued"
+            assert same_key_replay.status_code == 202
+            assert same_key_replay.json()["phase"] == "queued"
+            assert terminal_attempts == 4
+            assert not recovery_task.done()
+            assert queued_receipt is not None and queued_receipt["phase"] == "queued"
+            assert harness_client.stream_calls == 0
+
+            allow_fourth_attempt.set()
+            for _ in range(100):
+                queued_receipt = store.get_runner_dispatch_receipt(
+                    conversation_id,
+                    idempotency_key=queued_key,
+                )
+                if queued_receipt is not None and queued_receipt["phase"] == "completed":
+                    break
+                await asyncio.sleep(0.01)
+            await asyncio.wait_for(fatal_attempted.wait(), timeout=2)
+            with pytest.raises(RuntimeError, match="401"):
+                await recovery_task
+            completed_replay = await runner_http.post(
+                f"/v1/sessions/{conversation_id}/events",
+                json=queued_body,
+            )
+            assert completed_replay.status_code == 202
+            assert completed_replay.json()["phase"] == "completed"
+
+            fatal_queued_item = store.append_idempotent(
+                fatal_conversation_id,
+                [
+                    NewConversationItem(
+                        type="message",
+                        response_id="turn_after_fatal_recovery",
+                        data=MessageData(
+                            role="user",
+                            content=[
+                                {"type": "input_text", "text": "must stay queued"}
+                            ],
+                        ),
+                    )
+                ],
+                idempotency_key=fatal_queued_key,
+            )[0]
+            fatal_queued_post = await runner_http.post(
+                f"/v1/sessions/{fatal_conversation_id}/events",
+                json={
+                    "type": "message",
+                    "role": "user",
+                    "harness": _TEST_HARNESS_NAME,
+                    "model": "fake/model",
+                    "content": [{"type": "input_text", "text": "must stay queued"}],
+                    "idempotency_key": fatal_queued_key,
+                    "persisted_item_id": fatal_queued_item.id,
+                    "runner_id": runner_id,
+                },
+            )
+            fatal_queued_receipt = store.get_runner_dispatch_receipt(
+                fatal_conversation_id,
+                idempotency_key=fatal_queued_key,
+            )
+            assert fatal_queued_post.status_code == 202
+            assert fatal_queued_post.json()["phase"] == "queued"
+            assert fatal_queued_receipt is not None
+            assert fatal_queued_receipt["phase"] == "queued"
+            assert fatal_attempts == 1
+            assert harness_client.stream_calls == 1
+
+    receipt = store.get_runner_dispatch_receipt(
+        conversation_id,
+        idempotency_key=key,
+    )
+    assert receipt is not None
+    assert receipt["phase"] == "failed"
+    assert receipt["result"]["failure_code"] == "runner_restarted_during_execution"
+    # The runner transition committed without an AP callback, modeling a
+    # process crash after the terminal receipt commit but before effects begin.
+    assert receipt["effects_status"] == "pending"
+    assert queued_receipt is not None and queued_receipt["phase"] == "completed"
+    assert harness_client.stream_calls == 1
+
+    from omnigent.server.routes.runner_dispatch_receipts import (
+        drain_pending_runner_dispatch_effects,
+    )
+
+    effect_calls: list[str] = []
+
+    async def _apply_effects(pending: dict[str, Any]) -> None:
+        effect_calls.append(str(pending["idempotency_key"]))
+
+    drained = await drain_pending_runner_dispatch_effects(store, _apply_effects)
+    assert drained[0]["effects_status"] == "completed"
+    assert effect_calls == [key]
+    assert await drain_pending_runner_dispatch_effects(store, _apply_effects) == []
+    assert effect_calls == [key]
+
+
+@pytest.mark.asyncio
+async def test_pending_dispatch_effects_drain_across_workspaces(db_uri: str) -> None:
+    """Maintenance drains every tenant under that tenant's store scope."""
+    from omnigent.db.db_models import current_workspace_id, workspace_scope
+    from omnigent.entities import MessageData, NewConversationItem
+    from omnigent.server.routes.runner_dispatch_receipts import (
+        drain_all_pending_runner_dispatch_effects,
+    )
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    conversation_id = "7" * 32
+    runner_id = "runner-multi-workspace"
+    key = "multi-workspace-effects"
+    titles = {0: "default tenant", 7: "tenant seven"}
+    store = SqlAlchemyConversationStore(db_uri)
+
+    for workspace_id, title in titles.items():
+        with workspace_scope(workspace_id):
+            store.create_conversation(
+                conversation_id=conversation_id,
+                runner_id=runner_id,
+                title=title,
+            )
+            persisted = store.append_idempotent(
+                conversation_id,
+                [
+                    NewConversationItem(
+                        type="message",
+                        response_id=f"turn_workspace_{workspace_id}",
+                        data=MessageData(
+                            role="user",
+                            content=[{"type": "input_text", "text": title}],
+                        ),
+                    )
+                ],
+                idempotency_key=key,
+            )[0]
+            store.claim_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=key,
+                runner_id=runner_id,
+                persisted_item_id=persisted.id,
+                execution_owner_id="old-generation",
+            )
+            running = store.transition_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=key,
+                runner_id=runner_id,
+                execution_owner_id="old-generation",
+                expected_phases=("queued",),
+                phase="running",
+            )
+            assert running is not None
+            failed = store.transition_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=key,
+                runner_id=runner_id,
+                execution_owner_id="new-generation",
+                expected_phases=("running",),
+                phase="failed",
+                result={
+                    "status": "failed",
+                    "failure_code": "runner_restarted_during_execution",
+                },
+                allow_takeover=True,
+            )
+            assert failed is not None
+            assert failed["effects_status"] == "pending"
+
+    observed: list[tuple[int, str]] = []
+
+    async def _apply_effects(receipt: dict[str, Any]) -> None:
+        workspace_id = current_workspace_id()
+        conversation = store.get_conversation(receipt["conversation_id"])
+        assert conversation is not None
+        assert conversation.title == titles[workspace_id]
+        observed.append((workspace_id, conversation.title))
+
+    assert current_workspace_id() == 0
+    drained = await drain_all_pending_runner_dispatch_effects(store, _apply_effects)
+
+    assert len(drained) == 2
+    assert observed == [(0, titles[0]), (7, titles[7])]
+    assert current_workspace_id() == 0
+    for workspace_id in titles:
+        with workspace_scope(workspace_id):
+            receipt = store.get_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=key,
+            )
+            assert receipt is not None
+            assert receipt["effects_status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_receipt_api_requires_matching_runner_identity(db_uri: str) -> None:
+    """Anonymous and mismatched runners cannot inspect or mutate receipts."""
+    from omnigent.entities import MessageData, NewConversationItem
+    from omnigent.runner.identity import (
+        RUNNER_ID_HEADER,
+        RUNNER_TUNNEL_TOKEN_HEADER,
+        token_bound_runner_id,
+    )
+    from omnigent.server.routes.runner_dispatch_receipts import (
+        create_runner_dispatch_receipts_router,
+    )
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    store = SqlAlchemyConversationStore(db_uri)
+    tokens = ("runner-token-a", "runner-token-b")
+    runner_ids = tuple(token_bound_runner_id(token) for token in tokens)
+    conversation_ids = ("1" * 32, "2" * 32)
+    for index, (conversation_id, runner_id) in enumerate(
+        zip(conversation_ids, runner_ids, strict=True)
+    ):
+        store.create_conversation(conversation_id=conversation_id, runner_id=runner_id)
+        item = store.append_idempotent(
+            conversation_id,
+            [
+                NewConversationItem(
+                    type="message",
+                    response_id=f"turn_auth_{index}",
+                    data=MessageData(
+                        role="user",
+                        content=[{"type": "input_text", "text": f"runner {index}"}],
+                    ),
+                )
+            ],
+            idempotency_key=f"auth-{index}",
+        )[0]
+        store.claim_runner_dispatch_receipt(
+            conversation_id,
+            idempotency_key=f"auth-{index}",
+            runner_id=runner_id,
+            persisted_item_id=item.id,
+            execution_owner_id="generation-a",
+        )
+
+    ap = FastAPI()
+    ap.include_router(create_runner_dispatch_receipts_router(store), prefix="/v1")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=ap),
+        base_url="http://ap",
+    ) as client:
+        anonymous = await client.get(
+            "/v1/runner-dispatch-receipts",
+            params={"recoverable": "true"},
+        )
+        mismatch = await client.get(
+            "/v1/runner-dispatch-receipts",
+            params={"recoverable": "true"},
+            headers={
+                RUNNER_TUNNEL_TOKEN_HEADER: tokens[0],
+                RUNNER_ID_HEADER: runner_ids[1],
+            },
+        )
+        runner_a_headers = {
+            RUNNER_TUNNEL_TOKEN_HEADER: tokens[0],
+            RUNNER_ID_HEADER: runner_ids[0],
+        }
+        recovery = await client.get(
+            "/v1/runner-dispatch-receipts",
+            params={"recoverable": "true"},
+            headers=runner_a_headers,
+        )
+        foreign = await client.get(
+            "/v1/runner-dispatch-receipts",
+            params={
+                "conversation_id": conversation_ids[1],
+                "idempotency_key": "auth-1",
+            },
+            headers=runner_a_headers,
+        )
+
+    assert anonymous.status_code == 401
+    assert mismatch.status_code == 403
+    assert recovery.status_code == 200
+    assert [entry["conversation_id"] for entry in recovery.json()["data"]] == [
+        conversation_ids[0]
+    ]
+    assert foreign.status_code == 403
+    assert conversation_ids[1] not in foreign.text
+
+
+@pytest.mark.asyncio
+async def test_native_dispatch_recovers_queued_receipt_and_replays_completed_result(
+    db_uri: str,
+) -> None:
+    """A native hidden prompt survives restart and same-key replay injects once."""
+    from omnigent.entities import MessageData, NewConversationItem
+    from omnigent.server.routes.runner_dispatch_receipts import (
+        create_runner_dispatch_receipts_router,
+    )
+    from omnigent.stores.conversation_store.sqlalchemy_store import (
+        SqlAlchemyConversationStore,
+    )
+
+    conversation_id = "8" * 32
+    agent_id = "6" * 32
+    runner_id = "runner-native-restart"
+    key = "5" * 32
+    store = SqlAlchemyConversationStore(db_uri)
+    store.create_conversation(
+        conversation_id=conversation_id,
+        agent_id=agent_id,
+        runner_id=runner_id,
+        agent_bundle_version=1,
+        agent_bundle_digest="4" * 64,
+        agent_bundle_location=f"{agent_id}/{'4' * 64}",
+    )
+    hidden_prompt = NewConversationItem(
+        type="message",
+        response_id="turn_native_restart",
+        data=MessageData(
+            role="user",
+            content=[{"type": "input_text", "text": "native once"}],
+            is_meta=True,
+        ),
+    )
+    first = store.append_idempotent(
+        conversation_id,
+        [hidden_prompt],
+        idempotency_key=key,
+    )[0]
+    replayed_append = store.append_idempotent(
+        conversation_id,
+        [hidden_prompt],
+        idempotency_key=key,
+    )[0]
+    assert replayed_append.id == first.id
+    assert len(store.list_items(conversation_id).data) == 1
+    assert first.data.is_meta is True
+    store.claim_runner_dispatch_receipt(
+        conversation_id,
+        idempotency_key=key,
+        runner_id=runner_id,
+        persisted_item_id=first.id,
+        execution_owner_id="crashed-before-start",
+    )
+
+    ap = FastAPI()
+    ap.include_router(
+        create_runner_dispatch_receipts_router(
+            store,
+            allowed_tunnel_tokens=frozenset({"test-runner-token"}),
+        ),
+        prefix="/v1",
+    )
+
+    @ap.get("/v1/sessions/{session_id}/items")
+    async def _items(session_id: str) -> dict[str, object]:
+        page = store.list_items(session_id)
+        return {
+            "data": [item.to_api_dict() for item in page.data],
+            "has_more": page.has_more,
+        }
+
+    async def _native_spec(_agent_id: str, _session_id: str) -> AgentSpec:
+        return AgentSpec(
+            spec_version=1,
+            name="native-restart",
+            executor=ExecutorSpec(
+                type="omnigent",
+                config={"harness": "claude-native"},
+            ),
+        )
+
+    harness_client = _FakeHarnessClient([])
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=ap),
+        base_url="http://ap",
+        headers={"X-Omnigent-Runner-Tunnel-Token": "test-runner-token"},
+    ) as ap_http:
+        restarted = create_runner_app(
+            process_manager=cast(
+                HarnessProcessManager,
+                _FakeProcessManager(harness_client),
+            ),
+            spec_resolver=_native_spec,
+            server_client=ap_http,
+            runner_id=runner_id,
+        )
+        await restarted.state.recover_dispatch_receipts()
+        for _ in range(100):
+            receipt = store.get_runner_dispatch_receipt(
+                conversation_id,
+                idempotency_key=key,
+            )
+            if receipt is not None and receipt["phase"] == "completed":
+                break
+            await asyncio.sleep(0.01)
+        assert receipt is not None
+        assert receipt["phase"] == "completed"
+        assert harness_client.stream_calls == 1
+
+        body = store.build_runner_dispatch_request(
+            conversation_id,
+            persisted_item_id=first.id,
+            idempotency_key=key,
+            runner_id=runner_id,
+        )
+        assert body is not None
+        async with _runner_test_client(restarted) as runner_http:
+            completed_replay = await runner_http.post(
+                f"/v1/sessions/{conversation_id}/events",
+                json=body,
+            )
+
+    assert completed_replay.status_code == 202
+    assert completed_replay.json()["phase"] == "completed"
+    assert harness_client.stream_calls == 1
+    assert len(store.list_items(conversation_id).data) == 1
 
 
 @pytest.mark.asyncio
@@ -841,10 +2349,8 @@ async def test_runner_reloads_full_history_on_cold_cache_after_restart() -> None
 async def test_runner_cold_cache_appends_message_when_store_lacks_it() -> None:
     """A cold-cache message NOT yet in the store is appended, not dropped.
 
-    Not every forward is persist-before-forward (invariant I1): native-
-    terminal web injections (claude-native/codex-native) are forwarded
-    WITHOUT persisting first, so a fresh ``GET /items`` returns the prior
-    turns but NOT the just-posted message. If the cold-cache reload simply
+    Legacy or non-durable forwards can still omit the just-posted message,
+    so a fresh ``GET /items`` may return only prior turns. If the cold-cache reload simply
     overwrote ``_session_histories`` with that load, the new input would be
     dropped — and the native executor, which types only the LATEST user
     message into its pane, would inject stale text.
@@ -3081,6 +4587,10 @@ async def test_sys_session_send_model_lands_in_child_create_body(
     assert len(create_bodies) == 1, "fresh named send must create exactly one child"
     assert create_bodies[0]["model_override"] == model
     assert create_bodies[0]["sub_agent_name"] == "worker"
+    assert re.fullmatch(
+        r"sys_session_send:[0-9a-f]{32}",
+        create_bodies[0]["dispatch_source_id"],
+    )
 
 
 @pytest.mark.asyncio

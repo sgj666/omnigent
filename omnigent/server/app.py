@@ -1,6 +1,7 @@
 """FastAPI application — main entry point for the omnigent server."""
 
 import asyncio
+import hashlib
 import inspect
 import logging
 import mimetypes
@@ -75,6 +76,11 @@ from omnigent.server.routes.imports import create_imports_router
 from omnigent.server.routes.policy_registry import create_policy_registry_router
 from omnigent.server.routes.projects import create_projects_router
 from omnigent.server.routes.run_evaluations import create_run_evaluations_router
+from omnigent.server.routes.runner_dispatch_receipts import (
+    create_runner_dispatch_receipts_router,
+    drain_all_pending_runner_dispatch_effects,
+    maintain_pending_runner_dispatch_effects,
+)
 from omnigent.server.routes.runner_tunnel import create_runner_tunnel_router
 from omnigent.server.routes.runs import create_runs_router
 from omnigent.server.routes.scheduled_tasks import create_scheduled_tasks_router
@@ -1056,6 +1062,7 @@ def create_app(
             conversation_store,
             runner_router,
             run_projection,
+            host_registry,
         )
 
         from omnigent.runner.resource_registry import (
@@ -1121,8 +1128,22 @@ def create_app(
 
         lease_maintenance_stop = asyncio.Event()
         lease_maintenance_task = asyncio.create_task(
-            maintain_attempt_worktree_leases(host_registry, lease_maintenance_stop),
+            maintain_attempt_worktree_leases(
+                host_registry,
+                lease_maintenance_stop,
+                conversation_store=conversation_store,
+                liveness_lookup=_bulk_session_liveness,
+            ),
             name="attempt-worktree-lease-maintenance",
+        )
+        receipt_effects_maintenance_stop = asyncio.Event()
+        receipt_effects_maintenance_task = asyncio.create_task(
+            maintain_pending_runner_dispatch_effects(
+                conversation_store,
+                _on_indeterminate_dispatch_failure,
+                receipt_effects_maintenance_stop,
+            ),
+            name="runner-dispatch-receipt-effects-maintenance",
         )
         # Runner ``runner_last_seen`` is refreshed per-tunnel from each
         # runner tunnel's ping loop (``runner_tunnel._ping_loop``), inside
@@ -1197,6 +1218,10 @@ def create_app(
             lease_maintenance_task.cancel()
             with suppress(asyncio.CancelledError):
                 await lease_maintenance_task
+            receipt_effects_maintenance_stop.set()
+            receipt_effects_maintenance_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await receipt_effects_maintenance_task
             # Stop in-flight background managed-sandbox launches so a
             # slow provision doesn't outlive the ASGI shutdown (the
             # sandbox itself, if already provisioned, is reaped by the
@@ -1952,6 +1977,82 @@ def create_app(
         )
         return {"user_id": user_id, "is_admin": is_admin}
 
+    async def _on_indeterminate_dispatch_failure(receipt: dict[str, Any]) -> None:
+        """Project and relay a cross-generation dispatch failure once."""
+        from omnigent.entities import ErrorData
+        from omnigent.server.routes._sessions.orchestration import (
+            _cleanup_projected_run_attempt,
+            _forward_native_subagent_terminal_failure,
+        )
+
+        child = await asyncio.to_thread(
+            conversation_store.get_conversation,
+            receipt["conversation_id"],
+        )
+        if child is None:
+            return
+        result = receipt.get("result")
+        failure_message = (
+            str(result.get("detail"))
+            if isinstance(result, dict) and result.get("detail")
+            else "Runner restarted after execution began; the outcome is indeterminate."
+        )
+        failure_code = "runner_restarted_during_execution"
+        effects_source_digest = hashlib.sha256(
+            f"{child.id}\0{receipt['idempotency_key']}".encode()
+        ).hexdigest()
+        effects_source_id = f"dispatch-effects:{effects_source_digest}"
+        terminal_projection = run_projection.terminal(
+            child,
+            status="failed",
+            conversation_item_id=receipt.get("persisted_item_id"),
+            failure_code=failure_code,
+            failure_message=failure_message,
+        )
+        try:
+            await _forward_native_subagent_terminal_failure(
+                child.id,
+                child,
+                ErrorData(
+                    source="execution",
+                    code=failure_code,
+                    message=failure_message,
+                ),
+                runner_router,
+                source_event_id=effects_source_id,
+                require_wake_ack=True,
+            )
+            run_projection.parent_inbox_relayed(
+                child,
+                status="failed",
+                conversation_item_id=receipt.get("persisted_item_id"),
+            )
+        finally:
+            await _cleanup_projected_run_attempt(
+                terminal_projection,
+                host_registry=host_registry,
+                runner_stop_confirmed=False,
+            )
+
+    async def _replay_pending_runner_dispatch_effects() -> list[dict[str, Any]]:
+        return await drain_all_pending_runner_dispatch_effects(
+            conversation_store,
+            _on_indeterminate_dispatch_failure,
+        )
+
+    app.state.replay_pending_runner_dispatch_effects = (
+        _replay_pending_runner_dispatch_effects
+    )
+
+    app.include_router(
+        create_runner_dispatch_receipts_router(
+            conversation_store,
+            on_indeterminate_failure=_on_indeterminate_dispatch_failure,
+            allowed_tunnel_tokens=runner_tunnel_tokens,
+        ),
+        prefix="/v1",
+        tags=["runner_dispatch_receipts"],
+    )
     app.include_router(
         create_sessions_router(
             conversation_store,
