@@ -7,7 +7,12 @@ from dataclasses import replace
 import pytest
 
 from omnigent.agent_bundles import BundleDocument
-from omnigent.agent_bundles.service import AgentBundleService, BundleValidationFailure
+from omnigent.agent_bundles.patches import BundlePatch
+from omnigent.agent_bundles.service import (
+    AgentBundleService,
+    BundleValidationFailure,
+    BundleWorkerOperation,
+)
 from omnigent.db.utils import builtin_agent_id
 from omnigent.entities import Agent, PagedList
 from omnigent.stores.agent_store import AgentVersionConflict
@@ -221,6 +226,272 @@ def test_worker_operations_use_agent_version_cas_and_preserve_source() -> None:
     assert updated.workers[0].config["future_worker"] == "keep"
     assert "# WORKER COMMENT" in updated.workers[0].advanced_yaml
     assert agents.data[created.id].version == 2
+
+
+def test_atomic_worker_operations_copy_rename_and_delete_complete_trees() -> None:
+    service, _, _ = _service()
+    created = service.import_bundle(_bundle(worker=True), name="editable")
+
+    updated = service.update(
+        created.id,
+        expected_version=1,
+        worker_operations=(
+            BundleWorkerOperation(op="copy", source="alpha", target="beta"),
+            BundleWorkerOperation(op="rename", source="beta", target="critic"),
+            BundleWorkerOperation(op="delete", name="alpha"),
+        ),
+    )
+
+    assert updated.card.version == 2
+    assert [worker.name for worker in updated.workers] == ["critic"]
+    assert updated.workers[0].config["name"] == "critic"
+
+
+def test_referenced_worker_delete_requires_exact_fresh_confirmation() -> None:
+    service, agents, artifacts = _service()
+    document = BundleDocument.from_bytes(_bundle(worker=True))
+    document.replace_file_bytes(
+        "config.yaml",
+        document.read_bytes("config.yaml").replace(b"agents: [alpha]", b"agents: [alpha, beta]"),
+    )
+    document.add_file_bytes(
+        "agents/beta/config.yaml",
+        document.read_bytes("agents/alpha/config.yaml").replace(
+            b"name: alpha\n",
+            b"name: beta\ndelegate_to: alpha\n",
+        ),
+    )
+    created = service.import_bundle(document.to_bytes(), name="editable")
+    before = dict(artifacts.data)
+    reference = "agents/beta/config.yaml#/delegate_to"
+
+    with pytest.raises(BundleValidationFailure) as unconfirmed:
+        service.update(
+            created.id,
+            expected_version=1,
+            worker_operations=(BundleWorkerOperation(op="delete", name="alpha"),),
+        )
+
+    assert unconfirmed.value.issues[0].code == "worker_references_require_confirmation"
+    assert unconfirmed.value.issues[0].file == "agents/beta/config.yaml"
+    assert unconfirmed.value.issues[0].path == "/delegate_to"
+    assert agents.data[created.id].version == 1
+    assert artifacts.data == before
+
+    with pytest.raises(BundleValidationFailure):
+        service.update(
+            created.id,
+            expected_version=1,
+            worker_operations=(
+                BundleWorkerOperation(
+                    op="delete",
+                    name="alpha",
+                    confirmed_references=("agents/beta/config.yaml#/target_agent",),
+                ),
+            ),
+        )
+
+    updated = service.update(
+        created.id,
+        expected_version=1,
+        worker_operations=(
+            BundleWorkerOperation(
+                op="delete",
+                name="alpha",
+                confirmed_references=(reference,),
+            ),
+        ),
+    )
+
+    assert updated.card.version == 2
+    assert [worker.name for worker in updated.workers] == ["beta"]
+
+
+def test_batch_worker_delete_diagnostic_identifies_only_referenced_worker() -> None:
+    service, agents, artifacts = _service()
+    document = BundleDocument.from_bytes(_bundle(worker=True))
+    document.replace_file_bytes(
+        "config.yaml",
+        document.read_bytes("config.yaml").replace(
+            b"agents: [alpha]", b"agents: [alpha, beta, critic]"
+        ),
+    )
+    for name, extra in (("beta", b""), ("critic", b"delegate_to: beta\n")):
+        document.add_file_bytes(
+            f"agents/{name}/config.yaml",
+            document.read_bytes("agents/alpha/config.yaml").replace(
+                b"name: alpha\n", f"name: {name}\n".encode() + extra
+            ),
+        )
+    created = service.import_bundle(document.to_bytes(), name="editable")
+    before = dict(artifacts.data)
+
+    with pytest.raises(BundleValidationFailure) as raised:
+        service.update(
+            created.id,
+            expected_version=1,
+            worker_operations=(
+                BundleWorkerOperation(op="delete", name="alpha"),
+                BundleWorkerOperation(op="delete", name="beta"),
+            ),
+        )
+
+    assert raised.value.issues[0].worker == "beta"
+    assert agents.data[created.id].version == 1
+    assert artifacts.data == before
+
+    updated = service.update(
+        created.id,
+        expected_version=1,
+        worker_operations=(
+            BundleWorkerOperation(op="delete", name="alpha"),
+            BundleWorkerOperation(
+                op="delete",
+                name="beta",
+                confirmed_references=("agents/critic/config.yaml#/delegate_to",),
+            ),
+        ),
+    )
+
+    assert [worker.name for worker in updated.workers] == ["critic"]
+
+
+def test_detail_does_not_inline_oversized_text_or_yaml() -> None:
+    service, _, _ = _service()
+    payload = b"x" * (1024 * 1024 + 1)
+    document = BundleDocument.from_bytes(_bundle())
+    document.add_file_bytes("large.txt", payload)
+    document.add_file_bytes("large.yaml", payload)
+
+    created = service.import_bundle(document.to_bytes(), name="editable")
+    detail = service.get(created.id)
+
+    large_files = {file.path: file for file in detail.files if file.path.startswith("large.")}
+    assert set(large_files) == {"large.txt", "large.yaml"}
+    assert all(file.size == len(payload) for file in large_files.values())
+    assert all(file.inline is False for file in large_files.values())
+    assert all(file.content is None and file.data is None for file in large_files.values())
+    assert {(issue.code, issue.file, issue.path) for issue in detail.diagnostics} == {
+        ("file_not_inlined", "large.txt", None),
+        ("file_not_inlined", "large.yaml", None),
+    }
+
+
+@pytest.mark.parametrize(
+    ("oversized_path", "files"),
+    [
+        (
+            "config.yaml",
+            {"config.yaml": b"name: root\n# " + b"x" * (1024 * 1024)},
+        ),
+        (
+            "agents/alpha/config.yaml",
+            {
+                "config.yaml": b"name: root\ntools:\n  agents: [alpha]\n",
+                "agents/alpha/config.yaml": b"name: alpha\n# " + b"x" * (1024 * 1024),
+            },
+        ),
+    ],
+)
+def test_detail_rejects_oversized_agent_config_before_read_or_parse(
+    monkeypatch: pytest.MonkeyPatch,
+    oversized_path: str,
+    files: dict[str, bytes],
+) -> None:
+    service, agents, artifacts = _service()
+    document = BundleDocument(files)
+    bundle = document.to_bytes()
+    location = service.location("historical", bundle)
+    artifacts.put(location, bundle)
+    agents.create("historical", "historical", location)
+
+    def unexpected(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("oversized agent config was read or parsed")
+
+    monkeypatch.setattr(BundleDocument, "read_bytes", unexpected)
+    monkeypatch.setattr(BundleDocument, "yaml_value", unexpected)
+
+    with pytest.raises(BundleValidationFailure) as raised:
+        service.get("historical")
+
+    assert raised.value.issues[0].code == "agent_config_too_large"
+    assert raised.value.issues[0].file == oversized_path
+
+
+def test_detail_rejects_cumulative_agent_configs_before_read_or_parse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, agents, artifacts = _service()
+    config = b"name: agent\n# " + b"x" * (950 * 1024)
+    files = {"config.yaml": config}
+    files.update({f"agents/worker-{index}/config.yaml": config for index in range(9)})
+    bundle = BundleDocument(files).to_bytes()
+    location = service.location("historical", bundle)
+    artifacts.put(location, bundle)
+    agents.create("historical", "historical", location)
+
+    def unexpected(*args: object, **kwargs: object) -> object:
+        del args, kwargs
+        raise AssertionError("oversized agent configs were read or parsed")
+
+    monkeypatch.setattr(BundleDocument, "read_bytes", unexpected)
+    monkeypatch.setattr(BundleDocument, "yaml_value", unexpected)
+
+    with pytest.raises(BundleValidationFailure) as raised:
+        service.get("historical")
+
+    assert raised.value.issues[0].code == "agent_configs_too_large"
+    assert raised.value.issues[0].file.startswith("agents/")
+
+
+@pytest.mark.parametrize("mutation", ["pointer_patch", "coordinator_changes", "worker_changes"])
+def test_structured_agent_config_update_rejects_oversized_candidate_before_validation_parse(
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    service, agents, artifacts = _service()
+    created = service.import_bundle(_bundle(worker=True), name="editable")
+    before = dict(artifacts.data)
+
+    def unexpected_candidate_parse(rendered: bytes) -> None:
+        del rendered
+        raise AssertionError("oversized YAML candidate reached ruamel validation")
+
+    monkeypatch.setattr(
+        BundleDocument,
+        "_validate_yaml_candidate",
+        staticmethod(unexpected_candidate_parse),
+    )
+    oversized = "x" * (1024 * 1024)
+
+    with pytest.raises(BundleValidationFailure) as raised:
+        if mutation == "pointer_patch":
+            service.update(
+                created.id,
+                expected_version=1,
+                patches=(BundlePatch("config.yaml", "add", "/oversized", oversized),),
+            )
+        elif mutation == "coordinator_changes":
+            service.update(
+                created.id,
+                expected_version=1,
+                coordinator_changes={"description": oversized},
+            )
+        else:
+            service.update_worker(
+                created.id,
+                "alpha",
+                {"description": oversized},
+                expected_version=1,
+            )
+
+    expected_file = "agents/alpha/config.yaml" if mutation == "worker_changes" else "config.yaml"
+    assert raised.value.issues[0].code == "agent_config_too_large"
+    assert raised.value.issues[0].file == expected_file
+    assert len(str(raised.value)) < 256
+    assert agents.data[created.id].version == 1
+    assert artifacts.data == before
 
 
 def test_validate_and_import_reject_invalid_bundle_without_leaking_contents() -> None:

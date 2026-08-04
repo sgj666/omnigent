@@ -4,32 +4,22 @@ export type AgentBundleValue =
   null | boolean | number | string | AgentBundleValue[] | { [key: string]: AgentBundleValue };
 
 export type BundleValidationStatus = "valid" | "invalid" | "unknown";
-export type BundleFeishuStatus = "connected" | "disconnected" | "pending" | "error";
-
-export interface MultiAgentRecentRun {
-  id: string;
-  status: string;
-  started_at?: number | null;
-  finished_at?: number | null;
-}
 
 export interface MultiAgentSummary {
   id: string;
   name: string;
   description: string | null;
+  readonly: boolean;
   harness: string | null;
-  model_source: string | null;
   worker_count: number;
   skill_count: number;
   mcp_count: number;
   version: number;
-  digest?: string | null;
-  updated_at: number | null;
+  digest: string;
+  updated_at: number;
   builtin: boolean;
   editable: boolean;
   validation_status: BundleValidationStatus;
-  feishu_status: BundleFeishuStatus;
-  recent_run: MultiAgentRecentRun | null;
 }
 
 export interface StartMultiAgentRunInput {
@@ -64,8 +54,10 @@ export interface MultiAgentRunRecord {
 export interface AgentBundleFile {
   path: string;
   content: string | null;
-  encoding?: "utf-8" | "base64";
+  encoding?: "utf-8" | "binary";
   media_type?: string | null;
+  size?: number;
+  inline?: boolean;
   /** Parsed YAML data, when this file is part of the form-editable AgentSpec. */
   data?: AgentBundleValue;
 }
@@ -84,7 +76,7 @@ export interface BundleDiagnostic {
 }
 
 export interface AgentBundleDraft {
-  agent: MultiAgentSummary;
+  card: MultiAgentSummary;
   version: number;
   digest: string;
   files: AgentBundleFile[];
@@ -125,7 +117,24 @@ export interface AgentFormField {
 
 export interface AgentFormSchema {
   schema_version: string;
+  schema?: Record<string, unknown>;
   fields: AgentFormField[];
+}
+
+export interface AgentHarnessOption {
+  id: string;
+  label: string;
+  capabilities?: Record<string, unknown>;
+  setup_steps?: Record<string, unknown>[];
+}
+
+export interface AgentBundleOptions {
+  harnesses: AgentHarnessOption[];
+  models: Record<string, unknown>[];
+  tools: Record<string, unknown>[];
+  skills: Record<string, unknown>[];
+  mcp: Record<string, unknown>[];
+  environment: Record<string, unknown>[];
 }
 
 export type AgentBundlePatch =
@@ -165,7 +174,7 @@ export interface AgentBundleUpdateRequest {
 export interface CreateAgentBundleInput {
   name: string;
   description?: string;
-  shape: "single-agent" | "multi-agent";
+  config: Record<string, AgentBundleValue>;
 }
 
 export interface CloneAgentBundleInput {
@@ -207,8 +216,9 @@ export class AgentVersionConflict extends AgentBundleApiError {
     expected_version: number | null,
     server_version: number | null,
     diagnostics: BundleDiagnostic[] = [],
+    code: string | null = "conflict",
   ) {
-    super(message, 409, "conflict", diagnostics);
+    super(message, 409, code, diagnostics);
     this.name = "AgentVersionConflict";
     this.expected_version = expected_version;
     this.server_version = server_version;
@@ -225,11 +235,38 @@ interface ListResponse<T> {
 interface AgentBundleErrorBody {
   error?: { code?: string; message?: string };
   message?: string;
-  detail?: string;
+  detail?:
+    | string
+    | {
+        code?: string;
+        message?: string;
+        expected?: number;
+        actual?: number;
+        diagnostics?: unknown;
+      };
   expected_version?: number;
   server_version?: number;
   actual_version?: number;
-  diagnostics?: BundleDiagnostic[];
+  diagnostics?: unknown;
+}
+
+function parseBundleDiagnostics(value: unknown): BundleDiagnostic[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is BundleDiagnostic => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) return false;
+    const diagnostic = item as Record<string, unknown>;
+    return (
+      (diagnostic.severity === "error" ||
+        diagnostic.severity === "warning" ||
+        diagnostic.severity === "info") &&
+      typeof diagnostic.code === "string" &&
+      (typeof diagnostic.file === "string" || diagnostic.file === null) &&
+      (typeof diagnostic.path === "string" || diagnostic.path === null) &&
+      (typeof diagnostic.line === "number" || diagnostic.line === null) &&
+      (typeof diagnostic.column === "number" || diagnostic.column === null) &&
+      typeof diagnostic.message === "string"
+    );
+  });
 }
 
 async function errorFromResponse(response: Response): Promise<AgentBundleApiError> {
@@ -243,21 +280,27 @@ async function errorFromResponse(response: Response): Promise<AgentBundleApiErro
   } catch {
     // Plain-text and HTML proxy errors are surfaced verbatim below.
   }
-  const structuredMessage = body?.error?.message ?? body?.message ?? body?.detail;
+  const detail = typeof body?.detail === "object" ? body.detail : null;
+  const structuredMessage =
+    body?.error?.message ??
+    body?.message ??
+    detail?.message ??
+    (typeof body?.detail === "string" ? body.detail : undefined);
   const message =
     typeof structuredMessage === "string"
       ? structuredMessage
       : body === null && rawBody
         ? rawBody
         : `${response.status} ${response.statusText}`;
-  const code = body?.error?.code ?? null;
-  const diagnostics = body?.diagnostics ?? [];
+  const code = body?.error?.code ?? detail?.code ?? null;
+  const diagnostics = parseBundleDiagnostics(body?.diagnostics ?? detail?.diagnostics);
   if (response.status === 409) {
     return new AgentVersionConflict(
       message,
-      body?.expected_version ?? null,
-      body?.server_version ?? body?.actual_version ?? null,
+      body?.expected_version ?? detail?.expected ?? null,
+      body?.server_version ?? body?.actual_version ?? detail?.actual ?? null,
       diagnostics,
+      code,
     );
   }
   return new AgentBundleApiError(message, response.status, code, diagnostics);
@@ -283,7 +326,7 @@ export async function listMultiAgents(signal?: AbortSignal): Promise<MultiAgentS
   do {
     signal?.throwIfAborted();
     const url: string =
-      after === null ? "/v1/agents" : `/v1/agents?after=${encodeURIComponent(after)}`;
+      after === null ? "/v1/agent-bundles" : `/v1/agent-bundles?after=${encodeURIComponent(after)}`;
     const response: Response = signal
       ? await authenticatedFetch(url, { signal })
       : await authenticatedFetch(url);
@@ -318,7 +361,7 @@ export async function getAgentBundle(
   agent_id: string,
   signal?: AbortSignal,
 ): Promise<AgentBundleDraft> {
-  const url = `/v1/agents/${encodeURIComponent(agent_id)}/bundle`;
+  const url = `/v1/agent-bundles/${encodeURIComponent(agent_id)}`;
   const response = signal
     ? await authenticatedFetch(url, { signal })
     : await authenticatedFetch(url);
@@ -327,21 +370,32 @@ export async function getAgentBundle(
 
 export async function getAgentFormSchema(signal?: AbortSignal): Promise<AgentFormSchema> {
   const response = signal
-    ? await authenticatedFetch("/v1/agent-spec/schema", { signal })
-    : await authenticatedFetch("/v1/agent-spec/schema");
+    ? await authenticatedFetch("/v1/agent-bundles/schema", { signal })
+    : await authenticatedFetch("/v1/agent-bundles/schema");
   return readJson<AgentFormSchema>(response);
 }
 
+export async function getAgentBundleOptions(signal?: AbortSignal): Promise<AgentBundleOptions> {
+  const response = signal
+    ? await authenticatedFetch("/v1/agent-bundles/options", { signal })
+    : await authenticatedFetch("/v1/agent-bundles/options");
+  return readJson<AgentBundleOptions>(response);
+}
+
 export async function validateAgentBundleArchive(bundle: Blob): Promise<AgentBundleValidation> {
-  const response = await authenticatedFetch("/v1/agents/validate", {
+  const bytes = new Uint8Array(await bundle.arrayBuffer());
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const response = await authenticatedFetch("/v1/agent-bundles/validate", {
     method: "POST",
-    body: archiveForm(bundle),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bundle_base64: btoa(binary) }),
   });
   return readJson<AgentBundleValidation>(response);
 }
 
 export async function createAgentBundle(input: CreateAgentBundleInput): Promise<AgentBundleDraft> {
-  const response = await authenticatedFetch("/v1/agents", {
+  const response = await authenticatedFetch("/v1/agent-bundles", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -350,7 +404,7 @@ export async function createAgentBundle(input: CreateAgentBundleInput): Promise<
 }
 
 export async function importAgentBundle(bundle: Blob): Promise<AgentBundleDraft> {
-  const response = await authenticatedFetch("/v1/agents/import", {
+  const response = await authenticatedFetch("/v1/agent-bundles/import", {
     method: "POST",
     body: archiveForm(bundle),
   });
@@ -361,7 +415,7 @@ export async function updateAgentBundle(
   agent_id: string,
   request: AgentBundleUpdateRequest,
 ): Promise<AgentBundleDraft> {
-  const response = await authenticatedFetch(`/v1/agents/${encodeURIComponent(agent_id)}`, {
+  const response = await authenticatedFetch(`/v1/agent-bundles/${encodeURIComponent(agent_id)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
@@ -373,23 +427,28 @@ export async function cloneAgentBundle(
   agent_id: string,
   input: CloneAgentBundleInput,
 ): Promise<AgentBundleDraft> {
-  const response = await authenticatedFetch(`/v1/agents/${encodeURIComponent(agent_id)}/clone`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
+  const response = await authenticatedFetch(
+    `/v1/agent-bundles/${encodeURIComponent(agent_id)}/clone`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
   return readJson<AgentBundleDraft>(response);
 }
 
 export async function deleteAgentBundle(agent_id: string): Promise<void> {
-  const response = await authenticatedFetch(`/v1/agents/${encodeURIComponent(agent_id)}`, {
+  const response = await authenticatedFetch(`/v1/agent-bundles/${encodeURIComponent(agent_id)}`, {
     method: "DELETE",
   });
   if (!response.ok) throw await errorFromResponse(response);
 }
 
 export async function exportAgentBundle(agent_id: string): Promise<Blob> {
-  const response = await authenticatedFetch(`/v1/agents/${encodeURIComponent(agent_id)}/export`);
+  const response = await authenticatedFetch(
+    `/v1/agent-bundles/${encodeURIComponent(agent_id)}/export`,
+  );
   if (!response.ok) throw await errorFromResponse(response);
   return response.blob();
 }

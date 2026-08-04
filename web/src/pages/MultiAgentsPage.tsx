@@ -31,12 +31,11 @@ import {
 import { exportAgentBundle, type MultiAgentSummary } from "@/lib/multiAgentApi";
 import { Link, useNavigate } from "@/lib/routing";
 
-function shortDigest(digest: string | null | undefined): string {
-  return digest?.replace(/^sha256:/, "").slice(0, 12) || "—";
+function shortDigest(digest: string): string {
+  return digest.replace(/^sha256:/, "").slice(0, 12) || "—";
 }
 
-function updatedAt(value: number | null, language: string): string {
-  if (value == null) return "—";
+function updatedAt(value: number, language: string): string {
   const date = new Date(value < 10_000_000_000 ? value * 1000 : value);
   return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat(language).format(date);
 }
@@ -67,7 +66,7 @@ export function MultiAgentsPage() {
         agent_id: agent.id,
         input: { name: `${agent.name} copy` },
       });
-      navigate(`/multi-agents/${draft.agent.id}`);
+      navigate(`/multi-agents/${draft.card.id}`);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : t("errors.action"));
     }
@@ -78,7 +77,7 @@ export function MultiAgentsPage() {
     setActionError(null);
     try {
       const draft = await importBundle.mutateAsync(file);
-      navigate(`/multi-agents/${draft.agent.id}`);
+      navigate(`/multi-agents/${draft.card.id}`);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : t("errors.import"));
     } finally {
@@ -175,7 +174,9 @@ export function MultiAgentsPage() {
                 </CardAction>
               </CardHeader>
               <CardContent className="space-y-4">
-                {agent.builtin && <Badge variant="secondary">{t("catalog.builtinReadonly")}</Badge>}
+                {(agent.readonly || agent.builtin) && (
+                  <Badge variant="secondary">{t("catalog.builtinReadonly")}</Badge>
+                )}
                 <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs sm:grid-cols-3">
                   <div>
                     <dt className="text-muted-foreground">{t("metadata.workers")}</dt>
@@ -191,7 +192,7 @@ export function MultiAgentsPage() {
                   </div>
                   <div>
                     <dt className="text-muted-foreground">{t("metadata.digest")}</dt>
-                    <dd className="mt-0.5 font-mono" title={agent.digest ?? undefined}>
+                    <dd className="mt-0.5 font-mono" title={agent.digest}>
                       {shortDigest(agent.digest)}
                     </dd>
                   </div>
@@ -217,7 +218,7 @@ export function MultiAgentsPage() {
                 >
                   <CopyIcon /> {t("actions.useTemplate")}
                 </Button>
-                {agent.editable && (
+                {!agent.readonly && agent.editable !== false && (
                   <Button asChild size="sm" variant="outline">
                     <Link to={`/multi-agents/${agent.id}`}>
                       <PencilIcon /> {t("actions.edit")}
@@ -237,7 +238,7 @@ export function MultiAgentsPage() {
                 >
                   <DownloadIcon /> {t("actions.export")}
                 </Button>
-                {agent.editable && (
+                {!agent.readonly && agent.editable !== false && (
                   <Button
                     size="sm"
                     variant="ghost"

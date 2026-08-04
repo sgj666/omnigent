@@ -23,18 +23,16 @@ const polly = {
   name: "Polly",
   description: "Coding orchestrator",
   harness: "claude-sdk",
-  model_source: "local-default",
   worker_count: 7,
   skill_count: 2,
   mcp_count: 1,
   version: 4,
+  readonly: true,
   digest: "sha256:0123456789abcdef",
   updated_at: 1_786_000_000,
   builtin: true,
   editable: false,
   validation_status: "valid",
-  feishu_status: "disconnected",
-  recent_run: null,
 };
 
 function renderPage() {

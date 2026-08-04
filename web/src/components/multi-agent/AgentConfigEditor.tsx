@@ -7,22 +7,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import type { AgentFormSchema, AgentHarnessOption } from "@/lib/multiAgentApi";
 import type { AgentConfigDraft } from "@/lib/multiAgentDraft";
 
 const LOCAL_DEFAULT = "__local_default__";
-const HARNESS_OPTIONS = [
-  "claude-sdk",
-  "codex-native",
-  "claude-native",
-  "opencode-native",
-  "cursor-native",
-  "hermes-native",
-  "antigravity-native",
-  "pi",
-];
-
+const EMPTY_HARNESSES: AgentHarnessOption[] = [];
 function Field({
   label,
   children,
@@ -45,14 +35,43 @@ export function AgentConfigEditor({
   value,
   onChange,
   disabled = false,
+  schema,
+  harnesses = EMPTY_HARNESSES,
 }: {
   value: AgentConfigDraft;
   onChange: (value: AgentConfigDraft) => void;
   disabled?: boolean;
+  schema?: AgentFormSchema;
+  harnesses?: AgentHarnessOption[];
 }) {
   const { t } = useTranslation("agents", { keyPrefix: "multiAgent" });
   const set = <K extends keyof AgentConfigDraft>(key: K, next: AgentConfigDraft[K]) =>
     onChange({ ...value, [key]: next });
+  const genericFields = (schema?.fields ?? []).filter(
+    (field) =>
+      field.path !== "/*" &&
+      !new Set([
+        "/name",
+        "/description",
+        "/executor",
+        "/executor/model",
+        "/executor/config/harness",
+        "/prompt",
+        "/instructions",
+        "/tools",
+        "/skills",
+        "/os_env",
+        "/guardrails",
+        "/async",
+        "/timers",
+        "/spawn",
+      ]).has(field.path),
+  );
+  const harnessOptions = value.harness
+    ? harnesses.some((option) => option.id === value.harness)
+      ? harnesses
+      : [{ id: value.harness, label: value.harness }, ...harnesses]
+    : harnesses;
 
   return (
     <div className="space-y-6">
@@ -84,9 +103,9 @@ export function AgentConfigEditor({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={LOCAL_DEFAULT}>{t("fields.localDefault")}</SelectItem>
-              {HARNESS_OPTIONS.map((harness) => (
-                <SelectItem key={harness} value={harness}>
-                  {harness}
+              {harnessOptions.map((harness) => (
+                <SelectItem key={harness.id} value={harness.id}>
+                  {harness.label}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -135,19 +154,57 @@ export function AgentConfigEditor({
 
       <div className="grid gap-3 sm:grid-cols-3">
         {(["async", "timers", "spawn"] as const).map((field) => (
-          <label
-            key={field}
-            className="flex items-center justify-between gap-3 rounded-lg border border-border/70 px-3 py-2.5 text-sm"
-          >
-            <span>{t(`fields.${field}`)}</span>
-            <Switch
-              checked={value[field]}
-              onCheckedChange={(checked) => set(field, checked)}
+          <Field key={field} label={t(`fields.${field}`)}>
+            <Select
+              value={value[field] === undefined ? "default" : value[field] ? "enabled" : "disabled"}
+              onValueChange={(next) =>
+                set(field, next === "default" ? undefined : next === "enabled")
+              }
               disabled={disabled}
-            />
-          </label>
+            >
+              <SelectTrigger aria-label={t(`fields.${field}`)} className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">{t("fields.default")}</SelectItem>
+                <SelectItem value="enabled">{t("fields.enabled")}</SelectItem>
+                <SelectItem value="disabled">{t("fields.disabled")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
         ))}
       </div>
+
+      {!!genericFields.length && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {genericFields.map((field) => (
+            <Field
+              key={field.path}
+              label={t(field.translation_key.replace(/^multiAgent\./, ""), {
+                defaultValue: field.path.slice(1),
+              })}
+              help={
+                field.help_translation_key ? t(field.help_translation_key) : t("fields.jsonHelp")
+              }
+            >
+              <Textarea
+                aria-label={field.path}
+                className="min-h-24 font-mono text-xs"
+                value={value.advanced[field.path] ?? ""}
+                onChange={(event) =>
+                  set("advanced", { ...value.advanced, [field.path]: event.target.value })
+                }
+                placeholder={
+                  field.secret && value.configuredSecrets.includes(field.path)
+                    ? t("fields.secretConfigured")
+                    : undefined
+                }
+                disabled={disabled}
+              />
+            </Field>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

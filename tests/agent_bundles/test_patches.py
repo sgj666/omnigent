@@ -43,6 +43,18 @@ def test_bundle_patch_distinguishes_missing_value_from_explicit_null() -> None:
         missing.path = "/changed"  # type: ignore[misc]
 
 
+def test_auxiliary_yaml_pointer_patch_is_not_subject_to_agent_config_limit() -> None:
+    document = BundleDocument({"metadata.yaml": b"keep: true\n"})
+
+    apply_patches(
+        document,
+        [BundlePatch("metadata.yaml", "add", "/large", "x" * (1024 * 1024))],
+    )
+
+    assert document.file_size("metadata.yaml") > 1024 * 1024
+    assert document.yaml_value("metadata.yaml", ("keep",)) is True
+
+
 def test_remove_preserves_missing_vs_explicit_false() -> None:
     document = BundleDocument({"config.yaml": b"enabled: false\nname: agent\n"})
 

@@ -162,7 +162,8 @@
       "addWorker": "添加 Worker",
       "moveUp": "上移",
       "moveDown": "下移",
-      "removeWorker": "移除 Worker"
+      "removeWorker": "移除 Worker",
+      "reloadServerVersion": "重新加载服务端版本"
     },
     "status": {
       "valid": "有效",
@@ -199,7 +200,12 @@
       "async": "异步派发",
       "timers": "定时器",
       "spawn": "创建子会话",
-      "jsonHelp": "填写 JSON 值；未知 YAML 字段不会被改动。"
+      "default": "默认",
+      "enabled": "启用",
+      "disabled": "禁用",
+      "advanced": "高级字段",
+      "jsonHelp": "填写 JSON 值；未知 YAML 字段不会被改动。",
+      "secretConfigured": "已配置；输入新值后才会替换"
     },
     "editor": {
       "newTitle": "新建 Multi-Agent",
@@ -211,14 +217,20 @@
       "workers": "Workers",
       "configuration": "配置",
       "yamlHelp": "原始文件将按原文保存；切换视图或语言不会丢失当前草稿。",
+      "visualDirtyYamlBlocked": "请先保存或重新加载可视化修改，再编辑高级 YAML。",
+      "orderVersionConflict": "服务端 Bundle 已变更为版本 {{version}}。请重新加载以放弃待提交的 Worker 顺序并使用服务端版本。",
+      "invalidYaml": "YAML 语法错误：第 {{line}} 行，第 {{column}} 列。",
       "readonly": "此内置 Bundle 为只读。请使用此模板创建可编辑副本。",
       "saved": "Bundle 已保存。",
-      "createHelp": "先创建服务端生成的多智能体 Bundle，再配置 Coordinator 与 Workers。"
+      "createHelp": "先创建服务端生成的多智能体 Bundle，再配置 Coordinator 与 Workers。",
+      "fileNotInline": "此文件过大，无法内联编辑（{{size}} 字节）。"
     },
     "workers": {
       "empty": "还没有 Worker。",
       "newName": "worker-{{number}}",
-      "saveBeforeEditing": "请先保存以创建此 Worker 文件，然后再编辑其配置。"
+      "saveBeforeEditing": "请先保存以创建此 Worker 文件，然后再编辑其配置。",
+      "referenceConfirmation": "{{name}} 在以下位置仍被引用。确认删除将移除 Worker，但保留这些引用。",
+      "confirmDelete": "确认删除 Worker"
     },
     "diagnostics": {
       "title": "Bundle 诊断",

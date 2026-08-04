@@ -6,7 +6,13 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
-from omnigent.agent_bundles.document import BundleDocument, YamlPointer
+from omnigent.agent_bundles.document import (
+    AGENT_CONFIG_MAX_BYTES,
+    BundleDocument,
+    BundleFileSizeError,
+    YamlPointer,
+    is_agent_config_path,
+)
 
 
 class _MissingValue:
@@ -54,6 +60,8 @@ def apply_patches(document: BundleDocument, patches: Iterable[BundlePatch]) -> N
             path = patch.path
             _apply_patch(candidate, patch)
         document.swap(candidate)
+    except BundleFileSizeError:
+        raise
     except Exception:  # noqa: BLE001 - public boundary must sanitize patch failures
         raise BundlePatchError(file, path, _PATCH_ERROR_MESSAGE) from None
 
@@ -91,12 +99,13 @@ def _apply_patch(document: BundleDocument, patch: BundlePatch) -> None:
 
     tokens = _decode_json_pointer(patch.path)
     pointer = _resolve_yaml_pointer(document, patch.file, tokens, patch.op)
+    max_bytes = AGENT_CONFIG_MAX_BYTES if is_agent_config_path(patch.file) else None
     if patch.op == "add":
-        document.add_yaml_value(patch.file, pointer, patch.value)
+        document.add_yaml_value(patch.file, pointer, patch.value, max_bytes=max_bytes)
     elif patch.op == "replace":
-        document.replace_yaml_value(patch.file, pointer, patch.value)
+        document.replace_yaml_value(patch.file, pointer, patch.value, max_bytes=max_bytes)
     else:
-        document.remove_yaml_value(patch.file, pointer)
+        document.remove_yaml_value(patch.file, pointer, max_bytes=max_bytes)
 
 
 def _require_file_operation_path(patch: BundlePatch) -> None:

@@ -102,6 +102,36 @@ def test_delete_worker_removes_its_tree_and_roster_entry() -> None:
     assert "unknown_tools: keep" in document.read_text("config.yaml")
 
 
+def test_worker_references_only_include_structured_non_roster_locations() -> None:
+    document = _document()
+    BundleWorkers.create(
+        document,
+        "beta",
+        {
+            "spec_version": 1,
+            "tools": {"agents": ["alpha"]},
+            "routing": {"target_agent": "alpha", "note": "alpha"},
+        },
+    )
+
+    assert BundleWorkers.references(document, "alpha") == (
+        "agents/beta/config.yaml#/routing/target_agent",
+        "agents/beta/config.yaml#/tools/agents/0",
+    )
+
+
+def test_copy_and_rename_worker_preserve_complete_tree_and_order() -> None:
+    document = _document()
+
+    BundleWorkers.copy(document, "alpha", "beta")
+    BundleWorkers.rename(document, "beta", "critic")
+
+    assert BundleWorkers.names(document) == ["alpha", "critic"]
+    assert BundleWorkers.get(document, "critic").config["name"] == "critic"
+    assert document.read_text("agents/critic/AGENTS.md") == "Alpha instructions.\n"
+    assert not any(path.startswith("agents/beta/") for path in document.paths())
+
+
 def test_coordinator_update_preserves_unknown_fields_and_comments() -> None:
     document = _document()
 

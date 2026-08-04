@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import copy
 import io
+import mimetypes
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from ruamel.yaml import YAML
 
-from omnigent.agent_bundles.document import BundleDocument
+from omnigent.agent_bundles.document import BundleDocument, BundleFileSizeError
+from omnigent.agent_bundles.patches import BundlePatch, apply_patches
 from omnigent.agent_bundles.workers import BundleAgentView, BundleWorkers
 from omnigent.db.utils import builtin_agent_id, generate_agent_id
 from omnigent.entities import Agent
@@ -26,9 +29,12 @@ class BundleIssue:
 
     code: str
     message: str
+    file: str | None = None
     path: str | None = None
     line: int | None = None
     column: int | None = None
+    agent: str | None = None
+    worker: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +66,14 @@ class BundleCard:
     version: int
     digest: str
     readonly: bool
+    harness: str | None = None
+    worker_count: int = 0
+    skill_count: int = 0
+    mcp_count: int = 0
+    validation_status: Literal["valid", "invalid", "unknown"] = "valid"
+    updated_at: int = 0
+    builtin: bool = False
+    editable: bool = True
 
 
 @dataclass(frozen=True)
@@ -69,6 +83,7 @@ class BundlePage:
     data: tuple[BundleCard, ...]
     first_id: str | None
     last_id: str | None
+    has_more: bool = False
 
 
 @dataclass(frozen=True)
@@ -78,6 +93,37 @@ class BundleDetail:
     card: BundleCard
     coordinator: BundleAgentView
     workers: tuple[BundleAgentView, ...]
+    files: tuple[BundleFile, ...] = ()
+    diagnostics: tuple[BundleIssue, ...] = ()
+    schema_version: str = "1"
+
+
+@dataclass(frozen=True)
+class BundleFile:
+    """Safe file-tree entry returned to the browser editor."""
+
+    path: str
+    content: str | None
+    encoding: str
+    media_type: str | None
+    size: int
+    data: object | None = None
+    inline: bool = True
+
+
+@dataclass(frozen=True)
+class BundleWorkerOperation:
+    """One atomic worker directory operation."""
+
+    op: Literal["add", "copy", "rename", "delete"]
+    name: str | None = None
+    source: str | None = None
+    target: str | None = None
+    confirmed_references: tuple[str, ...] = ()
+
+
+_MAX_INLINE_FILE_BYTES = 1024 * 1024
+_MAX_INLINE_TOTAL_BYTES = 8 * 1024 * 1024
 
 
 class AgentBundleService:
@@ -102,10 +148,34 @@ class AgentBundleService:
     ) -> BundlePage:
         page = self._agents.list(limit=limit, after=after, before=before, order=order)
         return BundlePage(
-            data=tuple(self._card(agent) for agent in page.data),
+            data=tuple(self._list_card(agent) for agent in page.data),
             first_id=page.first_id,
             last_id=page.last_id,
+            has_more=page.has_more,
         )
+
+    def _list_card(self, agent: Agent) -> BundleCard:
+        try:
+            document = self._load_document(agent)
+            self._require_inline_agent_configs(document)
+            return self._card(agent, document)
+        except (BundleValidationFailure, ExtractionError, KeyError, TypeError, ValueError):
+            digest = agent.bundle_location.rsplit("/", 1)[-1]
+            builtin = agent.id == builtin_agent_id("polly")
+            return BundleCard(
+                id=agent.id,
+                name=agent.name,
+                description=agent.description,
+                version=agent.version,
+                digest=digest,
+                readonly=builtin,
+                validation_status="unknown",
+                updated_at=(
+                    agent.updated_at if agent.updated_at is not None else agent.created_at
+                ),
+                builtin=builtin,
+                editable=not builtin,
+            )
 
     def get(self, agent_id: str) -> BundleDetail:
         agent = self._require_agent(agent_id)
@@ -117,6 +187,10 @@ class AgentBundleService:
 
     def validate(self, bundle_bytes: bytes) -> BundleValidationResult:
         try:
+            document = BundleDocument.from_bytes(bundle_bytes)
+            issue = self._agent_config_limit_issue(document)
+            if issue is not None:
+                return BundleValidationResult(valid=False, issues=(issue,))
             validate_agent_bundle(bundle_bytes)
         except Exception:  # noqa: BLE001 - untrusted validation errors are sanitized
             return BundleValidationResult(
@@ -150,8 +224,13 @@ class AgentBundleService:
         if description is not None:
             import_changes["description"] = description
         if import_changes:
-            BundleWorkers.update_coordinator(document, import_changes)
+            try:
+                BundleWorkers.update_coordinator(document, import_changes)
+            except BundleFileSizeError as exc:
+                raise self._agent_config_too_large(exc.path) from None
+            self._require_inline_agent_configs(document)
             coordinator = BundleWorkers.coordinator(document)
+        self._require_inline_agent_configs(document)
         rendered = document.to_bytes()
         self._require_valid(rendered)
         agent_id = generate_agent_id()
@@ -164,7 +243,7 @@ class AgentBundleService:
             location,
             persisted_description,
         )
-        return self._card(agent)
+        return self._card(agent, document)
 
     def create(
         self,
@@ -189,10 +268,15 @@ class AgentBundleService:
     ) -> BundleCard:
         source = self._require_agent(agent_id)
         document = self._load_document(source)
+        self._require_inline_agent_configs(document)
         clone_changes: dict[str, object] = {"name": name}
         if description is not None:
             clone_changes["description"] = description
-        BundleWorkers.update_coordinator(document, clone_changes)
+        try:
+            BundleWorkers.update_coordinator(document, clone_changes)
+        except BundleFileSizeError as exc:
+            raise self._agent_config_too_large(exc.path) from None
+        self._require_inline_agent_configs(document)
         rendered = document.to_bytes()
         self._require_valid(rendered)
         clone_id = generate_agent_id()
@@ -204,7 +288,7 @@ class AgentBundleService:
             location,
             source.description if description is None else description,
         )
-        return self._card(clone)
+        return self._card(clone, document)
 
     def update(
         self,
@@ -215,25 +299,48 @@ class AgentBundleService:
         advanced_yaml: str | None = None,
         name: str | None = None,
         description: str | None = None,
+        patches: Sequence[BundlePatch] | None = None,
+        worker_operations: Sequence[BundleWorkerOperation] | None = None,
     ) -> BundleDetail:
         agent, document = self._editable_document(agent_id)
-        if coordinator_changes:
-            BundleWorkers.update_coordinator(document, coordinator_changes)
+        if patches:
+            try:
+                apply_patches(document, patches)
+            except BundleFileSizeError as exc:
+                raise self._agent_config_too_large(exc.path) from None
+            except Exception as exc:
+                raise BundleValidationFailure(
+                    (BundleIssue("invalid_patch", "patch could not be applied"),)
+                ) from exc
+        for operation in worker_operations or ():
+            self._apply_worker_operation(document, operation)
+        try:
+            if coordinator_changes:
+                BundleWorkers.update_coordinator(document, coordinator_changes)
+        except BundleFileSizeError as exc:
+            raise self._agent_config_too_large(exc.path) from None
         metadata_changes: dict[str, object] = {}
         if name is not None:
             metadata_changes["name"] = name
         if description is not None:
             metadata_changes["description"] = description
-        if metadata_changes:
-            BundleWorkers.update_coordinator(document, metadata_changes)
+        try:
+            if metadata_changes:
+                BundleWorkers.update_coordinator(document, metadata_changes)
+        except BundleFileSizeError as exc:
+            raise self._agent_config_too_large(exc.path) from None
         try:
             if advanced_yaml is not None:
+                self._require_agent_config_text("config.yaml", advanced_yaml)
                 BundleWorkers.replace_advanced_yaml(document, None, advanced_yaml)
+        except BundleValidationFailure:
+            raise
         except Exception as exc:
             if advanced_yaml is not None:
                 raise self._invalid_yaml(exc, "config.yaml") from None
             raise
 
+        self._require_inline_agent_configs(document)
         coordinator = BundleWorkers.coordinator(document)
         persisted_name = name if name is not None else coordinator.name or agent.name
         persisted_description = (
@@ -258,7 +365,10 @@ class AgentBundleService:
         expected_version: int,
     ) -> BundleDetail:
         agent, document = self._editable_document(agent_id)
-        BundleWorkers.create(document, worker_name, config)
+        try:
+            BundleWorkers.create(document, worker_name, config)
+        except BundleFileSizeError as exc:
+            raise self._agent_config_too_large(exc.path) from None
         return self._persist_existing_metadata(agent, document, expected_version)
 
     def update_worker(
@@ -271,11 +381,17 @@ class AgentBundleService:
         advanced_yaml: str | None = None,
     ) -> BundleDetail:
         agent, document = self._editable_document(agent_id)
-        if changes:
-            BundleWorkers.update(document, worker_name, changes)
+        try:
+            if changes:
+                BundleWorkers.update(document, worker_name, changes)
+        except BundleFileSizeError as exc:
+            raise self._agent_config_too_large(exc.path) from None
         try:
             if advanced_yaml is not None:
+                self._require_agent_config_text(f"agents/{worker_name}/config.yaml", advanced_yaml)
                 BundleWorkers.replace_advanced_yaml(document, worker_name, advanced_yaml)
+        except BundleValidationFailure:
+            raise
         except Exception as exc:
             if advanced_yaml is not None:
                 raise self._invalid_yaml(
@@ -291,9 +407,13 @@ class AgentBundleService:
         worker_name: str,
         *,
         expected_version: int,
+        confirmed_references: Sequence[str] = (),
     ) -> BundleDetail:
         agent, document = self._editable_document(agent_id)
-        BundleWorkers.delete(document, worker_name)
+        try:
+            self._delete_worker(document, worker_name, confirmed_references)
+        except BundleFileSizeError as exc:
+            raise self._agent_config_too_large(exc.path) from None
         return self._persist_existing_metadata(agent, document, expected_version)
 
     def reorder_workers(
@@ -304,7 +424,10 @@ class AgentBundleService:
         expected_version: int,
     ) -> BundleDetail:
         agent, document = self._editable_document(agent_id)
-        BundleWorkers.reorder(document, names)
+        try:
+            BundleWorkers.reorder(document, names)
+        except BundleFileSizeError as exc:
+            raise self._agent_config_too_large(exc.path) from None
         return self._persist_existing_metadata(agent, document, expected_version)
 
     def delete(self, agent_id: str) -> None:
@@ -328,6 +451,80 @@ class AgentBundleService:
             description=agent.description,
         )
 
+    @staticmethod
+    def _apply_worker_operation(
+        document: BundleDocument,
+        operation: BundleWorkerOperation,
+    ) -> None:
+        try:
+            if operation.op == "add":
+                if operation.name is None:
+                    raise ValueError("worker name is required")
+                coordinator = BundleWorkers.coordinator(document)
+                config: dict[str, object] = {"spec_version": 1}
+                if operation.source == "coordinator":
+                    config = copy.deepcopy(coordinator.config)
+                    config.pop("tools", None)
+                elif "executor" in coordinator.config:
+                    config["executor"] = copy.deepcopy(coordinator.config["executor"])
+                BundleWorkers.create(document, operation.name, config)
+            elif operation.op == "copy":
+                if operation.source is None or operation.target is None:
+                    raise ValueError("worker source and target are required")
+                BundleWorkers.copy(document, operation.source, operation.target)
+            elif operation.op == "rename":
+                if operation.source is None or operation.target is None:
+                    raise ValueError("worker source and target are required")
+                BundleWorkers.rename(document, operation.source, operation.target)
+            elif operation.op == "delete":
+                if operation.name is None:
+                    raise ValueError("worker name is required")
+                AgentBundleService._delete_worker(
+                    document,
+                    operation.name,
+                    operation.confirmed_references,
+                )
+        except BundleValidationFailure:
+            raise
+        except BundleFileSizeError as exc:
+            raise AgentBundleService._agent_config_too_large(exc.path) from None
+        except Exception:  # noqa: BLE001 - operation boundary must sanitize edit failures
+            raise BundleValidationFailure(
+                (BundleIssue("invalid_worker_operation", "worker operation could not be applied"),)
+            ) from None
+
+    @staticmethod
+    def _delete_worker(
+        document: BundleDocument,
+        worker_name: str,
+        confirmed_references: Sequence[str],
+    ) -> None:
+        references = BundleWorkers.references(document, worker_name)
+        confirmed = tuple(confirmed_references)
+        confirmed_matches = (
+            len(confirmed) == len(set(confirmed)) and tuple(sorted(confirmed)) == references
+        )
+        if not confirmed_matches:
+            issues = tuple(
+                BundleIssue(
+                    code="worker_references_require_confirmation",
+                    message="worker is referenced by another agent configuration",
+                    file=reference.partition("#")[0],
+                    path=reference.partition("#")[2],
+                    worker=worker_name,
+                )
+                for reference in references
+            )
+            if not issues:
+                issues = (
+                    BundleIssue(
+                        code="worker_references_confirmation_mismatch",
+                        message="confirmed worker references do not match the current bundle",
+                    ),
+                )
+            raise BundleValidationFailure(issues)
+        BundleWorkers.delete(document, worker_name)
+
     def _persist_update(
         self,
         agent: Agent,
@@ -337,6 +534,7 @@ class AgentBundleService:
         name: str,
         description: str | None,
     ) -> BundleDetail:
+        self._require_inline_agent_configs(document)
         rendered = document.to_bytes()
         self._require_valid(rendered)
         location = self.location(agent.id, rendered)
@@ -374,7 +572,9 @@ class AgentBundleService:
     def _editable_document(self, agent_id: str) -> tuple[Agent, BundleDocument]:
         agent = self._require_agent(agent_id)
         self._require_editable(agent)
-        return agent, self._load_document(agent)
+        document = self._load_document(agent)
+        self._require_inline_agent_configs(document)
+        return agent, document
 
     def _require_agent(self, agent_id: str) -> Agent:
         agent = self._agents.get(agent_id)
@@ -391,23 +591,169 @@ class AgentBundleService:
         return BundleDocument.from_bytes(self._artifacts.get(agent.bundle_location))
 
     def _detail(self, agent: Agent, document: BundleDocument) -> BundleDetail:
+        self._require_inline_agent_configs(document)
+        remaining = _MAX_INLINE_TOTAL_BYTES
+        files: list[BundleFile] = []
+        diagnostics: list[BundleIssue] = []
+        for path in document.paths():
+            size = document.file_size(path)
+            inline = size <= _MAX_INLINE_FILE_BYTES and size <= remaining
+            files.append(self._file(document, path, inline=inline))
+            if inline:
+                remaining -= size
+            else:
+                diagnostics.append(
+                    BundleIssue(
+                        code="file_not_inlined",
+                        message="file exceeds the inline response limit",
+                        file=path,
+                    )
+                )
         return BundleDetail(
-            card=self._card(agent),
+            card=self._card(agent, document),
             coordinator=BundleWorkers.coordinator(document),
             workers=tuple(BundleWorkers.list(document)),
+            files=tuple(files),
+            diagnostics=tuple(diagnostics),
         )
 
     @staticmethod
-    def _card(agent: Agent) -> BundleCard:
+    def _agent_config_limit_issue(document: BundleDocument) -> BundleIssue | None:
+        paths = ["config.yaml"] if document.exists("config.yaml") else []
+        paths.extend(
+            path
+            for path in document.paths()
+            if path.startswith("agents/") and path.endswith("/config.yaml")
+        )
+        total = 0
+        for path in paths:
+            size = document.file_size(path)
+            if size > _MAX_INLINE_FILE_BYTES:
+                return BundleIssue(
+                    code="agent_config_too_large",
+                    message="agent configuration exceeds the safe response limit",
+                    file=path,
+                )
+            total += size
+            if total > _MAX_INLINE_TOTAL_BYTES:
+                return BundleIssue(
+                    code="agent_configs_too_large",
+                    message="agent configurations exceed the safe response limit",
+                    file=path,
+                )
+        return None
+
+    @classmethod
+    def _require_inline_agent_configs(cls, document: BundleDocument) -> None:
+        issue = cls._agent_config_limit_issue(document)
+        if issue is not None:
+            raise BundleValidationFailure((issue,))
+
+    @staticmethod
+    def _require_agent_config_text(path: str, content: str) -> None:
+        if len(content.encode("utf-8")) > _MAX_INLINE_FILE_BYTES:
+            raise BundleValidationFailure(
+                (
+                    BundleIssue(
+                        code="agent_config_too_large",
+                        message="agent configuration exceeds the safe response limit",
+                        file=path,
+                    ),
+                )
+            )
+
+    @staticmethod
+    def _agent_config_too_large(path: str) -> BundleValidationFailure:
+        return BundleValidationFailure(
+            (
+                BundleIssue(
+                    code="agent_config_too_large",
+                    message="agent configuration exceeds the safe response limit",
+                    file=path,
+                ),
+            )
+        )
+
+    @staticmethod
+    def _file(document: BundleDocument, path: str, *, inline: bool = True) -> BundleFile:
+        size = document.file_size(path)
+        if not inline:
+            media_type = mimetypes.guess_type(path)[0]
+            if path.endswith((".yaml", ".yml")):
+                media_type = "application/yaml"
+            elif path.endswith(".md"):
+                media_type = "text/markdown"
+            return BundleFile(
+                path=path,
+                content=None,
+                encoding="binary",
+                media_type=media_type,
+                size=size,
+                inline=False,
+            )
+        raw = document.read_bytes(path)
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            content = None
+        data: object | None = None
+        if content is not None and path.endswith((".yaml", ".yml")):
+            try:
+                data = document.yaml_value(path, ())
+            except Exception:  # noqa: BLE001 - diagnostics own invalid YAML details
+                data = None
+        media_type = mimetypes.guess_type(path)[0]
+        if path.endswith((".yaml", ".yml")):
+            media_type = "application/yaml"
+        elif path.endswith(".md"):
+            media_type = "text/markdown"
+        return BundleFile(
+            path=path,
+            content=content,
+            encoding="utf-8" if content is not None else "binary",
+            media_type=media_type,
+            size=len(raw),
+            data=data,
+            inline=True,
+        )
+
+    @staticmethod
+    def _card(agent: Agent, document: BundleDocument) -> BundleCard:
         digest = agent.bundle_location.rsplit("/", 1)[-1]
+        config = BundleWorkers.coordinator(document).config
+        executor = config.get("executor")
+        executor_config = executor.get("config") if isinstance(executor, Mapping) else None
+        harness = executor_config.get("harness") if isinstance(executor_config, Mapping) else None
+        tools = config.get("tools")
+        mcp = config.get("mcp") or config.get("mcp_servers")
+        if mcp is None and isinstance(tools, Mapping):
+            mcp = tools.get("mcp")
+        builtin = agent.id == builtin_agent_id("polly")
         return BundleCard(
             id=agent.id,
             name=agent.name,
             description=agent.description,
             version=agent.version,
             digest=digest,
-            readonly=agent.id == builtin_agent_id("polly"),
+            readonly=builtin,
+            harness=harness if isinstance(harness, str) else None,
+            worker_count=len(BundleWorkers.names(document)),
+            skill_count=sum(
+                path.startswith("skills/") and path.endswith("/SKILL.md")
+                for path in document.paths()
+            ),
+            mcp_count=AgentBundleService._collection_count(mcp),
+            validation_status="valid",
+            updated_at=agent.updated_at if agent.updated_at is not None else agent.created_at,
+            builtin=builtin,
+            editable=not builtin,
         )
+
+    @staticmethod
+    def _collection_count(value: object) -> int:
+        if isinstance(value, Mapping | Sequence) and not isinstance(value, str | bytes):
+            return len(value)
+        return 0 if value is None else 1
 
     @staticmethod
     def _config_description(config: Mapping[str, Any], fallback: str | None) -> str | None:
@@ -426,7 +772,7 @@ class AgentBundleService:
                 BundleIssue(
                     code="invalid_yaml",
                     message="invalid YAML",
-                    path=path,
+                    file=path,
                     line=line + 1 if isinstance(line, int) else None,
                     column=column + 1 if isinstance(column, int) else None,
                 ),
@@ -445,8 +791,10 @@ __all__ = [
     "AgentBundleService",
     "BundleCard",
     "BundleDetail",
+    "BundleFile",
     "BundleIssue",
     "BundlePage",
     "BundleValidationFailure",
     "BundleValidationResult",
+    "BundleWorkerOperation",
 ]

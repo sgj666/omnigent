@@ -7,6 +7,7 @@ import {
   createAgentBundle,
   deleteAgentBundle,
   getAgentBundle,
+  getAgentBundleOptions,
   getAgentFormSchema,
   importAgentBundle,
   listMultiAgents,
@@ -18,6 +19,7 @@ import {
   multiAgentQueryKey,
   multiAgentsQueryKey,
   useAgentFormSchema,
+  useAgentBundleOptions,
   useCloneMultiAgent,
   useCreateMultiAgent,
   useDeleteMultiAgent,
@@ -33,6 +35,7 @@ vi.mock("@/lib/multiAgentApi", () => ({
   createAgentBundle: vi.fn(),
   deleteAgentBundle: vi.fn(),
   getAgentBundle: vi.fn(),
+  getAgentBundleOptions: vi.fn(),
   getAgentFormSchema: vi.fn(),
   importAgentBundle: vi.fn(),
   listMultiAgents: vi.fn(),
@@ -45,6 +48,7 @@ const api = {
   create: vi.mocked(createAgentBundle),
   delete: vi.mocked(deleteAgentBundle),
   detail: vi.mocked(getAgentBundle),
+  options: vi.mocked(getAgentBundleOptions),
   schema: vi.mocked(getAgentFormSchema),
   import: vi.mocked(importAgentBundle),
   list: vi.mocked(listMultiAgents),
@@ -57,21 +61,20 @@ const summary = {
   name: "custom",
   description: null,
   harness: "codex",
-  model_source: "local-default",
   worker_count: 0,
   skill_count: 0,
   mcp_count: 0,
   version: 1,
+  digest: "sha256:abc",
+  readonly: false,
   updated_at: 1_786_000_000,
   builtin: false,
   editable: true,
   validation_status: "valid" as const,
-  feishu_status: "disconnected" as const,
-  recent_run: null,
 };
 
 const draft = {
-  agent: summary,
+  card: summary,
   version: 1,
   digest: "sha256:abc",
   files: [],
@@ -82,6 +85,14 @@ const draft = {
 };
 
 const schema = { schema_version: "1", fields: [] };
+const options = {
+  harnesses: [{ id: "community-harness", label: "Community Harness" }],
+  models: [],
+  tools: [],
+  skills: [],
+  mcp: [],
+  environment: [],
+};
 
 let queryClient: QueryClient;
 
@@ -100,6 +111,7 @@ beforeEach(() => {
   api.list.mockResolvedValue([summary]);
   api.detail.mockResolvedValue(draft);
   api.schema.mockResolvedValue(schema);
+  api.options.mockResolvedValue(options);
   api.create.mockResolvedValue(draft);
   api.import.mockResolvedValue(draft);
   api.update.mockResolvedValue({ ...draft, version: 2 });
@@ -159,6 +171,15 @@ describe("multi-agent query hooks", () => {
     expect(api.schema).toHaveBeenCalledTimes(1);
     expect(api.schema.mock.calls[0][0]).toBeInstanceOf(AbortSignal);
   });
+
+  it("loads Bundle options from the provider catalog", async () => {
+    const { result } = renderHook(() => useAgentBundleOptions(true), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(options);
+    expect(api.options.mock.calls[0][0]).toBeInstanceOf(AbortSignal);
+  });
 });
 
 describe("multi-agent mutation hooks", () => {
@@ -178,7 +199,10 @@ describe("multi-agent mutation hooks", () => {
     const { result } = renderHook(() => useCreateMultiAgent(), { wrapper });
 
     await act(async () => {
-      await result.current.mutateAsync({ name: "custom", shape: "single-agent" });
+      await result.current.mutateAsync({
+        name: "custom",
+        config: { spec_version: 1, name: "custom" },
+      });
     });
 
     expect(api.create).toHaveBeenCalled();

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ArrowDownIcon,
@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  useAgentBundleOptions,
   useAgentFormSchema,
   useCreateMultiAgent,
   useMultiAgent,
@@ -30,15 +31,20 @@ import {
 import {
   buildConfigPatches,
   DraftJsonError,
+  parseAgentYaml,
   readAgentConfig,
+  resolvePromptFile,
   workerName,
   type AgentConfigDraft,
+  type PromptReference,
 } from "@/lib/multiAgentDraft";
 import {
   AgentBundleApiError,
+  AgentVersionConflict,
   type AgentBundleFile,
   type AgentBundlePatch,
   type AgentBundleValue,
+  type AgentFormSchema,
   type BundleDiagnostic,
   type WorkerOperation,
 } from "@/lib/multiAgentApi";
@@ -51,19 +57,55 @@ interface EditableFile {
   visual: AgentConfigDraft;
   yaml: string;
   yamlDirty: boolean;
+  visualDirty: boolean;
   pending: boolean;
+  promptReference: PromptReference | null;
+  yamlDiagnostic: BundleDiagnostic | null;
 }
 
-function editableFile(file: AgentBundleFile, pending = false): EditableFile | null {
+interface RawTextFile {
+  path: string;
+  yaml: string | null;
+  original: string | null;
+  inline: boolean;
+  size: number;
+}
+
+interface PendingOrderPatch {
+  agentId: string;
+  expectedVersion: number;
+  file: string;
+  order: string[];
+}
+
+interface PendingOrderConflict {
+  serverVersion: number | null;
+}
+
+interface PendingWorkerDelete {
+  name: string;
+  references: string[];
+}
+
+function editableFile(
+  file: AgentBundleFile,
+  pending = false,
+  files: AgentBundleFile[] = [],
+  schema?: AgentFormSchema,
+): EditableFile | null {
   if (file.data === undefined || file.content == null) return null;
+  const promptReference = resolvePromptFile(file.path, file.data, files);
   return {
     path: file.path,
     name: workerName(file.path, file.data),
     original: file.data,
-    visual: readAgentConfig(file.data),
+    visual: readAgentConfig(file.data, promptReference?.content, schema),
     yaml: file.content,
     yamlDirty: false,
+    visualDirty: false,
     pending,
+    promptReference,
+    yamlDiagnostic: null,
   };
 }
 
@@ -71,7 +113,6 @@ function workerOrderPatch(
   coordinator: EditableFile,
   workers: EditableFile[],
 ): AgentBundlePatch | null {
-  if (coordinator.yamlDirty) return null;
   const root = coordinator.original;
   if (root === null || typeof root !== "object" || Array.isArray(root)) return null;
   const tools = root.tools;
@@ -101,9 +142,14 @@ function CreateBundleForm() {
     const draft = await create.mutateAsync({
       name: name.trim(),
       description: description.trim() || undefined,
-      shape: "multi-agent",
+      config: {
+        spec_version: 1,
+        name: name.trim(),
+        ...(description.trim() ? { description: description.trim() } : {}),
+        executor: { type: "omnigent", config: {} },
+      },
     });
-    navigate(`/multi-agents/${draft.agent.id}`);
+    navigate(`/multi-agents/${draft.card.id}`);
   }
 
   return (
@@ -159,43 +205,108 @@ export function MultiAgentDetailPage() {
   const { agentId } = useParams<{ agentId: string }>();
   const isNew = agentId == null || agentId === "new";
   const bundle = useMultiAgent(isNew ? null : agentId);
-  useAgentFormSchema(!isNew);
+  const formSchema = useAgentFormSchema(!isNew);
+  const bundleOptions = useAgentBundleOptions(!isNew);
   const update = useUpdateMultiAgent();
   const [mode, setMode] = useState("visual");
   const [coordinator, setCoordinator] = useState<EditableFile | null>(null);
   const [workers, setWorkers] = useState<EditableFile[]>([]);
+  const [rawFiles, setRawFiles] = useState<RawTextFile[]>([]);
   const [selectedPath, setSelectedPath] = useState<string>("config.yaml");
   const [workerOperations, setWorkerOperations] = useState<WorkerOperation[]>([]);
+  const [pendingOrderPatch, setPendingOrderPatch] = useState<PendingOrderPatch | null>(null);
+  const pendingOrderPatchRef = useRef<PendingOrderPatch | null>(null);
+  const [pendingOrderConflict, setPendingOrderConflict] = useState<PendingOrderConflict | null>(
+    null,
+  );
   const [diagnostics, setDiagnostics] = useState<BundleDiagnostic[]>([]);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [pendingWorkerDelete, setPendingWorkerDelete] = useState<PendingWorkerDelete | null>(null);
   const [initializedVersion, setInitializedVersion] = useState<string | null>(null);
   const [feishuStatus, setFeishuStatus] = useState<string | null>(null);
   const [feishuOpen, setFeishuOpen] = useState(false);
 
+  function rememberPendingOrderPatch(pending: PendingOrderPatch) {
+    pendingOrderPatchRef.current = pending;
+    setPendingOrderPatch(pending);
+    setPendingOrderConflict(null);
+  }
+
+  function clearPendingOrderPatch() {
+    pendingOrderPatchRef.current = null;
+    setPendingOrderPatch(null);
+  }
+
+  function reloadAfterOrderConflict() {
+    clearPendingOrderPatch();
+    setPendingOrderConflict(null);
+    setSaveError(null);
+    setSaveMessage(null);
+    setWorkerOperations([]);
+    setInitializedVersion(null);
+    void bundle.refetch();
+  }
+
   useEffect(() => {
     if (!bundle.data) return;
-    const key = `${bundle.data.agent.id}:${bundle.data.version}`;
+    const pending = pendingOrderPatchRef.current;
+    if (pending?.agentId === bundle.data.card.id) return;
+    if (pending) clearPendingOrderPatch();
+    const key = `${bundle.data.card.id}:${bundle.data.version}:${formSchema.data?.schema_version ?? ""}`;
     if (key === initializedVersion) return;
     setInitializedVersion(key);
-    setCoordinator(bundle.data.coordinator ? editableFile(bundle.data.coordinator) : null);
+    const configPaths = new Set([
+      bundle.data.coordinator?.path,
+      ...bundle.data.workers.map((file) => file.path),
+    ]);
+    setCoordinator(
+      bundle.data.coordinator
+        ? editableFile(bundle.data.coordinator, false, bundle.data.files, formSchema.data)
+        : null,
+    );
     setWorkers(
       bundle.data.workers
-        .map((file) => editableFile(file))
+        .map((file) => editableFile(file, false, bundle.data.files, formSchema.data))
         .filter((file): file is EditableFile => file !== null),
+    );
+    setRawFiles(
+      bundle.data.files
+        .filter((file) => !configPaths.has(file.path))
+        .map((file) => ({
+          path: file.path,
+          yaml: file.content,
+          original: file.content,
+          inline: file.inline !== false && file.content !== null,
+          size: file.size ?? 0,
+        })),
     );
     setSelectedPath(bundle.data.coordinator?.path ?? bundle.data.workers[0]?.path ?? "config.yaml");
     setDiagnostics(bundle.data.diagnostics);
-    setFeishuStatus(bundle.data.agent.feishu_status);
+    setFeishuStatus("disconnected");
     setWorkerOperations([]);
-  }, [bundle.data, initializedVersion]);
+    setPendingWorkerDelete(null);
+  }, [bundle.data, formSchema.data, initializedVersion, pendingOrderPatch]);
 
   const allFiles = useMemo(
     () => [coordinator, ...workers].filter((file): file is EditableFile => file !== null),
     [coordinator, workers],
   );
-  const selected = allFiles.find((file) => file.path === selectedPath) ?? coordinator ?? workers[0];
-  const readonly = bundle.data?.agent.editable === false;
+  const visualDirtyTargets = useMemo(() => {
+    const targets = new Set<string>();
+    for (const file of allFiles) {
+      if (!file.visualDirty) continue;
+      targets.add(file.path);
+      if (file.promptReference) targets.add(file.promptReference.path);
+    }
+    return targets;
+  }, [allFiles]);
+  const selectedRaw = rawFiles.find((file) => file.path === selectedPath);
+  const selected =
+    allFiles.find((file) => file.path === selectedPath) ??
+    (selectedRaw ? undefined : (coordinator ?? workers[0]));
+  const readonly = bundle.data?.card.readonly === true || bundle.data?.card.editable === false;
+  const hasInvalidYaml = allFiles.some((file) => file.yamlDiagnostic !== null);
 
   function updateSelected(transform: (file: EditableFile) => EditableFile) {
     if (!selected) return;
@@ -204,6 +315,52 @@ export function MultiAgentDetailPage() {
       setWorkers((items) =>
         items.map((item) => (item.path === selected.path ? transform(item) : item)),
       );
+  }
+
+  function updateSelectedYaml(source: string) {
+    if (!selected) return;
+    if (selected.visualDirty) return;
+    const parsed = parseAgentYaml(source);
+    if (parsed.diagnostic !== null) {
+      updateSelected((file) => ({
+        ...file,
+        yaml: source,
+        yamlDirty: true,
+        yamlDiagnostic: {
+          severity: "error",
+          code: "invalid_yaml",
+          file: file.path,
+          path: null,
+          line: parsed.diagnostic.line,
+          column: parsed.diagnostic.column,
+          message: parsed.diagnostic.message,
+        },
+      }));
+      return;
+    }
+
+    const files = [
+      ...allFiles.map((file) => ({ path: file.path, content: file.yaml })),
+      ...rawFiles.map((file) => ({ path: file.path, content: file.yaml })),
+    ];
+    const promptReference = resolvePromptFile(selected.path, parsed.data, files);
+    updateSelected((file) => ({
+      ...file,
+      original: parsed.data,
+      visual: readAgentConfig(parsed.data, promptReference?.content, formSchema.data),
+      yaml: source,
+      yamlDirty: true,
+      visualDirty: false,
+      promptReference,
+      yamlDiagnostic: null,
+    }));
+  }
+
+  function updateSelectedRaw(source: string) {
+    if (!selectedRaw || visualDirtyTargets.has(selectedRaw.path)) return;
+    setRawFiles((files) =>
+      files.map((file) => (file.path === selectedRaw.path ? { ...file, yaml: source } : file)),
+    );
   }
 
   function addWorker() {
@@ -219,10 +376,13 @@ export function MultiAgentDetailPage() {
       path,
       name,
       original,
-      visual: readAgentConfig(original),
+      visual: readAgentConfig(original, undefined, formSchema.data),
       yaml: `name: ${name}\n`,
       yamlDirty: false,
+      visualDirty: false,
       pending: true,
+      promptReference: null,
+      yamlDiagnostic: null,
     };
     setWorkers((items) => [...items, pending]);
     setWorkerOperations((items) => [...items, { op: "add", name, source: "minimal" }]);
@@ -252,39 +412,153 @@ export function MultiAgentDetailPage() {
     });
   }
 
-  async function save() {
-    if (!agentId || !bundle.data || !coordinator || readonly) return;
+  async function save(confirmedDelete?: PendingWorkerDelete) {
+    if (!agentId || !bundle.data || !coordinator || readonly || pendingOrderConflict) return;
     setSaveMessage(null);
     setSaveError(null);
     try {
+      const pendingOrder = pendingOrderPatchRef.current;
+      if (pendingOrder?.agentId === agentId) {
+        const saved = await update.mutateAsync({
+          agent_id: agentId,
+          request: {
+            expected_version: pendingOrder.expectedVersion,
+            patches: [
+              {
+                file: pendingOrder.file,
+                op: "replace",
+                path: "/tools/agents",
+                value: pendingOrder.order,
+              },
+            ],
+          },
+        });
+        setDiagnostics(saved.diagnostics);
+        setInitializedVersion(`${bundle.data.card.id}:${bundle.data.version}`);
+        clearPendingOrderPatch();
+        setSaveMessage(t("editor.saved"));
+        return;
+      }
+      const invalidYaml = allFiles.find((file) => file.yamlDiagnostic !== null)?.yamlDiagnostic;
+      if (invalidYaml) {
+        setDiagnostics([invalidYaml]);
+        setSaveError(
+          t("editor.invalidYaml", { line: invalidYaml.line, column: invalidYaml.column }),
+        );
+        return;
+      }
       const patches = allFiles.flatMap((file) => {
         if (file.pending) return [];
-        if (file.yamlDirty)
-          return [{ file: file.path, op: "replace_file" as const, value: file.yaml }];
-        return buildConfigPatches(file.path, file.original, file.visual);
+        return [
+          ...(file.yamlDirty
+            ? [{ file: file.path, op: "replace_file" as const, value: file.yaml }]
+            : []),
+          ...buildConfigPatches(file.path, file.original, file.visual, {
+            reference: file.promptReference,
+          }),
+        ];
       });
-      const order = workerOrderPatch(
-        coordinator,
-        workers.filter((worker) => !worker.pending),
-      );
+      for (const file of rawFiles) {
+        if (file.yaml === null || file.original === null) continue;
+        if (visualDirtyTargets.has(file.path)) continue;
+        if (file.yaml !== file.original) {
+          patches.push({ file: file.path, op: "replace_file", value: file.yaml });
+        }
+      }
+      const operations = confirmedDelete
+        ? workerOperations.map((operation) =>
+            operation.op === "delete" && operation.name === confirmedDelete.name
+              ? { ...operation, confirmed_references: confirmedDelete.references }
+              : operation,
+          )
+        : workerOperations;
+      if (confirmedDelete) setWorkerOperations(operations);
+      const requiresPostOperationOrder = operations.length > 0;
+      const order = requiresPostOperationOrder
+        ? null
+        : workerOrderPatch(
+            coordinator,
+            workers.filter((worker) => !worker.pending),
+          );
       if (order) patches.push(order);
-      const saved = await update.mutateAsync({
+      let saved = await update.mutateAsync({
         agent_id: agentId,
         request: {
           expected_version: bundle.data.version,
           ...(patches.length ? { patches } : {}),
-          ...(workerOperations.length ? { worker_operations: workerOperations } : {}),
+          ...(operations.length ? { worker_operations: operations } : {}),
         },
       });
+      if (requiresPostOperationOrder) {
+        setWorkerOperations([]);
+        const desiredOrder = workers.map((worker) => worker.name);
+        const savedOrder = saved.workers.map((worker) => workerName(worker.path, worker.data));
+        if (JSON.stringify(savedOrder) !== JSON.stringify(desiredOrder)) {
+          const nextOrderPatch: PendingOrderPatch = {
+            agentId,
+            expectedVersion: saved.version,
+            file: saved.coordinator?.path ?? coordinator.path,
+            order: desiredOrder,
+          };
+          rememberPendingOrderPatch(nextOrderPatch);
+          saved = await update.mutateAsync({
+            agent_id: agentId,
+            request: {
+              expected_version: nextOrderPatch.expectedVersion,
+              patches: [
+                {
+                  file: nextOrderPatch.file,
+                  op: "replace",
+                  path: "/tools/agents",
+                  value: nextOrderPatch.order,
+                },
+              ],
+            },
+          });
+          setInitializedVersion(`${bundle.data.card.id}:${bundle.data.version}`);
+          clearPendingOrderPatch();
+        }
+      }
       setDiagnostics(saved.diagnostics);
       setWorkerOperations([]);
+      setPendingWorkerDelete(null);
       setSaveMessage(t("editor.saved"));
     } catch (error) {
       if (error instanceof DraftJsonError) {
         setSaveError(t("errors.invalidJson", { field: t(`fields.${error.field}`) }));
       } else {
-        if (error instanceof AgentBundleApiError) setDiagnostics(error.diagnostics);
-        setSaveError(error instanceof Error ? error.message : t("errors.action"));
+        if (error instanceof AgentBundleApiError) {
+          setDiagnostics(error.diagnostics);
+          const confirmationDiagnostics = error.diagnostics.filter(
+            (diagnostic) => diagnostic.code === "worker_references_require_confirmation",
+          );
+          const referencedWorker = confirmationDiagnostics[0]?.worker;
+          const references = confirmationDiagnostics.filter(
+            (diagnostic) => diagnostic.worker === referencedWorker,
+          );
+          const pendingDelete = workerOperations.find(
+            (operation): operation is Extract<WorkerOperation, { op: "delete" }> =>
+              operation.op === "delete" && operation.name === referencedWorker,
+          );
+          if (pendingDelete && references.length) {
+            setPendingWorkerDelete({
+              name: pendingDelete.name,
+              references: references.map(
+                (diagnostic) => `${diagnostic.file ?? ""}#${diagnostic.path ?? ""}`,
+              ),
+            });
+          }
+        }
+        if (
+          error instanceof AgentVersionConflict &&
+          error.code === "version_conflict" &&
+          pendingOrderPatchRef.current
+        ) {
+          setPendingOrderConflict({ serverVersion: error.server_version });
+          setSaveError(null);
+        } else {
+          setSaveError(error instanceof Error ? error.message : t("errors.action"));
+        }
       }
     }
   }
@@ -319,21 +593,19 @@ export function MultiAgentDetailPage() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="text-2xl font-semibold">{bundle.data.agent.name}</h1>
-                  {bundle.data.agent.builtin && (
+                  <h1 className="text-2xl font-semibold">{bundle.data.card.name}</h1>
+                  {(bundle.data.card.readonly || bundle.data.card.builtin) && (
                     <Badge variant="secondary">{t("catalog.builtinReadonly")}</Badge>
                   )}
                   <Badge
                     variant={
-                      bundle.data.agent.validation_status === "invalid" ? "destructive" : "outline"
+                      bundle.data.card.validation_status === "invalid" ? "destructive" : "outline"
                     }
                   >
-                    {t(`status.${bundle.data.agent.validation_status}`)}
+                    {t(`status.${bundle.data.card.validation_status}`)}
                   </Badge>
                 </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {bundle.data.agent.description}
-                </p>
+                <p className="mt-1 text-sm text-muted-foreground">{bundle.data.card.description}</p>
                 <p className="mt-2 font-mono text-xs text-muted-foreground">
                   v{bundle.data.version} · {bundle.data.digest}
                 </p>
@@ -346,7 +618,10 @@ export function MultiAgentDetailPage() {
                   <LinkIcon /> {t("feishu.connect")}
                 </Button>
                 {!readonly && (
-                  <Button onClick={() => void save()} disabled={update.isPending}>
+                  <Button
+                    onClick={() => void save()}
+                    disabled={update.isPending || hasInvalidYaml || pendingOrderConflict !== null}
+                  >
                     <SaveIcon />
                     {update.isPending ? t("actions.saving") : t("actions.save")}
                   </Button>
@@ -371,6 +646,36 @@ export function MultiAgentDetailPage() {
               <p role="alert" className="text-sm text-destructive">
                 {saveError}
               </p>
+            )}
+            {pendingOrderConflict && (
+              <div role="alert" className="space-y-2 text-sm text-destructive">
+                <p>
+                  {t("editor.orderVersionConflict", {
+                    version: pendingOrderConflict.serverVersion ?? "?",
+                  })}
+                </p>
+                <Button variant="outline" size="sm" onClick={reloadAfterOrderConflict}>
+                  {t("actions.reloadServerVersion")}
+                </Button>
+              </div>
+            )}
+            {pendingWorkerDelete && (
+              <div role="alert" className="space-y-2 rounded-md border p-3 text-sm">
+                <p>{t("workers.referenceConfirmation", { name: pendingWorkerDelete.name })}</p>
+                <ul className="list-disc pl-5 font-mono text-xs">
+                  {pendingWorkerDelete.references.map((reference) => (
+                    <li key={reference}>{reference}</li>
+                  ))}
+                </ul>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => void save(pendingWorkerDelete)}
+                  disabled={update.isPending}
+                >
+                  {t("workers.confirmDelete")}
+                </Button>
+              </div>
             )}
 
             <div className="grid gap-6 lg:grid-cols-[14rem_minmax(0,1fr)]">
@@ -453,8 +758,10 @@ export function MultiAgentDetailPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>{selected?.name ?? t("editor.configuration")}</CardTitle>
-                  <CardDescription>{selected?.path}</CardDescription>
+                  <CardTitle>
+                    {selected?.name ?? selectedRaw?.path ?? t("editor.configuration")}
+                  </CardTitle>
+                  <CardDescription>{selected?.path ?? selectedRaw?.path}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <Tabs value={mode} onValueChange={setMode}>
@@ -465,10 +772,20 @@ export function MultiAgentDetailPage() {
                     <TabsContent value="visual" className="mt-5">
                       {selected ? (
                         <AgentConfigEditor
+                          schema={formSchema.data}
+                          harnesses={bundleOptions.data?.harnesses}
                           value={selected.visual}
-                          onChange={(visual) => updateSelected((file) => ({ ...file, visual }))}
+                          onChange={(visual) =>
+                            updateSelected((file) => ({ ...file, visual, visualDirty: true }))
+                          }
                           disabled={readonly || selected.pending}
                         />
+                      ) : selectedRaw ? (
+                        <p className="text-sm text-muted-foreground">
+                          {selectedRaw.inline
+                            ? t("editor.yamlHelp")
+                            : t("editor.fileNotInline", { size: selectedRaw.size })}
+                        </p>
                       ) : (
                         <p>{t("errors.noCoordinator")}</p>
                       )}
@@ -481,11 +798,11 @@ export function MultiAgentDetailPage() {
                     <TabsContent value="yaml" className="mt-5 space-y-3">
                       <p className="text-xs text-muted-foreground">{t("editor.yamlHelp")}</p>
                       <div className="flex flex-wrap gap-1">
-                        {allFiles.map((file) => (
+                        {[...allFiles, ...rawFiles].map((file) => (
                           <Button
                             key={file.path}
                             size="sm"
-                            variant={file.path === selected?.path ? "secondary" : "ghost"}
+                            variant={file.path === selectedPath ? "secondary" : "ghost"}
                             onClick={() => setSelectedPath(file.path)}
                           >
                             {file.path}
@@ -497,15 +814,36 @@ export function MultiAgentDetailPage() {
                           aria-label={selected.path}
                           className="min-h-[32rem] font-mono text-xs"
                           value={selected.yaml}
-                          onChange={(event) =>
-                            updateSelected((file) => ({
-                              ...file,
-                              yaml: event.target.value,
-                              yamlDirty: true,
-                            }))
-                          }
-                          disabled={readonly || selected.pending}
+                          onChange={(event) => updateSelectedYaml(event.target.value)}
+                          disabled={readonly || selected.pending || selected.visualDirty}
                         />
+                      )}
+                      {visualDirtyTargets.has(selectedPath) && (
+                        <p role="status" className="text-sm text-muted-foreground">
+                          {t("editor.visualDirtyYamlBlocked")}
+                        </p>
+                      )}
+                      {selected?.yamlDiagnostic && (
+                        <p role="alert" className="text-sm text-destructive">
+                          {t("editor.invalidYaml", {
+                            line: selected.yamlDiagnostic.line,
+                            column: selected.yamlDiagnostic.column,
+                          })}
+                        </p>
+                      )}
+                      {selectedRaw && selectedRaw.yaml !== null && (
+                        <Textarea
+                          aria-label={selectedRaw.path}
+                          className="min-h-[32rem] font-mono text-xs"
+                          value={selectedRaw.yaml}
+                          onChange={(event) => updateSelectedRaw(event.target.value)}
+                          disabled={readonly || visualDirtyTargets.has(selectedRaw.path)}
+                        />
+                      )}
+                      {selectedRaw && !selectedRaw.inline && (
+                        <p role="status" className="text-sm text-muted-foreground">
+                          {t("editor.fileNotInline", { size: selectedRaw.size })}
+                        </p>
                       )}
                     </TabsContent>
                   </Tabs>
@@ -514,13 +852,13 @@ export function MultiAgentDetailPage() {
             </div>
 
             <AgentFeishuPairingDialog
-              agentId={bundle.data.agent.id}
-              agentName={bundle.data.agent.name}
+              agentId={bundle.data.card.id}
+              agentName={bundle.data.card.name}
               open={feishuOpen}
               onOpenChange={setFeishuOpen}
               onStatusChange={setFeishuStatus}
             />
-            <WorkspaceRunPanel agentId={bundle.data.agent.id} />
+            <WorkspaceRunPanel agentId={bundle.data.card.id} />
           </div>
         )
       )}

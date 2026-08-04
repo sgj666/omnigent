@@ -135,6 +135,110 @@ class BundleWorkers:
         document.swap(candidate)
 
     @classmethod
+    def references(cls, document: BundleDocument, name: str) -> tuple[str, ...]:
+        """Return stable structured references to a worker outside its own config."""
+        cls.get(document, name)
+        references: list[str] = []
+        config_paths = [_CONFIG_PATH]
+        config_paths.extend(
+            cls._worker_config_path(worker) for worker in cls.names(document) if worker != name
+        )
+        for path in config_paths:
+            config = cls._config(document, path)
+            cls._collect_references(config, name, path, (), references)
+        return tuple(sorted(references))
+
+    @classmethod
+    def _collect_references(
+        cls,
+        value: object,
+        name: str,
+        file: str,
+        pointer: tuple[str | int, ...],
+        references: list[str],
+    ) -> None:
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if not isinstance(key, str):
+                    continue
+                child_pointer = (*pointer, key)
+                if key == "agents" and pointer and pointer[-1] == "tools":
+                    if file == _CONFIG_PATH and pointer == ("tools",):
+                        continue
+                    if isinstance(child, Sequence) and not isinstance(child, str | bytes):
+                        for index, candidate in enumerate(child):
+                            if candidate == name:
+                                references.append(
+                                    f"{file}#{cls._json_pointer((*child_pointer, index))}"
+                                )
+                    continue
+                if (
+                    key
+                    in {
+                        "agent",
+                        "worker",
+                        "agent_name",
+                        "worker_name",
+                        "target_agent",
+                        "delegate_to",
+                    }
+                    and child == name
+                ):
+                    references.append(f"{file}#{cls._json_pointer(child_pointer)}")
+                else:
+                    cls._collect_references(child, name, file, child_pointer, references)
+        elif isinstance(value, Sequence) and not isinstance(value, str | bytes):
+            for index, child in enumerate(value):
+                cls._collect_references(child, name, file, (*pointer, index), references)
+
+    @classmethod
+    def _json_pointer(cls, pointer: Sequence[str | int]) -> str:
+        return "/" + "/".join(
+            str(component) if isinstance(component, int) else cls._pointer_token(component)
+            for component in pointer
+        )
+
+    @classmethod
+    def copy(cls, document: BundleDocument, source: str, target: str) -> None:
+        """Copy a worker's complete directory and append the copy to the roster."""
+        cls.get(document, source)
+        cls._validate_name(target)
+        current = cls.names(document)
+        if target in current:
+            raise ValueError(f"worker already exists: {target!r}")
+        candidate = document.clone()
+        cls._copy_tree(candidate, source, target)
+        cls._set_roster(candidate, [*current, target])
+        apply_patches(
+            candidate,
+            [BundlePatch(cls._worker_config_path(target), "replace", "/name", target)],
+        )
+        document.swap(candidate)
+
+    @classmethod
+    def rename(cls, document: BundleDocument, source: str, target: str) -> None:
+        """Rename a worker directory and roster entry without changing its position."""
+        cls.get(document, source)
+        cls._validate_name(target)
+        current = cls.names(document)
+        if target in current:
+            raise ValueError(f"worker already exists: {target!r}")
+        candidate = document.clone()
+        cls._copy_tree(candidate, source, target)
+        apply_patches(
+            candidate,
+            [BundlePatch(cls._worker_config_path(target), "replace", "/name", target)],
+        )
+        cls._set_roster(
+            candidate,
+            [target if worker == source else worker for worker in current],
+        )
+        for path in candidate.paths():
+            if path.startswith(f"agents/{source}/"):
+                candidate.delete_file(path)
+        document.swap(candidate)
+
+    @classmethod
     def reorder(cls, document: BundleDocument, names: Sequence[str]) -> None:
         requested = list(names)
         current = cls.names(document)
@@ -167,6 +271,17 @@ class BundleWorkers:
     @staticmethod
     def _worker_config_path(name: str) -> str:
         return f"agents/{name}/config.yaml"
+
+    @staticmethod
+    def _copy_tree(document: BundleDocument, source: str, target: str) -> None:
+        source_prefix = f"agents/{source}/"
+        target_prefix = f"agents/{target}/"
+        for path in document.paths():
+            if path.startswith(source_prefix):
+                document.add_file_bytes(
+                    f"{target_prefix}{path.removeprefix(source_prefix)}",
+                    document.read_bytes(path),
+                )
 
     @staticmethod
     def _config(document: BundleDocument, path: str) -> dict[str, Any]:

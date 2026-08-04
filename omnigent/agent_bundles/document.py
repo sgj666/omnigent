@@ -42,6 +42,25 @@ from omnigent.spec.tar_utils import (
 )
 
 YamlPointer = Sequence[str | int]
+AGENT_CONFIG_MAX_BYTES = 1024 * 1024
+
+
+class BundleFileSizeError(ValueError):
+    """Raised before parsing a generated YAML candidate that exceeds its limit."""
+
+    def __init__(self, path: str, max_bytes: int) -> None:
+        self.path = path
+        self.max_bytes = max_bytes
+        super().__init__("bundle YAML candidate exceeds its byte limit")
+
+
+def is_agent_config_path(path: str) -> bool:
+    """Return whether *path* is a root or nested agent configuration."""
+    normalized = _normalize_posix_path(path)
+    parts = PurePosixPath(normalized).parts
+    return normalized == "config.yaml" or (
+        len(parts) >= 3 and parts[0] == "agents" and parts[-1] == "config.yaml"
+    )
 
 
 @dataclass(frozen=True)
@@ -205,6 +224,8 @@ class BundleDocument:
                             f"tarball exceeds max entry count ({DEFAULT_MAX_ENTRIES})"
                         )
 
+                    if member.isdir() and PurePosixPath(member.name).as_posix() == ".":
+                        continue
                     try:
                         normalized = _normalize_posix_path(member.name)
                     except ValueError as exc:
@@ -249,6 +270,14 @@ class BundleDocument:
         """Read one UTF-8 bundle file without changing its bytes."""
         return self._files[_normalize_posix_path(path)].decode("utf-8")
 
+    def read_bytes(self, path: str) -> bytes:
+        """Read one bundle file without changing its bytes."""
+        return self._files[_normalize_posix_path(path)]
+
+    def file_size(self, path: str) -> int:
+        """Return one bundle file's byte size without copying its contents."""
+        return len(self._files[_normalize_posix_path(path)])
+
     def yaml_value(self, path: str, pointer: YamlPointer) -> Any:
         """Return a detached value at a tuple-style YAML pointer."""
         value = self._yaml_document(path)
@@ -256,7 +285,14 @@ class BundleDocument:
             value = self._child(value, component)
         return copy.deepcopy(value)
 
-    def replace_yaml_value(self, path: str, pointer: YamlPointer, value: object) -> None:
+    def replace_yaml_value(
+        self,
+        path: str,
+        pointer: YamlPointer,
+        value: object,
+        *,
+        max_bytes: int | None = None,
+    ) -> None:
         """Replace an existing YAML value while preserving presentation details."""
         normalized = _normalize_posix_path(path)
         replacement = copy.deepcopy(value)
@@ -279,9 +315,16 @@ class BundleDocument:
             else:
                 rendered = self._replace_source_value(source, location, replacement)
 
-        self._commit_yaml_source(normalized, rendered)
+        self._commit_yaml_source(normalized, rendered, max_bytes=max_bytes)
 
-    def add_yaml_value(self, path: str, pointer: YamlPointer, value: object) -> None:
+    def add_yaml_value(
+        self,
+        path: str,
+        pointer: YamlPointer,
+        value: object,
+        *,
+        max_bytes: int | None = None,
+    ) -> None:
         """Add a YAML mapping member or sequence item."""
         normalized = _normalize_posix_path(path)
         replacement = copy.deepcopy(value)
@@ -327,9 +370,15 @@ class BundleDocument:
                     f"YAML pointer cannot add a child to {type(parent.value).__name__}"
                 )
 
-        self._commit_yaml_source(normalized, rendered)
+        self._commit_yaml_source(normalized, rendered, max_bytes=max_bytes)
 
-    def remove_yaml_value(self, path: str, pointer: YamlPointer) -> None:
+    def remove_yaml_value(
+        self,
+        path: str,
+        pointer: YamlPointer,
+        *,
+        max_bytes: int | None = None,
+    ) -> None:
         """Remove an existing YAML mapping member or sequence item."""
         if not pointer:
             raise ValueError("cannot remove the YAML document root")
@@ -338,7 +387,7 @@ class BundleDocument:
         assert target.parent is not None
         rendered = self._remove_source_value(source, target.parent, target)
 
-        self._commit_yaml_source(normalized, rendered)
+        self._commit_yaml_source(normalized, rendered, max_bytes=max_bytes)
 
     def replace_file_bytes(self, path: str, data: bytes) -> None:
         """Replace an existing bundle file with raw bytes."""
@@ -363,8 +412,16 @@ class BundleDocument:
         del self._files[normalized]
         self._yaml_documents.pop(normalized, None)
 
-    def _commit_yaml_source(self, normalized: str, rendered: str) -> None:
+    def _commit_yaml_source(
+        self,
+        normalized: str,
+        rendered: str,
+        *,
+        max_bytes: int | None = None,
+    ) -> None:
         encoded = rendered.encode("utf-8")
+        if max_bytes is not None and len(encoded) > max_bytes:
+            raise BundleFileSizeError(normalized, max_bytes)
         self._validate_yaml_candidate(encoded)
         self._files[normalized] = encoded
         self._yaml_documents.pop(normalized, None)

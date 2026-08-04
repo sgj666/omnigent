@@ -4,6 +4,7 @@ import {
   createAgentBundle,
   deleteAgentBundle,
   getAgentBundle,
+  getAgentBundleOptions,
   getAgentFormSchema,
   importAgentBundle,
   listMultiAgents,
@@ -17,6 +18,7 @@ import {
 export const multiAgentsQueryKey = ["multi-agents"] as const;
 export const availableAgentsQueryKey = ["available-agents"] as const;
 export const agentFormSchemaQueryKey = ["agent-form-schema"] as const;
+export const agentBundleOptionsQueryKey = ["agent-bundle-options"] as const;
 
 export function multiAgentQueryKey(agent_id: string) {
   return ["multi-agents", agent_id] as const;
@@ -54,6 +56,14 @@ export function useAgentFormSchema(enabled = true) {
   });
 }
 
+export function useAgentBundleOptions(enabled = true) {
+  return useQuery({
+    queryKey: agentBundleOptionsQueryKey,
+    queryFn: ({ signal }) => getAgentBundleOptions(signal),
+    enabled,
+  });
+}
+
 export function useValidateAgentBundle() {
   return useMutation({ mutationFn: (bundle: Blob) => validateAgentBundleArchive(bundle) });
 }
@@ -62,7 +72,7 @@ export function useCreateMultiAgent() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateAgentBundleInput) => createAgentBundle(input),
-    onSuccess: (draft) => invalidateMultiAgentCaches(queryClient, draft.agent.id),
+    onSuccess: (draft) => invalidateMultiAgentCaches(queryClient, draft.card.id),
   });
 }
 
@@ -70,7 +80,7 @@ export function useImportMultiAgent() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (bundle: Blob) => importAgentBundle(bundle),
-    onSuccess: (draft) => invalidateMultiAgentCaches(queryClient, draft.agent.id),
+    onSuccess: (draft) => invalidateMultiAgentCaches(queryClient, draft.card.id),
   });
 }
 
@@ -88,7 +98,7 @@ export function useCloneMultiAgent() {
   return useMutation({
     mutationFn: ({ agent_id, input }: { agent_id: string; input: CloneAgentBundleInput }) =>
       cloneAgentBundle(agent_id, input),
-    onSuccess: (draft) => invalidateMultiAgentCaches(queryClient, draft.agent.id),
+    onSuccess: (draft) => invalidateMultiAgentCaches(queryClient, draft.card.id),
   });
 }
 

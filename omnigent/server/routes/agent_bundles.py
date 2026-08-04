@@ -10,10 +10,12 @@ from typing import Annotated, Any, NoReturn
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 
+from omnigent.agent_bundles.patches import BundlePatch
 from omnigent.agent_bundles.service import (
     AgentBundleService,
     BundleDetail,
     BundleValidationFailure,
+    BundleWorkerOperation,
 )
 from omnigent.harness_plugins import harness_catalog
 from omnigent.server.auth import AuthProvider
@@ -23,16 +25,19 @@ from omnigent.server.bundle_schemas import (
     BundleCloneRequest,
     BundleCreateRequest,
     BundleDetailResponse,
+    BundleDiagnosticResponse,
+    BundleFileResponse,
+    BundleFormSchemaResponse,
     BundleListResponse,
     BundleOptionsResponse,
     BundleUpdateRequest,
     BundleValidateRequest,
-    BundleValidationIssueResponse,
     BundleValidationResponse,
     BundleWorkerCreateRequest,
     BundleWorkerDeleteRequest,
     BundleWorkerOrderRequest,
     BundleWorkerUpdateRequest,
+    build_bundle_form_schema,
 )
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.routes._content_type import require_json_content_type
@@ -55,13 +60,12 @@ def _default_options() -> Mapping[str, Any]:
 
 def _translate_error(exc: Exception) -> NoReturn:
     if isinstance(exc, BundleValidationFailure):
-        issues = [
-            BundleValidationIssueResponse.model_validate(issue).model_dump()
-            for issue in exc.issues
+        diagnostics = [
+            BundleDiagnosticResponse.model_validate(issue).model_dump() for issue in exc.issues
         ]
         raise HTTPException(
             status_code=400,
-            detail={"code": "invalid_bundle", "issues": issues},
+            detail={"code": "invalid_bundle", "diagnostics": diagnostics},
         ) from None
     if isinstance(exc, AgentVersionConflict):
         raise HTTPException(
@@ -93,21 +97,40 @@ def _config_dump(config: Any) -> dict[str, Any]:
 
 
 def _detail_response(detail: BundleDetail) -> BundleDetailResponse:
+    def agent_response(name: str, path: str, config: Any, yaml: str) -> BundleAgentResponse:
+        return BundleAgentResponse(
+            name=name,
+            path=path,
+            content=yaml,
+            data=config,
+            config=config,
+            advanced_yaml=yaml,
+        )
+
     return BundleDetailResponse(
         card=BundleCardResponse.model_validate(detail.card),
-        coordinator=BundleAgentResponse(
-            name=detail.coordinator.name,
-            config=detail.coordinator.config,
-            advanced_yaml=detail.coordinator.advanced_yaml,
+        version=detail.card.version,
+        digest=detail.card.digest,
+        files=[BundleFileResponse.model_validate(file) for file in detail.files],
+        coordinator=agent_response(
+            detail.coordinator.name,
+            "config.yaml",
+            detail.coordinator.config,
+            detail.coordinator.advanced_yaml,
         ),
         workers=[
-            BundleAgentResponse(
-                name=worker.name,
-                config=worker.config,
-                advanced_yaml=worker.advanced_yaml,
+            agent_response(
+                worker.name,
+                f"agents/{worker.name}/config.yaml",
+                worker.config,
+                worker.advanced_yaml,
             )
             for worker in detail.workers
         ],
+        diagnostics=[
+            BundleDiagnosticResponse.model_validate(issue) for issue in detail.diagnostics
+        ],
+        schema_version=detail.schema_version,
     )
 
 
@@ -144,6 +167,7 @@ def create_agent_bundles_router(
             data=[BundleCardResponse.model_validate(card) for card in page.data],
             first_id=page.first_id,
             last_id=page.last_id,
+            has_more=page.has_more,
         )
 
     # Static routes precede /{agent_id} so metadata is never interpreted as an ID.
@@ -151,6 +175,11 @@ def create_agent_bundles_router(
     async def bundle_options(request: Request) -> BundleOptionsResponse:
         authenticate(request)
         return BundleOptionsResponse.model_validate(await asyncio.to_thread(provide_options))
+
+    @router.get("/agent-bundles/schema", response_model=BundleFormSchemaResponse)
+    async def bundle_schema(request: Request) -> BundleFormSchemaResponse:
+        authenticate(request)
+        return build_bundle_form_schema()
 
     @router.post(
         "/agent-bundles/validate",
@@ -172,14 +201,14 @@ def create_agent_bundles_router(
         result = await _call(service.validate, bundle)
         return BundleValidationResponse(
             valid=result.valid,
-            issues=[
-                BundleValidationIssueResponse.model_validate(issue) for issue in result.issues
+            diagnostics=[
+                BundleDiagnosticResponse.model_validate(issue) for issue in result.issues
             ],
         )
 
     @router.post(
         "/agent-bundles/import",
-        response_model=BundleCardResponse,
+        response_model=BundleDetailResponse,
         status_code=201,
         dependencies=[Depends(require_trusted_origin)],
     )
@@ -188,7 +217,7 @@ def create_agent_bundles_router(
         bundle: Annotated[UploadFile, File()],
         name: Annotated[str | None, Form()] = None,
         description: Annotated[str | None, Form()] = None,
-    ) -> BundleCardResponse:
+    ) -> BundleDetailResponse:
         authenticate(request)
         bundle_bytes = await bundle.read()
         card = await _call(
@@ -197,18 +226,18 @@ def create_agent_bundles_router(
             name=name,
             description=description,
         )
-        return BundleCardResponse.model_validate(card)
+        return _detail_response(await _call(service.get, card.id))
 
     @router.post(
         "/agent-bundles",
-        response_model=BundleCardResponse,
+        response_model=BundleDetailResponse,
         status_code=201,
         dependencies=[Depends(require_json_content_type)],
     )
     async def create_bundle(
         request: Request,
         body: BundleCreateRequest,
-    ) -> BundleCardResponse:
+    ) -> BundleDetailResponse:
         authenticate(request)
         card = await _call(
             service.create,
@@ -216,7 +245,7 @@ def create_agent_bundles_router(
             description=body.description,
             config=_config_dump(body.config),
         )
-        return BundleCardResponse.model_validate(card)
+        return _detail_response(await _call(service.get, card.id))
 
     @router.get("/agent-bundles/{agent_id}", response_model=BundleDetailResponse)
     async def get_bundle(request: Request, agent_id: str) -> BundleDetailResponse:
@@ -247,6 +276,25 @@ def create_agent_bundles_router(
             advanced_yaml=body.advanced_yaml,
             name=body.name,
             description=body.description,
+            patches=[
+                BundlePatch(
+                    file=patch.file,
+                    op=patch.op,
+                    path=patch.path,
+                    value=patch.value,
+                )
+                for patch in body.patches
+            ],
+            worker_operations=[
+                BundleWorkerOperation(
+                    op=operation.op,
+                    name=operation.name,
+                    source=operation.source,
+                    target=operation.target,
+                    confirmed_references=tuple(operation.confirmed_references),
+                )
+                for operation in body.worker_operations
+            ],
         )
         return _detail_response(detail)
 
@@ -258,7 +306,7 @@ def create_agent_bundles_router(
 
     @router.post(
         "/agent-bundles/{agent_id}/clone",
-        response_model=BundleCardResponse,
+        response_model=BundleDetailResponse,
         status_code=201,
         dependencies=[Depends(require_json_content_type)],
     )
@@ -266,7 +314,7 @@ def create_agent_bundles_router(
         request: Request,
         agent_id: str,
         body: BundleCloneRequest,
-    ) -> BundleCardResponse:
+    ) -> BundleDetailResponse:
         authenticate(request)
         card = await _call(
             service.clone,
@@ -274,7 +322,7 @@ def create_agent_bundles_router(
             name=body.name,
             description=body.description,
         )
-        return BundleCardResponse.model_validate(card)
+        return _detail_response(await _call(service.get, card.id))
 
     @router.get("/agent-bundles/{agent_id}/export")
     async def export_bundle(request: Request, agent_id: str) -> Response:
@@ -296,6 +344,9 @@ def create_agent_bundles_router(
         return [
             BundleAgentResponse(
                 name=worker.name,
+                path=f"agents/{worker.name}/config.yaml",
+                content=worker.advanced_yaml,
+                data=worker.config,
                 config=worker.config,
                 advanced_yaml=worker.advanced_yaml,
             )
@@ -382,6 +433,7 @@ def create_agent_bundles_router(
             agent_id,
             worker_name,
             expected_version=body.expected_version,
+            confirmed_references=body.confirmed_references,
         )
         return _detail_response(detail)
 

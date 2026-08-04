@@ -113,7 +113,7 @@ def test_static_metadata_and_validate_routes_are_not_captured_as_agent_ids() -> 
     assert options.json()["harnesses"][0]["id"] == "real-harness"
     assert options.json()["models"] == []
     assert validation.status_code == 200
-    assert validation.json() == {"valid": True, "issues": []}
+    assert validation.json() == {"valid": True, "diagnostics": []}
     assert service.calls == [("validate", b"candidate")]
 
 
@@ -182,7 +182,10 @@ def test_worker_create_update_delete_and_order_routes() -> None:
     deleted = client.request(
         "DELETE",
         "/v1/agent-bundles/agent-1/workers/alpha",
-        json={"expected_version": 1},
+        json={
+            "expected_version": 1,
+            "confirmed_references": ["agents/beta/config.yaml#/delegate_to"],
+        },
     )
     reordered = client.put(
         "/v1/agent-bundles/agent-1/workers/order",
@@ -201,13 +204,48 @@ def test_worker_create_update_delete_and_order_routes() -> None:
         "delete_worker",
         "reorder_workers",
     ]
+    assert service.calls[2][1][2]["confirmed_references"] == [
+        "agents/beta/config.yaml#/delegate_to"
+    ]
+
+
+def test_update_passes_worker_delete_reference_confirmation_to_service() -> None:
+    service = FakeService()
+    client = _client(service)
+
+    response = client.put(
+        "/v1/agent-bundles/agent-1",
+        json={
+            "expected_version": 1,
+            "worker_operations": [
+                {
+                    "op": "delete",
+                    "name": "alpha",
+                    "confirmed_references": ["agents/beta/config.yaml#/delegate_to"],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    operation = service.calls[0][1][1]["worker_operations"][0]
+    assert operation.confirmed_references == ("agents/beta/config.yaml#/delegate_to",)
 
 
 def test_errors_are_structured_and_do_not_expose_bundle_source() -> None:
     service = FakeService()
     client = _client(service)
     service.failure = BundleValidationFailure(
-        (BundleIssue("invalid_yaml", "invalid YAML", "config.yaml", 3, 2),)
+        (
+            BundleIssue(
+                "invalid_yaml",
+                "invalid YAML",
+                file="config.yaml",
+                path=None,
+                line=3,
+                column=2,
+            ),
+        )
     )
 
     response = client.put(
@@ -221,17 +259,53 @@ def test_errors_are_structured_and_do_not_expose_bundle_source() -> None:
     assert response.status_code == 400
     assert response.json()["detail"] == {
         "code": "invalid_bundle",
-        "issues": [
+        "diagnostics": [
             {
+                "severity": "error",
                 "code": "invalid_yaml",
                 "message": "invalid YAML",
-                "path": "config.yaml",
+                "file": "config.yaml",
+                "path": None,
                 "line": 3,
                 "column": 2,
+                "agent": None,
+                "worker": None,
+                "summary_key": None,
             }
         ],
     }
     assert "secret bundle source" not in response.text
+
+
+def test_oversized_agent_config_error_response_is_structured_and_bounded() -> None:
+    service = FakeService()
+    client = _client(service)
+    service.failure = BundleValidationFailure(
+        (
+            BundleIssue(
+                "agent_config_too_large",
+                "agent configuration exceeds the safe response limit",
+                file="agents/alpha/config.yaml",
+            ),
+        )
+    )
+
+    response = client.get("/v1/agent-bundles/agent-1")
+
+    assert response.status_code == 400
+    assert len(response.content) < 1024
+    assert response.json()["detail"]["diagnostics"][0] == {
+        "severity": "error",
+        "code": "agent_config_too_large",
+        "file": "agents/alpha/config.yaml",
+        "path": None,
+        "line": None,
+        "column": None,
+        "agent": None,
+        "worker": None,
+        "message": "agent configuration exceeds the safe response limit",
+        "summary_key": None,
+    }
 
 
 def test_conflict_not_found_and_readonly_errors_have_stable_status_codes() -> None:

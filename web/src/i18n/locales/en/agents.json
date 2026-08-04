@@ -162,7 +162,8 @@
       "addWorker": "Add worker",
       "moveUp": "Move up",
       "moveDown": "Move down",
-      "removeWorker": "Remove worker"
+      "removeWorker": "Remove worker",
+      "reloadServerVersion": "Reload server version"
     },
     "status": {
       "valid": "Valid",
@@ -199,7 +200,12 @@
       "async": "Async dispatch",
       "timers": "Timers",
       "spawn": "Spawn child sessions",
-      "jsonHelp": "JSON value. Unknown YAML fields remain untouched."
+      "default": "Default",
+      "enabled": "Enabled",
+      "disabled": "Disabled",
+      "advanced": "Advanced fields",
+      "jsonHelp": "JSON value. Unknown YAML fields remain untouched.",
+      "secretConfigured": "Configured — enter a new value to replace it"
     },
     "editor": {
       "newTitle": "New Multi-Agent",
@@ -211,14 +217,20 @@
       "workers": "Workers",
       "configuration": "Configuration",
       "yamlHelp": "Raw files are saved verbatim. Switching views or languages keeps this draft.",
+      "visualDirtyYamlBlocked": "Save or reload the Visual changes before editing Advanced YAML.",
+      "orderVersionConflict": "The server bundle changed to version {{version}}. Reload to discard the pending worker order and use the server version.",
+      "invalidYaml": "Invalid YAML at line {{line}}, column {{column}}.",
       "readonly": "This built-in bundle is read only. Use this template to create an editable copy.",
       "saved": "Bundle saved.",
-      "createHelp": "Create a server-generated multi-agent bundle, then configure its coordinator and workers."
+      "createHelp": "Create a server-generated multi-agent bundle, then configure its coordinator and workers.",
+      "fileNotInline": "This file is too large to edit inline ({{size}} bytes)."
     },
     "workers": {
       "empty": "No workers yet.",
       "newName": "worker-{{number}}",
-      "saveBeforeEditing": "Save once to create this worker file, then edit its configuration."
+      "saveBeforeEditing": "Save once to create this worker file, then edit its configuration.",
+      "referenceConfirmation": "{{name}} is referenced at the locations below. Confirm deletion to remove the worker while leaving these references unchanged.",
+      "confirmDelete": "Confirm worker deletion"
     },
     "diagnostics": {
       "title": "Bundle diagnostics",

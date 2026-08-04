@@ -8,6 +8,7 @@ import {
   deleteAgentBundle,
   exportAgentBundle,
   getAgentBundle,
+  getAgentBundleOptions,
   getAgentFormSchema,
   importAgentBundle,
   listMultiAgents,
@@ -27,21 +28,27 @@ const summary = {
   name: "polly",
   description: "Coordinator with two workers",
   harness: "claude-sdk",
-  model_source: "bundle",
   worker_count: 2,
   skill_count: 1,
   mcp_count: 0,
   version: 3,
+  digest: "sha256:abc",
+  readonly: true,
   updated_at: 1_786_000_000,
   builtin: true,
   editable: false,
   validation_status: "valid" as const,
-  feishu_status: "disconnected" as const,
-  recent_run: null,
 };
 
 const draft: AgentBundleDraft = {
-  agent: { ...summary, id: "ag_custom", name: "my-polly", builtin: false, editable: true },
+  card: {
+    ...summary,
+    id: "ag_custom",
+    name: "my-polly",
+    readonly: false,
+    builtin: false,
+    editable: true,
+  },
   version: 3,
   digest: "sha256:abc",
   files: [
@@ -144,8 +151,23 @@ describe("multi-agent bundle API", () => {
     await expect(listMultiAgents()).resolves.toEqual([summary]);
     await expect(getAgentBundle("ag custom")).resolves.toEqual(draft);
 
-    expect(fetchMock).toHaveBeenNthCalledWith(1, "/v1/agents");
-    expect(fetchMock).toHaveBeenNthCalledWith(2, "/v1/agents/ag%20custom/bundle");
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/v1/agent-bundles");
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/v1/agent-bundles/ag%20custom");
+  });
+
+  it("loads provider-owned Bundle editor options", async () => {
+    const options = {
+      harnesses: [{ id: "community-harness", label: "Community Harness" }],
+      models: [],
+      tools: [],
+      skills: [],
+      mcp: [],
+      environment: [],
+    };
+    fetchMock.mockResolvedValueOnce(jsonResponse(options));
+
+    await expect(getAgentBundleOptions()).resolves.toEqual(options);
+    expect(fetchMock).toHaveBeenCalledWith("/v1/agent-bundles/options");
   });
 
   it("loads every page of the agent catalog", async () => {
@@ -159,8 +181,8 @@ describe("multi-agent bundle API", () => {
       );
 
     await expect(listMultiAgents()).resolves.toEqual([summary, second]);
-    expect(fetchMock).toHaveBeenNthCalledWith(1, "/v1/agents");
-    expect(fetchMock).toHaveBeenNthCalledWith(2, "/v1/agents?after=ag_polly");
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/v1/agent-bundles");
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/v1/agent-bundles?after=ag_polly");
   });
 
   it("reuses the same abort signal for every catalog page", async () => {
@@ -174,8 +196,10 @@ describe("multi-agent bundle API", () => {
 
     await expect(listMultiAgents(controller.signal)).resolves.toEqual([summary, second]);
 
-    expect(fetchMock).toHaveBeenNthCalledWith(1, "/v1/agents", { signal: controller.signal });
-    expect(fetchMock).toHaveBeenNthCalledWith(2, "/v1/agents?after=cursor-1", {
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/v1/agent-bundles", {
+      signal: controller.signal,
+    });
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/v1/agent-bundles?after=cursor-1", {
       signal: controller.signal,
     });
   });
@@ -283,7 +307,7 @@ describe("multi-agent bundle API", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(schema));
 
     await expect(getAgentFormSchema()).resolves.toEqual(schema);
-    expect(fetchMock).toHaveBeenCalledWith("/v1/agent-spec/schema");
+    expect(fetchMock).toHaveBeenCalledWith("/v1/agent-bundles/schema");
   });
 
   it("passes abort signals to bundle and schema GET requests", async () => {
@@ -296,10 +320,10 @@ describe("multi-agent bundle API", () => {
     await expect(getAgentBundle("ag custom", controller.signal)).resolves.toEqual(draft);
     await expect(getAgentFormSchema(controller.signal)).resolves.toEqual(schema);
 
-    expect(fetchMock).toHaveBeenNthCalledWith(1, "/v1/agents/ag%20custom/bundle", {
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/v1/agent-bundles/ag%20custom", {
       signal: controller.signal,
     });
-    expect(fetchMock).toHaveBeenNthCalledWith(2, "/v1/agent-spec/schema", {
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/v1/agent-bundles/schema", {
       signal: controller.signal,
     });
   });
@@ -328,11 +352,10 @@ describe("multi-agent bundle API", () => {
     const result = await validateAgentBundleArchive(bundle);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/v1/agents/validate");
+    expect(url).toBe("/v1/agent-bundles/validate");
     expect(init.method).toBe("POST");
-    expect(init.headers).toBeUndefined();
-    expect(init.body).toBeInstanceOf(FormData);
-    expect((init.body as FormData).get("bundle")).toBeInstanceOf(Blob);
+    expect(init.headers).toEqual({ "Content-Type": "application/json" });
+    expect(JSON.parse(init.body as string)).toEqual({ bundle_base64: "Z3ppcA==" });
     expect(result.diagnostics[0]).toMatchObject({
       code: "invalid_yaml",
       file: "config.yaml",
@@ -348,16 +371,16 @@ describe("multi-agent bundle API", () => {
     await createAgentBundle({
       name: "my-polly",
       description: "A new team",
-      shape: "multi-agent",
+      config: { spec_version: 1, name: "my-polly" },
     });
 
-    expect(fetchMock).toHaveBeenCalledWith("/v1/agents", {
+    expect(fetchMock).toHaveBeenCalledWith("/v1/agent-bundles", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: "my-polly",
         description: "A new team",
-        shape: "multi-agent",
+        config: { spec_version: 1, name: "my-polly" },
       }),
     });
   });
@@ -369,7 +392,7 @@ describe("multi-agent bundle API", () => {
     await importAgentBundle(bundle);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/v1/agents/import");
+    expect(url).toBe("/v1/agent-bundles/import");
     expect(init.method).toBe("POST");
     expect(init.headers).toBeUndefined();
     expect((init.body as FormData).get("bundle")).toBeInstanceOf(Blob);
@@ -393,7 +416,7 @@ describe("multi-agent bundle API", () => {
 
     await updateAgentBundle("ag/custom", request);
 
-    expect(fetchMock).toHaveBeenCalledWith("/v1/agents/ag%2Fcustom", {
+    expect(fetchMock).toHaveBeenCalledWith("/v1/agent-bundles/ag%2Fcustom", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request),
@@ -403,20 +426,23 @@ describe("multi-agent bundle API", () => {
   it("retains the server version on an optimistic update conflict", async () => {
     const text = vi.fn().mockResolvedValue(
       JSON.stringify({
-        error: { code: "conflict", message: "Agent bundle changed" },
-        expected_version: 3,
-        server_version: 5,
-        diagnostics: [
-          {
-            severity: "error",
-            code: "version_conflict",
-            file: null,
-            path: null,
-            line: null,
-            column: null,
-            message: "Reload before saving",
-          },
-        ],
+        detail: {
+          code: "version_conflict",
+          message: "Agent bundle changed",
+          expected: 3,
+          actual: 5,
+          diagnostics: [
+            {
+              severity: "error",
+              code: "version_conflict",
+              file: null,
+              path: null,
+              line: null,
+              column: null,
+              message: "Reload before saving",
+            },
+          ],
+        },
       }),
     );
     fetchMock.mockResolvedValueOnce({
@@ -434,6 +460,7 @@ describe("multi-agent bundle API", () => {
     expect(error).toBeInstanceOf(AgentVersionConflict);
     expect(error).toMatchObject({
       status: 409,
+      code: "version_conflict",
       expected_version: 3,
       server_version: 5,
       message: "Agent bundle changed",
@@ -456,7 +483,7 @@ describe("multi-agent bundle API", () => {
 
     await cloneAgentBundle("ag_polly", { name: "my-polly", description: "Custom clone" });
 
-    expect(fetchMock).toHaveBeenCalledWith("/v1/agents/ag_polly/clone", {
+    expect(fetchMock).toHaveBeenCalledWith("/v1/agent-bundles/ag_polly/clone", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "my-polly", description: "Custom clone" }),
@@ -468,7 +495,7 @@ describe("multi-agent bundle API", () => {
 
     await deleteAgentBundle("ag custom");
 
-    expect(fetchMock).toHaveBeenCalledWith("/v1/agents/ag%20custom", { method: "DELETE" });
+    expect(fetchMock).toHaveBeenCalledWith("/v1/agent-bundles/ag%20custom", { method: "DELETE" });
   });
 
   it("exports the exact binary gzip response", async () => {
@@ -479,7 +506,7 @@ describe("multi-agent bundle API", () => {
 
     const result = await exportAgentBundle("ag_polly");
 
-    expect(fetchMock).toHaveBeenCalledWith("/v1/agents/ag_polly/export");
+    expect(fetchMock).toHaveBeenCalledWith("/v1/agent-bundles/ag_polly/export");
     expect(result.type).toBe("application/gzip");
     expect(new Uint8Array(await result.arrayBuffer())).toEqual(bytes);
   });

@@ -31,16 +31,21 @@ vi.mock("@/hooks/useMultiAgents", () => ({
   useMultiAgents: () => ({ data: [], isLoading: false, isError: false }),
   useMultiAgent: (_id: string | null) => ({
     data: {
-      agent: {
+      card: {
         id: "ag_custom",
         name: "Route bundle",
         description: null,
+        harness: null,
         worker_count: 0,
+        skill_count: 0,
+        mcp_count: 0,
         version: 1,
+        digest: "sha256:route",
+        updated_at: 1_786_000_000,
+        readonly: false,
         builtin: false,
         editable: true,
         validation_status: "valid",
-        feishu_status: "disconnected",
       },
       version: 1,
       digest: "sha256:route",
@@ -58,6 +63,7 @@ vi.mock("@/hooks/useMultiAgents", () => ({
     isError: false,
   }),
   useAgentFormSchema: () => ({ data: { schema_version: "1", fields: [] } }),
+  useAgentBundleOptions: () => ({ data: { harnesses: [] } }),
   useCreateMultiAgent: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false }),
   useUpdateMultiAgent: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCloneMultiAgent: () => ({ mutateAsync: vi.fn(), isPending: false }),
