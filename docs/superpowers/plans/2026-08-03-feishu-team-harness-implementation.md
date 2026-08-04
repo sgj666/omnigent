@@ -1,5 +1,11 @@
 # Feishu Team Harness Implementation Plan
 
+> **Superseded on 2026-08-04:** This plan describes the retired parallel
+> `Team`/`AgentProfile` configuration model and second scheduler. Do not execute
+> it for new work. Use the four `2026-08-04-multi-agent-*` plans, which make the
+> Agent Bundle the only configuration source and project real Session execution
+> into Run/Task/Attempt records.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (\`- [ ]\`) syntax for tracking.
 
 **Goal:** 在 Omnigent 本地 fork 中落地一个以固定 Coordinator 为入口、支持多仓 worktree、自动编排、Durable Ledger、Web Team Builder 和飞书机器人工作台的团队多 Agent Harness。
@@ -860,4 +866,3 @@ git merge --no-ff feat/feishu-team-harness -m "merge: add feishu team harness"
 ~~~
 
 - [ ] 合并前后都不得暂存或覆盖以下用户已有文件：\`codex_native_app_server.py\`、\`inner/codex_executor.py\`、\`runtime/workflow.py\` 以及对应测试文件。
-
