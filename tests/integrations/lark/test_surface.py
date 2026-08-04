@@ -5,17 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
 from omnigent.integrations.lark.cards import WORKSPACE_ACTIONS
-from omnigent.integrations.lark.credentials import FeishuCredentialCipher
-from omnigent.integrations.lark.device_flow import FeishuRegistration
 from omnigent.integrations.lark.surface import (
     BotSurfaceProvisioner,
     SurfaceResult,
 )
-from omnigent.server.routes.feishu import create_feishu_router
 
 
 class FakeLark:
@@ -142,8 +136,7 @@ def test_surface_failure_is_persisted_and_audited() -> None:
 
     assert result.status == "failed"
     assert result.error == (
-        "application menu unavailable; "
-        "persistent card update failed: card permission denied"
+        "application menu unavailable; persistent card update failed: card permission denied"
     )
     assert store.records["installation-1"]["provision_status"] == "failed"
     assert [event["event"] for event in ledger.events] == ["surface_failed"]
@@ -168,68 +161,10 @@ def test_persistent_card_has_fixed_actions_and_only_signed_server_fields() -> No
         (text["content"], value["action_id"])
         for text, value in zip(button_texts, button_values, strict=True)
     ]
-    assert labels_and_actions == [
-        (label, action) for action, label in WORKSPACE_ACTIONS
-    ]
+    assert labels_and_actions == [(label, action) for action, label in WORKSPACE_ACTIONS]
     allowed = {"action_id", "run_id", "task_id", "attempt_id", "nonce", "signature"}
     assert all(set(value) == allowed for value in button_values)
     assert all(value["signature"] for value in button_values)
-
-
-def test_reinitialize_and_status_routes_share_the_same_provisioner() -> None:
-    lark = FakeLark(menu_supported=True)
-    provisioner = _provisioner(lark, MemorySurfaceStore(), MemoryLedger())
-    app = FastAPI()
-    app.include_router(
-        create_feishu_router(
-            object(),  # type: ignore[arg-type]
-            object(),  # type: ignore[arg-type]
-            lambda credential, *, bot: None,
-            surface_provisioner=provisioner,
-        )
-    )
-    client = TestClient(app)
-
-    missing = client.get("/feishu/installations/missing/surface/status")
-    reinitialized = client.post(
-        "/feishu/installations/installation-1/surface/reinitialize"
-    )
-    status = client.get("/feishu/installations/installation-1/surface/status")
-
-    assert missing.status_code == 404
-    assert reinitialized.status_code == 200
-    assert reinitialized.json()["status"] == "ready"
-    assert status.json() == reinitialized.json()
-
-
-def test_completed_scan_automatically_ensures_the_saved_installation_surface() -> None:
-    class CompletedFlow:
-        async def poll(self, session: str) -> FeishuRegistration:
-            assert session == "installation-1"
-            return FeishuRegistration(
-                app_id="cli_1",
-                app_secret="secret",
-                installer_open_id="ou_installer",
-                bot={"open_id": "ou_bot"},
-            )
-
-    lark = FakeLark(menu_supported=True)
-    provisioner = _provisioner(lark, MemorySurfaceStore(), MemoryLedger())
-    app = FastAPI()
-    app.include_router(
-        create_feishu_router(
-            CompletedFlow(),  # type: ignore[arg-type]
-            FeishuCredentialCipher(b"test-key"),
-            lambda credential, *, bot: {"id": credential.installation_id},
-            surface_provisioner=provisioner,
-        )
-    )
-
-    response = TestClient(app).get("/feishu/installations/installation-1")
-
-    assert response.status_code == 200
-    assert response.json()["surface"]["status"] == "ready"
-    assert lark.created_surface_count == 1
 
 
 def test_surface_result_serializes_canonical_persistence_fields() -> None:

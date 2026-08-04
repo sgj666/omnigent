@@ -29,6 +29,7 @@ from omnigent._platform import resolve_repo_symlink
 from omnigent.agent_bundles.service import AgentBundleService
 from omnigent.db.db_models import InvalidUuidError
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.evaluation.service import RunEvaluationService
 from omnigent.harness_plugins import (
     NativeHarnessProvider,
     native_provider_for_key,
@@ -68,11 +69,12 @@ from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
 from omnigent.server.routes.dictation import create_dictation_router
-from omnigent.server.routes.feishu import create_feishu_router
+from omnigent.server.routes.feishu_proxy import create_feishu_proxy_router
 from omnigent.server.routes.harnesses import create_harnesses_router
 from omnigent.server.routes.imports import create_imports_router
 from omnigent.server.routes.policy_registry import create_policy_registry_router
 from omnigent.server.routes.projects import create_projects_router
+from omnigent.server.routes.run_evaluations import create_run_evaluations_router
 from omnigent.server.routes.runner_tunnel import create_runner_tunnel_router
 from omnigent.server.routes.runs import create_runs_router
 from omnigent.server.routes.scheduled_tasks import create_scheduled_tasks_router
@@ -105,6 +107,7 @@ from omnigent.stores import (
 )
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import SessionConnectivity, runner_seen_is_fresh
+from omnigent.stores.evaluation_store.sqlalchemy_store import SqlAlchemyEvaluationStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
@@ -576,7 +579,6 @@ def _build_native_bundle(provider: NativeHarnessProvider) -> bytes:
     :param provider: The native harness provider row.
     :returns: Gzipped tarball bytes suitable for the artifact store.
     """
-    import inspect
     import tempfile
 
     from omnigent.native_dispatch import resolve_hook
@@ -773,7 +775,6 @@ def create_app(
     sharing_mode: SharingMode | Callable[[], SharingMode] | None = None,
     public_sharing: bool | Callable[[], bool] | None = None,
     server_config: dict[str, Any] | None = None,
-    lark_adapter: Any | None = None,
 ) -> FastAPI:
     """
     Build and return the FastAPI application with all routes mounted.
@@ -960,6 +961,16 @@ def create_app(
         agent_store=agent_store,
         submit_session_event=_submit_run_session_event,
     )
+    evaluation_store = SqlAlchemyEvaluationStore(agent_store.storage_location)
+    evaluation_service = RunEvaluationService(
+        run_store,
+        evaluation_store=evaluation_store,
+    )
+
+    def _owns_run(run_id: str, actor_id: str) -> bool:
+        run = run_store.get_run(run_id)
+        return run is not None and run.actor_id == actor_id
+
     from omnigent.server.routes._host_worktree import configure_attempt_worktree_lease_store
 
     configure_attempt_worktree_lease_store(run_store)
@@ -1172,20 +1183,8 @@ def create_app(
             # sweep and no periodic reconcile.
 
         try:
-            if lark_adapter is not None:
-                startup = getattr(lark_adapter, "start", None)
-                if startup is not None:
-                    started = startup()
-                    if inspect.isawaitable(started):
-                        await started
             yield
         finally:
-            if lark_adapter is not None:
-                shutdown = getattr(lark_adapter, "close", None)
-                if shutdown is not None:
-                    closed = shutdown()
-                    if inspect.isawaitable(closed):
-                        await closed
             # Run completion is event-driven (the _publish_status hook) plus a
             # lazy-on-read stale backstop — there is no run-reconciler task to
             # cancel. Only the per-job scheduler holds timers that need stopping.
@@ -1224,6 +1223,8 @@ def create_app(
     app.state.run_store = run_store
     app.state.run_service = run_service
     app.state.run_projection = run_projection
+    app.state.evaluation_store = evaluation_store
+    app.state.evaluation_service = evaluation_service
     from omnigent.runtime import telemetry
 
     telemetry.instrument_fastapi_app(app)
@@ -1237,10 +1238,6 @@ def create_app(
     app.state.host_registry = host_registry
     app.state.host_store = host_store
     app.state.sandbox_config = sandbox_config
-    # Optional Feishu/Lark transport.  The adapter owns event validation and
-    # Coordinator routing; keeping it on app.state avoids coupling the core
-    # server factory to a particular provider client.
-    app.state.lark_adapter = lark_adapter
     # Admin roster: the config ``admins:`` list (canonical) union'd with the
     # runtime-editable ``<data_dir>/admins`` file. Built once here so BOTH the
     # admin-gated auth routes AND ``/v1/me``'s is_admin computation consult the
@@ -2048,38 +2045,24 @@ def create_app(
         tags=["runs"],
     )
     app.include_router(
+        create_run_evaluations_router(
+            evaluation_service,
+            auth_provider=auth_provider,
+            owner_check=_owns_run,
+        ),
+        prefix="/v1",
+        tags=["run_evaluations"],
+    )
+    app.include_router(
         create_teams_router(team_store, auth_provider=auth_provider),
         prefix="/v1",
         tags=["teams"],
     )
-    # Feishu setup and inbound callbacks share the application lifecycle with
-    # the optional Lark adapter.  Integrations can inject their own device
-    # flow, cipher, and persistence seam as attributes; API-only deployments
-    # still expose the routes and fail closed at request time when no adapter
-    # is configured.
-    from omnigent.integrations.lark.credentials import FeishuCredentialCipher
-    from omnigent.integrations.lark.device_flow import FeishuPersonalAgentDeviceFlow
-
-    _feishu_device_flow = getattr(lark_adapter, "device_flow", None)
-    if _feishu_device_flow is None:
-        _feishu_device_flow = FeishuPersonalAgentDeviceFlow()
-    _feishu_cipher = getattr(lark_adapter, "credential_cipher", None)
-    if _feishu_cipher is None:
-        _feishu_key = os.environ.get("OMNIGENT_FEISHU_CREDENTIAL_KEY") or "omnigent-feishu"
-        _feishu_cipher = FeishuCredentialCipher(_feishu_key)
-
-    def _save_feishu_installation(credential: Any, *, bot: Any) -> Any:
-        saver = getattr(lark_adapter, "save_installation", None)
-        if callable(saver):
-            return saver(credential, bot=bot)
-        return None
-
     app.include_router(
-        create_feishu_router(
-            _feishu_device_flow,
-            _feishu_cipher,
-            _save_feishu_installation,
-            lark_adapter=lark_adapter,
+        create_feishu_proxy_router(
+            integration_base_url=os.environ.get("OMNIGENT_FEISHU_URL"),
+            integration_bearer=os.environ.get("OMNIGENT_FEISHU_SERVICE_TOKEN"),
+            auth_provider=auth_provider,
         ),
         prefix="/v1",
         tags=["feishu"],

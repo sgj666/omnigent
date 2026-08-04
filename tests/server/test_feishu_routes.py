@@ -1,127 +1,36 @@
-"""Route contracts for Feishu PersonalAgent installation."""
+"""Cutover contracts for the retired embedded Feishu router."""
 
 from __future__ import annotations
-
-from collections.abc import Mapping
-from typing import Any
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from omnigent.integrations.lark.credentials import (
-    FeishuCredentialCipher,
-    FeishuInstallationCredential,
-)
-from omnigent.integrations.lark.device_flow import (
-    FeishuDeviceFlowError,
-    FeishuDeviceSession,
-    FeishuPending,
-    FeishuRegistration,
-)
 from omnigent.server.routes.feishu import create_feishu_router
 
 
-class FakeFlow:
-    def __init__(
-        self,
-        result: FeishuRegistration | FeishuPending | None = None,
-        error: FeishuDeviceFlowError | None = None,
-    ) -> None:
-        self.result = result
-        self.error = error
-
-    async def begin(self) -> FeishuDeviceSession:
-        if self.error:
-            raise self.error
-        return FeishuDeviceSession("session-1", "https://qr.example/session-1", 3, 180)
-
-    async def poll(self, session: str) -> FeishuRegistration | FeishuPending | None:
-        assert session == "session-1"
-        if self.error:
-            raise self.error
-        return self.result
-
-
-def _client(
-    flow: FakeFlow,
-    saved: list[tuple[FeishuInstallationCredential, Mapping[str, Any]]],
-) -> TestClient:
+def test_legacy_embedded_routes_are_provider_neutral_and_gone() -> None:
     app = FastAPI()
+    app.include_router(create_feishu_router())
+    client = TestClient(app)
 
-    def save(
-        credential: FeishuInstallationCredential, *, bot: Mapping[str, Any]
-    ) -> dict[str, str]:
-        saved.append((credential, bot))
-        return {"tenant_key": "tenant-1"}
-
-    app.include_router(create_feishu_router(flow, FeishuCredentialCipher(b"test-key"), save))  # type: ignore[arg-type]
-    return TestClient(app)
-
-
-def test_begin_returns_qr_url_session_and_poll_timing() -> None:
-    client = _client(FakeFlow(), [])
-
-    response = client.post("/feishu/installations")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "object": "feishu.installation_session",
-        "session": "session-1",
-        "verification_uri_complete": "https://qr.example/session-1",
-        "interval": 3,
-        "expires_in": 180,
-        "status": "pending",
-    }
-
-
-def test_completed_poll_persists_only_ciphertext_and_never_returns_secret() -> None:
-    secret = "never-expose-me"
-    saved: list[tuple[FeishuInstallationCredential, Mapping[str, Any]]] = []
-    registration = FeishuRegistration(
-        app_id="cli_123",
-        app_secret=secret,
-        installer_open_id="ou_installer",
-        bot={"open_id": "ou_bot"},
-    )
-    client = _client(FakeFlow(registration), saved)
-
-    response = client.get("/feishu/installations/session-1")
-
-    assert response.status_code == 200
-    assert secret not in response.text
-    assert response.json()["installer_open_id"] == "ou_installer"
-    credential, bot = saved[0]
-    assert credential.app_secret_ciphertext != secret
-    assert FeishuCredentialCipher(b"test-key").decrypt(credential.app_secret_ciphertext) == secret
-    assert bot == {"open_id": "ou_bot"}
-
-
-def test_pending_poll_returns_the_provider_interval() -> None:
-    client = _client(FakeFlow(FeishuPending(interval=10)), [])
-
-    response = client.get("/feishu/installations/session-1")
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "object": "feishu.installation_session",
-        "session": "session-1",
-        "status": "pending",
-        "interval": 10,
-    }
-
-
-def test_denied_and_network_errors_have_actionable_statuses() -> None:
-    denied = _client(
-        FakeFlow(error=FeishuDeviceFlowError("denied", "Feishu registration was denied")), []
-    )
-    network = _client(
-        FakeFlow(error=FeishuDeviceFlowError("network", "Could not reach Feishu", retryable=True)),
-        [],
+    responses = (
+        client.post("/feishu/installations"),
+        client.get("/feishu/installations/session-1"),
+        client.post("/teams/team-1/feishu/install/begin"),
+        client.get("/teams/team-1/feishu/install/session-1/status"),
+        client.post("/teams/team-1/feishu/webhook"),
+        client.post("/feishu/webhook"),
     )
 
-    denied_response = denied.get("/feishu/installations/session-1")
-    network_response = network.post("/feishu/installations")
+    assert {response.status_code for response in responses} == {410}
+    assert all(
+        response.json()["detail"]["code"] == "embedded_feishu_retired" for response in responses
+    )
 
-    assert denied_response.status_code == 403
-    assert network_response.status_code == 503
-    assert network_response.headers["retry-after"] == "5"
+
+def test_legacy_router_is_not_mounted_by_production_app(app: FastAPI) -> None:
+    paths = {route.path for route in app.routes}
+
+    assert "/v1/feishu/installations" not in paths
+    assert "/v1/feishu/webhook" not in paths
+    assert not any(path.startswith("/v1/teams/") and "/feishu/" in path for path in paths)
