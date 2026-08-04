@@ -10,6 +10,7 @@ import {
   getAgentFormSchema,
   importAgentBundle,
   listMultiAgents,
+  startMultiAgentRun,
   updateAgentBundle,
   validateAgentBundleArchive,
   type AgentBundleDraft,
@@ -79,6 +80,36 @@ afterEach(() => {
 });
 
 describe("multi-agent bundle API", () => {
+  it("starts a provider-neutral run through Core RunService", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          id: "run_1",
+          status: "queued",
+          agent_id: "ag_custom",
+          workspace_id: "ws_1",
+        },
+        201,
+      ),
+    );
+
+    await startMultiAgentRun({
+      agent_id: "ag_custom",
+      workspace_id: "ws_1",
+      host_id: "host_1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/v1/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agent_id: "ag_custom",
+        workspace_id: "ws_1",
+        host_id: "host_1",
+      }),
+    });
+  });
+
   it("keeps catalog summaries separate from full bundle drafts", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ object: "list", data: [summary] }))

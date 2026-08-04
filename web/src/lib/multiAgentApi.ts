@@ -23,12 +23,33 @@ export interface MultiAgentSummary {
   skill_count: number;
   mcp_count: number;
   version: number;
+  digest?: string | null;
   updated_at: number | null;
   builtin: boolean;
   editable: boolean;
   validation_status: BundleValidationStatus;
   feishu_status: BundleFeishuStatus;
   recent_run: MultiAgentRecentRun | null;
+}
+
+export interface BundleFeishuConnection {
+  status: BundleFeishuStatus;
+  detail?: string | null;
+}
+
+export interface StartMultiAgentRunInput {
+  agent_id: string;
+  workspace_id: string;
+  host_id: string;
+}
+
+export interface MultiAgentRun {
+  id: string;
+  status: string;
+  agent_id: string;
+  workspace_id: string;
+  bundle_version?: number | null;
+  bundle_digest?: string | null;
 }
 
 export interface AgentBundleFile {
@@ -362,4 +383,21 @@ export async function exportAgentBundle(agent_id: string): Promise<Blob> {
   const response = await authenticatedFetch(`/v1/agents/${encodeURIComponent(agent_id)}/export`);
   if (!response.ok) throw await errorFromResponse(response);
   return response.blob();
+}
+
+export async function connectAgentBundleFeishu(agent_id: string): Promise<BundleFeishuConnection> {
+  const response = await authenticatedFetch(
+    `/v1/agents/${encodeURIComponent(agent_id)}/feishu/connect`,
+    { method: "POST" },
+  );
+  return readJson<BundleFeishuConnection>(response);
+}
+
+export async function startMultiAgentRun(input: StartMultiAgentRunInput): Promise<MultiAgentRun> {
+  const response = await authenticatedFetch("/v1/runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return readJson<MultiAgentRun>(response);
 }

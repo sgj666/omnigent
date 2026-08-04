@@ -19,12 +19,19 @@ vi.mock("@/hooks/useTeamRuns", () => ({
       workspace_name: "luxury-resale-settlement",
       source: "feishu",
       status: "failed",
+      bundle_version: 7,
+      bundle_digest: "sha256:abcdef0123456789",
+      root_session: { id: "session-root", title: "Coordinator", status: "failed" },
+      child_sessions: [
+        { id: "session-child", title: "test-worker", status: "failed", duration_ms: 60_000 },
+      ],
       tasks: [{ id: "task-1", title: "Run tests", status: "failed", depends_on: [] }],
       attempts: [
         {
           id: "attempt-1",
           task_id: "task-1",
           agent_profile: "test-worker",
+          worker_title: "Test worker",
           worktree_path: "/tmp/worktree",
           stage: "test",
           started_at: "2026-08-03T10:00:00Z",
@@ -33,6 +40,7 @@ vi.mock("@/hooks/useTeamRuns", () => ({
           stdout: "running tests",
           stderr: "command failed",
           failure_code: "TEST_COMMAND_EXIT_1",
+          failure_reason: "The test command exited with status 1",
           retry_suggestion: "retry after fixing the test",
         },
       ],
@@ -65,6 +73,12 @@ describe("RunInspectorPage", () => {
     expect(screen.getByText("failure_code: TEST_COMMAND_EXIT_1")).toBeVisible();
     expect(screen.getByText("Coordinator Parent Inbox")).toBeVisible();
     expect(screen.getByText("running tests")).toBeVisible();
+    expect(screen.getByText("Bundle version 7")).toBeVisible();
+    expect(screen.getByText("abcdef012345")).toBeVisible();
+    expect(screen.getByText("Root & child sessions")).toBeVisible();
+    expect(screen.getByText("session-root")).toBeVisible();
+    expect(screen.getByText("Test worker")).toBeVisible();
+    expect(screen.getByText("The test command exited with status 1")).toBeVisible();
     expect(screen.getByRole("link", { name: /multi-agent/i })).toHaveAttribute(
       "href",
       "/multi-agents",

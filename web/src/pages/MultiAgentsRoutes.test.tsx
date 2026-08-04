@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -26,6 +27,45 @@ vi.mock("@/pages/MultiAgentDetailPage", async () => {
   return vi.importActual<typeof MultiAgentDetailPageModule>("@/pages/MultiAgentDetailPage");
 });
 
+vi.mock("@/hooks/useMultiAgents", () => ({
+  useMultiAgents: () => ({ data: [], isLoading: false, isError: false }),
+  useMultiAgent: (_id: string | null) => ({
+    data: {
+      agent: {
+        id: "ag_custom",
+        name: "Route bundle",
+        description: null,
+        worker_count: 0,
+        version: 1,
+        builtin: false,
+        editable: true,
+        validation_status: "valid",
+        feishu_status: "disconnected",
+      },
+      version: 1,
+      digest: "sha256:route",
+      files: [],
+      coordinator: {
+        path: "config.yaml",
+        content: "name: Route bundle\n",
+        data: { name: "Route bundle" },
+      },
+      workers: [],
+      diagnostics: [],
+      schema_version: "1",
+    },
+    isLoading: false,
+    isError: false,
+  }),
+  useAgentFormSchema: () => ({ data: { schema_version: "1", fields: [] } }),
+  useCreateMultiAgent: () => ({ mutateAsync: vi.fn(), isPending: false, isError: false }),
+  useUpdateMultiAgent: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCloneMultiAgent: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteMultiAgent: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useImportMultiAgent: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useConnectMultiAgentFeishu: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 vi.mock("@/lib/CapabilitiesContext", () => ({
   useServerInfo: () => ({ accounts_enabled: false, needs_setup: false }),
 }));
@@ -48,9 +88,17 @@ vi.mock("@/pages/TeamDetailPage", () => ({
 function renderRoute(path: string, basename?: string) {
   const app = <App basename={basename} />;
   return render(
-    <MemoryRouter initialEntries={[path]} future={ROUTER_FUTURE_FLAGS}>
-      {basename ? <RoutingProvider value={basenamedRouting(basename)}>{app}</RoutingProvider> : app}
-    </MemoryRouter>,
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <MemoryRouter initialEntries={[path]} future={ROUTER_FUTURE_FLAGS}>
+        {basename ? (
+          <RoutingProvider value={basenamedRouting(basename)}>{app}</RoutingProvider>
+        ) : (
+          app
+        )}
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -62,7 +110,7 @@ describe("Multi-Agent routes", () => {
     const catalog = renderRoute("/multi-agents");
 
     expect(await screen.findByRole("heading", { name: "Multi-Agent" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "New Multi-Agent" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Create" })).toHaveAttribute(
       "href",
       "/multi-agents/new",
     );
@@ -82,8 +130,8 @@ describe("Multi-Agent routes", () => {
 
     const detail = renderRoute("/multi-agents/ag_custom");
 
-    expect(await screen.findByRole("heading", { name: "Multi-Agent" })).toBeVisible();
-    expect(screen.getByText("ag_custom")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Route bundle" })).toBeVisible();
+    expect(screen.getByText("v1 · sha256:route")).toBeVisible();
     expect(screen.getByRole("link", { name: "Back to Multi-Agent" })).toHaveAttribute(
       "href",
       "/multi-agents",
@@ -94,7 +142,7 @@ describe("Multi-Agent routes", () => {
     renderRoute("/ml/omnigent-embed/multi-agents", "/ml/omnigent-embed");
 
     expect(await screen.findByRole("heading", { name: "Multi-Agent" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "New Multi-Agent" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Create" })).toHaveAttribute(
       "href",
       "/ml/omnigent-embed/multi-agents/new",
     );
