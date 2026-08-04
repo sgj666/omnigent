@@ -12,6 +12,12 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { Conversation } from "@/hooks/useConversations";
+import { basenamedRouting, RoutingProvider } from "@/lib/routing";
+
+const ROUTER_FUTURE_FLAGS = {
+  v7_startTransition: true,
+  v7_relativeSplatPath: true,
+} as const;
 
 // Project mocks are declared via vi.hoisted so they exist before the hoisted
 // vi.mock factory runs. projectsMock is mutated per-test to drive project
@@ -209,13 +215,23 @@ function mockConversations(convs: Conversation[]) {
   useConvMock.mockImplementation(() => result(convs));
 }
 
-function renderSidebar(open = true, initialEntry = "/", onOpenSearch?: () => void) {
+function renderSidebar(
+  open = true,
+  initialEntry = "/",
+  onOpenSearch?: () => void,
+  basename?: string,
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const sidebar = <Sidebar open={open} onClose={vi.fn()} onOpenSearch={onOpenSearch} />;
   return render(
     <QueryClientProvider client={qc}>
       <TooltipProvider>
-        <MemoryRouter initialEntries={[initialEntry]}>
-          <Sidebar open={open} onClose={vi.fn()} onOpenSearch={onOpenSearch} />
+        <MemoryRouter initialEntries={[initialEntry]} future={ROUTER_FUTURE_FLAGS}>
+          {basename ? (
+            <RoutingProvider value={basenamedRouting(basename)}>{sidebar}</RoutingProvider>
+          ) : (
+            sidebar
+          )}
         </MemoryRouter>
       </TooltipProvider>
     </QueryClientProvider>,
@@ -321,6 +337,8 @@ describe("Sidebar session list", () => {
 
   it("swaps the card content to the settings section nav on /settings", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
+    const root = renderSidebar(true, "/");
+    root.unmount();
     renderSidebar(true, "/settings");
 
     // The same card now shows the settings nav (Back to app + sections),
@@ -423,24 +441,81 @@ describe("Sidebar session list", () => {
     );
   });
 
-  it("renders Teams in the primary navigation after Inbox and before Projects", () => {
+  it("renders Multi-Agent in the primary navigation after Inbox and before Projects", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
-    renderSidebar(true, "/teams");
+    renderSidebar(true, "/multi-agents");
 
     const primaryNav = screen.getByTestId("sidebar-primary-nav");
     const inbox = within(primaryNav).getByTestId("inbox-button");
-    const teams = within(primaryNav).getByTestId("teams-nav");
+    const multiAgents = within(primaryNav).getByTestId("multi-agents-nav");
     const projects = screen.getByText("Projects");
 
-    expect(teams).toHaveAttribute("href", "/teams");
-    expect(teams).toHaveTextContent("Teams");
-    expect(teams).toHaveClass("bg-[var(--sidebar-active)]");
-    expect(inbox.compareDocumentPosition(teams) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    expect(multiAgents).toHaveAttribute("href", "/multi-agents");
+    expect(multiAgents).toHaveTextContent("Multi-Agent");
+    expect(multiAgents).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(within(primaryNav).queryByText("Teams")).toBeNull();
+    expect(inbox.compareDocumentPosition(multiAgents) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    expect(teams.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    expect(multiAgents.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
+  });
+
+  it.each(["/multi-agents/new", "/multi-agents/ag_custom", "/runs/run-1"])(
+    "marks Multi-Agent active on %s",
+    (path) => {
+      mockConversations(THREE_TYPE_CONVERSATIONS);
+      renderSidebar(true, path);
+
+      expect(screen.getByTestId("multi-agents-nav")).toHaveClass("bg-[var(--sidebar-active)]");
+    },
+  );
+
+  it("keeps New session active when the app basename is /runs", () => {
+    mockConversations(THREE_TYPE_CONVERSATIONS);
+    renderSidebar(true, "/runs", undefined, "/runs");
+
+    expect(screen.getByTestId("new-chat-button")).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(screen.getByTestId("multi-agents-nav")).not.toHaveClass("bg-[var(--sidebar-active)]");
+  });
+
+  it("keeps New session active when the app basename is /multi-agents", () => {
+    mockConversations(THREE_TYPE_CONVERSATIONS);
+    renderSidebar(true, "/multi-agents", undefined, "/multi-agents");
+
+    expect(screen.getByTestId("new-chat-button")).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(screen.getByTestId("multi-agents-nav")).not.toHaveClass("bg-[var(--sidebar-active)]");
+  });
+
+  it("does not activate Multi-Agent for inbox under a basename ending in /runs", () => {
+    mockConversations(THREE_TYPE_CONVERSATIONS);
+    renderSidebar(true, "/ml/runs/inbox", undefined, "/ml/runs");
+
+    expect(screen.getByTestId("inbox-button")).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(screen.getByTestId("multi-agents-nav")).not.toHaveClass("bg-[var(--sidebar-active)]");
+  });
+
+  it.each(["/multi-agents", "/multi-agents/new", "/multi-agents/ag_custom", "/runs/run-1"])(
+    "marks Multi-Agent active on embedded route %s",
+    (route) => {
+      mockConversations(THREE_TYPE_CONVERSATIONS);
+      renderSidebar(true, `/ml/omnigent-embed${route}`, undefined, "/ml/omnigent-embed");
+
+      expect(screen.getByTestId("multi-agents-nav")).toHaveClass("bg-[var(--sidebar-active)]");
+    },
+  );
+
+  it.each([
+    ["/multi-agents/ag_custom/extra", undefined],
+    ["/runs/run-1/extra", undefined],
+    ["/ml/omnigent-embed/multi-agents/ag_custom/extra", "/ml/omnigent-embed"],
+    ["/ml/omnigent-embed/runs/run-1/extra", "/ml/omnigent-embed"],
+  ])("does not activate Multi-Agent for unregistered route %s", (path, basename) => {
+    mockConversations(THREE_TYPE_CONVERSATIONS);
+    renderSidebar(true, path, undefined, basename);
+
+    expect(screen.getByTestId("multi-agents-nav")).not.toHaveClass("bg-[var(--sidebar-active)]");
   });
 
   it("marks the 'Automations' nav row active when on /tasks", () => {
@@ -465,7 +540,7 @@ describe("Sidebar session list", () => {
     render(
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-          <MemoryRouter initialEntries={["/"]}>
+          <MemoryRouter initialEntries={["/"]} future={ROUTER_FUTURE_FLAGS}>
             <Sidebar open onClose={onClose} />
           </MemoryRouter>
         </TooltipProvider>
@@ -1095,7 +1170,7 @@ describe("Sidebar project sections", () => {
     render(
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-          <MemoryRouter initialEntries={["/"]}>
+          <MemoryRouter initialEntries={["/"]} future={ROUTER_FUTURE_FLAGS}>
             <Sidebar open onClose={onClose} />
           </MemoryRouter>
         </TooltipProvider>
@@ -1133,7 +1208,7 @@ describe("Sidebar project sections", () => {
     render(
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-          <MemoryRouter initialEntries={["/c/conv_filed"]}>
+          <MemoryRouter initialEntries={["/c/conv_filed"]} future={ROUTER_FUTURE_FLAGS}>
             <Routes>
               <Route path="/c/:conversationId" element={<Sidebar open onClose={vi.fn()} />} />
             </Routes>
@@ -1452,7 +1527,7 @@ describe("Sidebar auto-expand Pinned on pin", () => {
     const tree = () => (
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-          <MemoryRouter initialEntries={["/"]}>
+          <MemoryRouter initialEntries={["/"]} future={ROUTER_FUTURE_FLAGS}>
             <Sidebar open onClose={vi.fn()} />
           </MemoryRouter>
         </TooltipProvider>
@@ -1590,7 +1665,7 @@ describe("Sidebar active-row auto-scroll", () => {
     return render(
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-          <MemoryRouter initialEntries={[initialEntry]}>
+          <MemoryRouter initialEntries={[initialEntry]} future={ROUTER_FUTURE_FLAGS}>
             <Routes>
               <Route path="/" element={<Sidebar open onClose={vi.fn()} />} />
               <Route path="/c/:conversationId" element={<Sidebar open onClose={vi.fn()} />} />

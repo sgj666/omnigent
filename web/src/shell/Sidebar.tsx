@@ -67,7 +67,7 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation, useNavigate, useParams } from "@/lib/routing";
+import { Link, useLocation, useNavigate, useParams, useRebasePath } from "@/lib/routing";
 import omnigentWordmark from "@/assets/omnigent-wordmark.svg";
 import { Button } from "@/components/ui/button";
 import {
@@ -257,30 +257,35 @@ interface SidebarProps {
  * Which top-level nav button is active for the current route.
  * route.
  *
- * The inbox route has no param to key off, and the sidebar is basename-agnostic
- * (in embedded mode the routing seam rebases `to="/inbox"` → `${basename}/inbox`
- * behind its back), so `useMatch` / `NavLink` can't be used without knowing the
- * mount path. Instead compare the active route's last non-empty path segment,
- * which is `inbox` in both standalone and embedded modes. Conversation ids are
- * `conv_…`-prefixed, so a chat route's leaf can never collide with `inbox`.
+ * Resolve the app root through the routing seam, then compare registered route
+ * shapes. This keeps embedded basenames from being mistaken for app routes.
  */
 function useActiveNavItem(): {
   isNewChatPage: boolean;
   isInboxPage: boolean;
   isTasksPage: boolean;
-  isTeamsPage: boolean;
+  isMultiAgentsPage: boolean;
 } {
   const { conversationId: activeConversationId } = useParams<{ conversationId: string }>();
-  const segments = useLocation().pathname.split("/").filter(Boolean);
-  const leaf = segments.at(-1);
-  const isInboxPage = leaf === "inbox";
-  const isTasksPage = leaf === "tasks";
-  const isTeamsPage = segments.includes("teams") || segments.includes("runs");
+  const pathname = useLocation().pathname.replace(/\/+$/, "") || "/";
+  const rebasePath = useRebasePath();
+  const appRoot = rebasePath("/").replace(/\/+$/, "");
+  const multiAgentsPath = `${appRoot}/multi-agents`;
+  const hasOneDescendantSegment = (root: string) => {
+    const descendant = pathname.slice(root.length + 1);
+    return pathname.startsWith(`${root}/`) && descendant !== "" && !descendant.includes("/");
+  };
+  const isInboxPage = pathname === `${appRoot}/inbox`;
+  const isTasksPage = pathname === `${appRoot}/tasks`;
+  const isMultiAgentsPage =
+    pathname === multiAgentsPath ||
+    hasOneDescendantSegment(multiAgentsPath) ||
+    hasOneDescendantSegment(`${appRoot}/runs`);
   // Exclude top-level tools: they also have no `:conversationId`, so they
   // would otherwise light up the "New session" button.
   const isNewChatPage =
-    activeConversationId == null && !isInboxPage && !isTasksPage && !isTeamsPage;
-  return { isNewChatPage, isInboxPage, isTasksPage, isTeamsPage };
+    activeConversationId == null && !isInboxPage && !isTasksPage && !isMultiAgentsPage;
+  return { isNewChatPage, isInboxPage, isTasksPage, isMultiAgentsPage };
 }
 
 /**
@@ -535,7 +540,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
   }
 
   // Which top-level nav button to highlight for the current route.
-  const { isNewChatPage, isInboxPage, isTasksPage, isTeamsPage } = useActiveNavItem();
+  const { isNewChatPage, isInboxPage, isTasksPage, isMultiAgentsPage } = useActiveNavItem();
 
   // On /settings the card keeps its chrome but swaps the conversation list
   // for the settings section nav (see settingsNav.tsx) — entering settings
@@ -846,13 +851,13 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
               className={cn(
                 "sidebar-compact-text h-7 w-full justify-start gap-2 rounded-[var(--radius-otto-button)] border-0 px-2 font-normal",
                 SIDEBAR_HOVER_HIGHLIGHT,
-                isTeamsPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+                isMultiAgentsPage && SIDEBAR_ACTIVE_HIGHLIGHT,
               )}
-              data-testid="teams-nav"
+              data-testid="multi-agents-nav"
             >
-              <Link to="/teams" onClick={onNavClick}>
+              <Link to="/multi-agents" onClick={onNavClick}>
                 <UsersIcon className="size-3.5 text-muted-foreground" />
-                Teams
+                Multi-Agent
               </Link>
             </Button>
           </div>
