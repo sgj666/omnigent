@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 from omnigent.entities import LoadedAgent
@@ -12,13 +15,85 @@ from omnigent.spec import AgentSpec
 from omnigent.spec import load as load_spec
 from omnigent.stores.artifact_store import ArtifactStore
 
+CacheKey = tuple[str, str, bool]
+
+_logger = logging.getLogger(__name__)
+
+
+def _bundle_digest(bundle_location: str) -> str:
+    """Return a stable directory-safe identity for one bundle location."""
+    digest = bundle_location.rsplit("/", 1)[-1]
+    if len(digest) == 64 and all(char in "0123456789abcdefABCDEF" for char in digest):
+        return digest.lower()
+    return hashlib.sha256(bundle_location.encode()).hexdigest()
+
+
+def _cleanup_tree_best_effort(path: Path, *, purpose: str) -> None:
+    """Remove a committed swap's obsolete tree without changing its result."""
+    for attempt in range(2):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == 1:
+                _logger.warning("Failed to clean %s at %s", purpose, path, exc_info=True)
+
+
+def _load_bundle_bytes(
+    bundle_bytes: bytes,
+    dest: Path,
+    *,
+    expand_env: bool,
+) -> AgentSpec:
+    """Write, parse, and best-effort clean one temporary bundle archive."""
+    tmp_fd: int | None = None
+    tmp_path: Path | None = None
+    try:
+        tmp_fd, tmp_name = tempfile.mkstemp(suffix=".tar.gz")
+        tmp_path = Path(tmp_name)
+        os.close(tmp_fd)
+        tmp_fd = None
+        tmp_path.write_bytes(bundle_bytes)
+        return load_spec(
+            tmp_path,
+            dest=dest,
+            expand_env=expand_env,
+            prune_invalid_sub_agents=True,
+        )
+    finally:
+        if tmp_fd is not None:
+            try:
+                os.close(tmp_fd)
+            except OSError:
+                _logger.warning("Failed to close temporary agent bundle", exc_info=True)
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                try:
+                    os.unlink(tmp_path)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    _logger.warning(
+                        "Failed to remove temporary agent bundle at %s",
+                        tmp_path,
+                        exc_info=True,
+                    )
+
 
 class AgentCache:
     """
     Two-tier cache for loaded agents.
 
-    Tier 1 (in-memory): parsed AgentSpec objects keyed by agent_id.
-    Tier 2 (disk): extracted agent directories under cache_dir/<agent_id>/.
+    Tier 1 (in-memory): parsed AgentSpec objects keyed by agent, Digest,
+    and environment-expansion mode.
+    Tier 2 (disk): extracted directories under
+    cache_dir/<agent_id>/<digest>/expand-env-{0|1}/.
     Source of truth: ArtifactStore (tarball bytes).
 
     On cache miss the bundle is downloaded from the ArtifactStore,
@@ -41,12 +116,13 @@ class AgentCache:
         :param artifact_store: The ArtifactStore holding agent
             bundle tarballs (source of truth).
         :param cache_dir: Root directory for the disk cache.
-            Each agent is extracted to
-            ``<cache_dir>/<agent_id>/``.
+            Each bundle variant is extracted below
+            ``<cache_dir>/<agent_id>/<digest>/``.
         """
         self._artifact_store = artifact_store
         self._cache_dir = cache_dir
-        self._specs: dict[str, AgentSpec] = {}
+        self._specs: dict[CacheKey, AgentSpec] = {}
+        self._lock = threading.RLock()
 
     def load(
         self,
@@ -79,25 +155,33 @@ class AgentCache:
         :returns: A LoadedAgent with the parsed spec and the
             on-disk working directory.
         """
-        workdir = self._cache_dir / agent_id
+        with self._lock:
+            digest = _bundle_digest(bundle_location)
+            key = (agent_id, digest, expand_env)
+            workdir = self._workdir(key)
 
-        # Tier 1: in-memory spec. The cached spec was parsed with the
-        # *expand_env* value of whichever caller populated it first.
-        # That is consistent across callers because *expand_env* is
-        # derived from the agent's immutable ``session_id`` provenance,
-        # which never changes for a given ``agent_id``.
-        if agent_id in self._specs:
-            return LoadedAgent(spec=self._specs[agent_id], workdir=workdir)
+            # Tier 1: in-memory spec for this immutable bundle and parse mode.
+            if key in self._specs:
+                return LoadedAgent(spec=self._specs[key], workdir=workdir)
 
-        # Tier 2: disk cache (directory already extracted)
-        if workdir.is_dir():
-            spec = load_spec(workdir, expand_env=expand_env, prune_invalid_sub_agents=True)
-            self._specs[agent_id] = spec
-            return LoadedAgent(spec=spec, workdir=workdir)
+            # Tier 2: disk cache (directory already extracted)
+            if workdir.is_dir():
+                spec = load_spec(
+                    workdir,
+                    expand_env=expand_env,
+                    prune_invalid_sub_agents=True,
+                )
+                self._specs[key] = spec
+                return LoadedAgent(spec=spec, workdir=workdir)
 
-        # Cache miss — download bundle, write to temp file, extract
-        bundle_bytes = self._artifact_store.get(bundle_location)
-        return self._extract_and_cache(agent_id, bundle_bytes, workdir, expand_env=expand_env)
+            # Cache miss — download bundle, write to temp file, extract
+            bundle_bytes = self._artifact_store.get(bundle_location)
+            return self._extract_and_cache(
+                key,
+                bundle_bytes,
+                workdir,
+                expand_env=expand_env,
+            )
 
     def replace(
         self,
@@ -110,10 +194,10 @@ class AgentCache:
         """
         Warm-swap an agent's cached spec and disk directory.
 
-        Extracts the new bundle to a temp directory, swaps the
-        in-memory spec entry, renames into the cache location, and
-        cleans up the old directory. Concurrent readers see either
-        the old spec or the new spec, never an empty cache.
+        Extracts the new bundle to a temp directory, installs it at
+        the cache location with rollback protection, then swaps the
+        in-memory spec entry. Concurrent readers see either the old
+        spec or the new spec, never an empty cache.
 
         :param agent_id: Unique agent identifier,
             e.g. ``"ag_abc123"``.
@@ -130,33 +214,68 @@ class AgentCache:
         :returns: A LoadedAgent with the new spec and working
             directory.
         """
-        workdir = self._cache_dir / agent_id
-        staging_dir = self._cache_dir / f"{agent_id}_staging"
-
-        # Extract new bundle to staging directory
-        tmp_fd, tmp_name = tempfile.mkstemp(suffix=".tar.gz")
-        os.close(tmp_fd)
-        tmp_path = Path(tmp_name)
-        try:
-            tmp_path.write_bytes(bundle_bytes)
-            spec = load_spec(
-                tmp_path,
-                dest=staging_dir,
-                expand_env=expand_env,
-                prune_invalid_sub_agents=True,
+        with self._lock:
+            digest = _bundle_digest(bundle_location)
+            key = (agent_id, digest, expand_env)
+            workdir = self._workdir(key)
+            workdir.parent.mkdir(parents=True, exist_ok=True)
+            staging_dir = Path(
+                tempfile.mkdtemp(prefix=f".{workdir.name}-staging-", dir=workdir.parent)
             )
-        finally:
-            tmp_path.unlink()
 
-        # Swap in-memory entry (atomic dict assignment)
-        self._specs[agent_id] = spec
+            # Everything through staging installation is pre-commit. Preserve
+            # the old directory in a sibling backup and restore it on failure.
+            backup_dir: Path | None = None
+            old_moved = False
+            try:
+                # Parse and validate before touching the installed variant.
+                spec = _load_bundle_bytes(
+                    bundle_bytes,
+                    staging_dir,
+                    expand_env=expand_env,
+                )
+                if workdir.is_dir():
+                    backup_dir = Path(
+                        tempfile.mkdtemp(
+                            prefix=f".{workdir.name}-backup-",
+                            dir=workdir.parent,
+                        )
+                    )
+                    backup_dir.rmdir()
+                    workdir.rename(backup_dir)
+                    old_moved = True
+                staging_dir.rename(workdir)
+            except BaseException as install_error:
+                if old_moved and backup_dir is not None:
+                    if workdir.exists():
+                        shutil.rmtree(workdir, ignore_errors=True)
+                    try:
+                        backup_dir.rename(workdir)
+                    except OSError as rename_error:
+                        try:
+                            os.replace(backup_dir, workdir)
+                        except OSError as restore_error:
+                            self._specs.pop(key, None)
+                            shutil.rmtree(staging_dir, ignore_errors=True)
+                            raise RuntimeError(
+                                "Failed to install cache variant "
+                                f"{workdir} ({install_error}) and restore its "
+                                f"previous directory ({rename_error}; {restore_error}); "
+                                f"recovery data remains at {backup_dir}"
+                            ) from restore_error
+                elif backup_dir is not None:
+                    shutil.rmtree(backup_dir, ignore_errors=True)
+                shutil.rmtree(staging_dir, ignore_errors=True)
+                raise
 
-        # Replace disk directory: remove old, rename staging into place
-        if workdir.is_dir():
-            shutil.rmtree(workdir)
-        staging_dir.rename(workdir)
+            # Commit point: disk and memory now describe the same generation.
+            # Backup cleanup is post-commit and must not turn success into an
+            # exception; evict() also removes any residual sibling backup.
+            self._specs[key] = spec
+            if backup_dir is not None:
+                _cleanup_tree_best_effort(backup_dir, purpose="agent cache backup")
 
-        return LoadedAgent(spec=spec, workdir=workdir)
+            return LoadedAgent(spec=spec, workdir=workdir)
 
     def evict(self, agent_id: str) -> None:
         """
@@ -166,14 +285,22 @@ class AgentCache:
         :param agent_id: Unique agent identifier,
             e.g. ``"ag_abc123"``.
         """
-        self._specs.pop(agent_id, None)
-        workdir = self._cache_dir / agent_id
-        if workdir.is_dir():
-            shutil.rmtree(workdir)
+        with self._lock:
+            for key in tuple(self._specs):
+                if key[0] == agent_id:
+                    self._specs.pop(key, None)
+            agent_dir = self._cache_dir / agent_id
+            if agent_dir.is_dir():
+                shutil.rmtree(agent_dir)
+
+    def _workdir(self, key: CacheKey) -> Path:
+        """Return the isolated disk path for one cache identity."""
+        agent_id, digest, expand_env = key
+        return self._cache_dir / agent_id / digest / f"expand-env-{int(expand_env)}"
 
     def _extract_and_cache(
         self,
-        agent_id: str,
+        key: CacheKey,
         bundle_bytes: bytes,
         workdir: Path,
         *,
@@ -182,7 +309,7 @@ class AgentCache:
         """
         Extract bundle bytes to disk and populate both cache tiers.
 
-        :param agent_id: Unique agent identifier.
+        :param key: Agent, bundle Digest, and environment-expansion identity.
         :param bundle_bytes: Raw bytes of the ``.tar.gz`` bundle.
         :param workdir: Target directory for extraction.
         :param expand_env: Whether to expand ``${VAR}`` references
@@ -191,19 +318,16 @@ class AgentCache:
             :meth:`load` for the rationale.
         :returns: A LoadedAgent with the parsed spec and workdir.
         """
-        tmp_fd, tmp_name = tempfile.mkstemp(suffix=".tar.gz")
-        os.close(tmp_fd)
-        tmp_path = Path(tmp_name)
+        workdir.parent.mkdir(parents=True, exist_ok=True)
+        staging_dir = Path(
+            tempfile.mkdtemp(prefix=f".{workdir.name}-staging-", dir=workdir.parent)
+        )
         try:
-            tmp_path.write_bytes(bundle_bytes)
-            spec = load_spec(
-                tmp_path,
-                dest=workdir,
-                expand_env=expand_env,
-                prune_invalid_sub_agents=True,
-            )
-        finally:
-            tmp_path.unlink()
+            spec = _load_bundle_bytes(bundle_bytes, staging_dir, expand_env=expand_env)
+            staging_dir.rename(workdir)
+        except BaseException:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            raise
 
-        self._specs[agent_id] = spec
+        self._specs[key] = spec
         return LoadedAgent(spec=spec, workdir=workdir)
