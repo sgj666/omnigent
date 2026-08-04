@@ -10,6 +10,7 @@ from uuid import uuid4
 from omnigent.entities import AgentBundleSnapshot
 from omnigent.entities.run_projection import CreateRunResult, RunCreate
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.runs.session_projection import SessionRunProjection
 from omnigent.server.schemas import SessionEventInput
 
 SOURCE_RE = re.compile(r"[a-z][a-z0-9_.-]{0,63}")
@@ -47,6 +48,7 @@ class RunService:
         self._conversations = conversation_store
         self._agents = agent_store
         self._submit_session_event = submit_session_event
+        self._projection = SessionRunProjection(run_store)
 
     async def create(
         self,
@@ -106,6 +108,7 @@ class RunService:
             agent_bundle_digest=snapshot.bundle_digest,
             agent_bundle_location=snapshot.bundle_location,
         )
+        self._projection.root_created(result.run)
         event = SessionEventInput(
             type="message",
             data={

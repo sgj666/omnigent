@@ -18,6 +18,7 @@ class RunStatus(StrEnum):
 class TaskStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
+    BLOCKED = "blocked"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -26,6 +27,7 @@ class TaskStatus(StrEnum):
 class AttemptStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
+    BLOCKED = "blocked"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"

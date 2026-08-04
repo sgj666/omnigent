@@ -27,6 +27,7 @@ from omnigent.host.frames import (
 )
 from omnigent.runner.identity import RUNNER_TUNNEL_TOKEN_HEADER, token_bound_runner_id
 from omnigent.runner.routing import RunnerRouter
+from omnigent.runs.session_projection import observe as _observe_run_projection
 from omnigent.runtime import (
     session_stream,
 )
@@ -803,6 +804,18 @@ def register_events_routes(
                 response_id=response_id,
                 background_task_count=bg_count,
             )
+            failure_message = (
+                output.strip() if isinstance(output, str) and output.strip() else None
+            )
+            _observe_run_projection(
+                getattr(request.app.state, "run_projection", None),
+                "terminal",
+                conv,
+                status=status,
+                response_id=response_id,
+                failure_code=status_error.code if status_error is not None else None,
+                failure_message=failure_message,
+            )
             forward_body = body.model_dump()
             forward_body["data"] = await _enrich_idle_status_with_subagent_output(
                 forward_body["data"], status, session_id, conversation_store
@@ -843,6 +856,12 @@ def register_events_routes(
                     session_id,
                     status,
                     runner_result,
+                )
+                _observe_run_projection(
+                    getattr(request.app.state, "run_projection", None),
+                    "parent_inbox_relayed",
+                    conv,
+                    status="completed" if status == "idle" else status,
                 )
             return {"queued": False}
         if body.type == _EXTERNAL_COMPACTION_STATUS_TYPE:
@@ -1362,6 +1381,14 @@ def register_events_routes(
             runner_router=runner_router,
             native_terminal_ready=native_terminal_ready,
         )
+        projection_item_id = dispatch.item_id or dispatch.pending_id
+        if projection_item_id is not None:
+            _observe_run_projection(
+                getattr(request.app.state, "run_projection", None),
+                "dispatch_accepted",
+                conv,
+                conversation_item_id=projection_item_id,
+            )
         if pending_background_title is not None:
             pending_background_title.schedule()
         response: dict[str, Any] = {"queued": True}

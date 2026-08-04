@@ -138,7 +138,14 @@ async def test_record_publish_delivers_wake_message_to_parent(
     the dispatch targeted the *parent* (not the child) with a notice
     naming the child and carrying the approval reason.
     """
-    parent = conv_store.create_conversation(kind="default", title="parent")
+    parent = conv_store.create_conversation(
+        kind="default",
+        title="parent",
+        agent_id="b" * 32,
+        agent_bundle_version=1,
+        agent_bundle_digest="a" * 64,
+        agent_bundle_location=f"{'b' * 32}/{'a' * 64}",
+    )
     child = conv_store.create_conversation(
         kind="sub_agent", title="codex:demo", parent_conversation_id=parent.id
     )
@@ -236,7 +243,14 @@ async def test_record_publish_no_wake_when_no_runner_bound(
     # sleeps (rule 14: patch the module's _sleep, not global asyncio.sleep).
     monkeypatch.setattr(subagent_block_notifier, "_sleep", _instant_sleep, raising=True)
 
-    parent = conv_store.create_conversation(kind="default", title="parent")
+    parent = conv_store.create_conversation(
+        kind="default",
+        title="parent",
+        agent_id="b" * 32,
+        agent_bundle_version=1,
+        agent_bundle_digest="a" * 64,
+        agent_bundle_location=f"{'b' * 32}/{'a' * 64}",
+    )
     child = conv_store.create_conversation(
         kind="sub_agent", title="codex:norunner", parent_conversation_id=parent.id
     )

@@ -7,7 +7,7 @@ from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import delete, select
 
 from omnigent.db.db_models import (
@@ -375,13 +375,19 @@ def create_teams_router(
     *,
     auth_provider: AuthProvider | None = None,
 ) -> APIRouter:
-    """Build CRUD and run-list endpoints for team-harness teams."""
+    """Build read-only diagnostic endpoints for retired Team records."""
     router = APIRouter()
 
+    def _gone() -> None:
+        raise HTTPException(
+            status_code=410,
+            detail="Legacy Team execution is retired; create and operate a Session-backed Run.",
+        )
+
     @router.post("/teams")
-    async def create_team(request: Request, body: CreateTeamRequest) -> dict[str, Any]:
+    async def create_team(request: Request) -> None:
         require_user(request, auth_provider)
-        return store.create_team(body)
+        _gone()
 
     @router.get("/teams")
     async def list_teams(request: Request) -> dict[str, Any]:
@@ -397,14 +403,40 @@ def create_teams_router(
         return team
 
     @router.patch("/teams/{team_id}")
-    async def update_team(
-        request: Request, team_id: str, body: UpdateTeamRequest
-    ) -> dict[str, Any]:
+    async def update_team(request: Request, team_id: str) -> None:
         require_user(request, auth_provider)
-        team = store.update_team(team_id, body)
-        if team is None:
-            raise OmnigentError("Team not found", code=ErrorCode.NOT_FOUND)
-        return team
+        del team_id
+        _gone()
+
+    @router.delete("/teams/{team_id}")
+    async def delete_team(request: Request, team_id: str) -> None:
+        require_user(request, auth_provider)
+        del team_id
+        _gone()
+
+    @router.post("/teams/{team_id}/start")
+    async def start_team(request: Request, team_id: str) -> None:
+        require_user(request, auth_provider)
+        del team_id
+        _gone()
+
+    @router.post("/runs/{run_id}/retry")
+    async def retry_run(request: Request, run_id: str) -> None:
+        require_user(request, auth_provider)
+        del run_id
+        _gone()
+
+    @router.post("/runs/{run_id}/approve")
+    async def approve_run(request: Request, run_id: str) -> None:
+        require_user(request, auth_provider)
+        del run_id
+        _gone()
+
+    @router.post("/runs/{run_id}/assign")
+    async def assign_run(request: Request, run_id: str) -> None:
+        require_user(request, auth_provider)
+        del run_id
+        _gone()
 
     @router.get("/teams/{team_id}/runs")
     async def list_team_runs(request: Request, team_id: str) -> dict[str, Any]:

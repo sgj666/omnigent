@@ -48,6 +48,7 @@ from omnigent.runner.identity import (
     RUNNER_TUNNEL_TOKEN_HEADER,
 )
 from omnigent.runner.routing import RunnerRouter
+from omnigent.runs.session_projection import observe as _observe_run_projection
 from omnigent.runtime import (
     pending_elicitations,
     user_session_stream,
@@ -256,6 +257,12 @@ def register_core_routes(
         # Without this, the runner doesn't know this session exists
         # until the first forwarded event.
         conv = conversation_store.get_conversation(resp.id)
+        if conv is not None and conv.parent_conversation_id is not None:
+            _observe_run_projection(
+                getattr(request.app.state, "run_projection", None),
+                "child_created",
+                conv,
+            )
         # Mark the terminal spin-up flag at creation — the earliest
         # possible point — for a host-launched terminal-first session
         # (claude-native / codex-native). The runner's own pending emit
@@ -543,6 +550,15 @@ def register_core_routes(
             bundle_bytes,
             inherited_runner_id,
         )
+        created_conv = await asyncio.to_thread(
+            conversation_store.get_conversation, result.session_id
+        )
+        if created_conv is not None and created_conv.parent_conversation_id is not None:
+            _observe_run_projection(
+                getattr(request.app.state, "run_projection", None),
+                "child_created",
+                created_conv,
+            )
         # Top-level creates (no inherited runner) skip the notify —
         # their runner registers itself later.
         if inherited_runner_id is not None:

@@ -13,6 +13,7 @@ from omnigent.server.routes.teams import (
     create_teams_router,
 )
 from omnigent.server.routes.workspaces import create_workspaces_router
+from omnigent.server.schemas import CreateTeamRequest
 
 
 @pytest.fixture()
@@ -34,34 +35,36 @@ async def client() -> httpx.AsyncClient:
         yield value
 
 
-async def test_team_crud_exposes_agent_runtime_surface(client: httpx.AsyncClient) -> None:
-    created = await client.post(
-        "/v1/teams",
-        json={
-            "name": "Delivery",
-            "members": [
-                {
-                    "name": "Coordinator",
-                    "role": "coordinator",
-                    "harness": "codex",
-                    "capabilities": ["plan"],
-                    "concurrency": 1,
-                    "pairing": {"mode": "lead"},
-                    "surface": {"feishu": "active"},
-                },
-                {"name": "Worker", "role": "worker", "harness": "claude", "concurrency": 2},
+async def test_legacy_team_reads_remain_diagnostic_and_writes_are_gone(
+    client: httpx.AsyncClient,
+) -> None:
+    store = client._transport.app.state.team_store  # type: ignore[attr-defined]
+    body = store.create_team(
+        CreateTeamRequest(
+            name="Delivery",
+            members=[
+                {"name": "Coordinator", "role": "coordinator"},
+                {"name": "Worker", "role": "worker"},
             ],
-        },
+        )
     )
-    assert created.status_code == 200
-    body = created.json()
-    assert body["coordinator"]["harness"] == "codex"
-    assert body["coordinator"]["pairing"] == {"mode": "lead"}
-    assert body["workers"][0]["concurrency"] == 2
 
     listed = await client.get("/v1/teams")
     assert listed.json()["data"] == [body]
     assert (await client.get(f"/v1/teams/{body['id']}")).json() == body
+
+    write_requests = (
+        ("POST", "/v1/teams", {"name": "New", "members": []}),
+        ("PATCH", f"/v1/teams/{body['id']}", {"name": "Changed"}),
+        ("DELETE", f"/v1/teams/{body['id']}", None),
+        ("POST", f"/v1/teams/{body['id']}/start", None),
+        ("POST", "/v1/runs/legacy/retry", None),
+        ("POST", "/v1/runs/legacy/approve", None),
+        ("POST", "/v1/runs/legacy/assign", None),
+    )
+    for method, path, payload in write_requests:
+        response = await client.request(method, path, json=payload)
+        assert response.status_code == 410, (method, path, response.text)
 
 
 async def test_team_requires_exactly_one_coordinator(client: httpx.AsyncClient) -> None:
@@ -69,7 +72,7 @@ async def test_team_requires_exactly_one_coordinator(client: httpx.AsyncClient) 
         "/v1/teams",
         json={"name": "No lead", "members": [{"name": "Worker", "role": "worker"}]},
     )
-    assert response.status_code == 422
+    assert response.status_code == 410
 
 
 async def test_run_inspector_endpoint_returns_run_or_not_found(
@@ -85,7 +88,8 @@ async def test_run_inspector_endpoint_returns_run_or_not_found(
 
 
 async def test_workspace_selection_copies_thread_default_and_never_rewrites_running_run(
-    client: httpx.AsyncClient, tmp_path: object,
+    client: httpx.AsyncClient,
+    tmp_path: object,
 ) -> None:
     from pathlib import Path
 

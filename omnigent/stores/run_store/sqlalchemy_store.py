@@ -179,6 +179,16 @@ class SqlAlchemyRunStore:
             row = session.get(SqlRun, (current_workspace_id(), run_id))
             return _run(row) if row is not None else None
 
+    def get_run_by_root_session_id(self, root_session_id: str) -> Run | None:
+        with self._session() as session:
+            row = session.execute(
+                select(SqlRun).where(
+                    SqlRun.workspace_id == current_workspace_id(),
+                    SqlRun.root_session_id == root_session_id,
+                )
+            ).scalar_one_or_none()
+            return _run(row) if row is not None else None
+
     def list_runs(self, *, actor_id: str | None = None) -> tuple[Run, ...]:
         with self._session() as session:
             statement = select(SqlRun).where(SqlRun.workspace_id == current_workspace_id())
@@ -309,25 +319,43 @@ class SqlAlchemyRunStore:
                 session.add(attempt_row)
                 run_row.status = RunStatus.RUNNING.value
                 run_row.updated_at = now
-            elif event.event_type in {"session.completed", "session.failed", "session.cancelled"}:
+            elif event.event_type in {
+                "session.completed",
+                "session.failed",
+                "session.cancelled",
+                "session.blocked",
+                "session.running",
+            }:
                 if task_id is None or attempt_id is None:
-                    raise ValueError("terminal projection requires task_id and attempt_id")
+                    raise ValueError("lifecycle projection requires task_id and attempt_id")
                 task_row = session.get(SqlRunTask, (current_workspace_id(), task_id))
                 attempt_row = session.get(SqlAttempt, (current_workspace_id(), attempt_id))
                 if task_row is None or attempt_row is None:
-                    raise ValueError("terminal projection references unknown task or attempt")
-                terminal = {
+                    raise ValueError("lifecycle projection references unknown task or attempt")
+                lifecycle = {
                     "session.completed": (TaskStatus.COMPLETED, AttemptStatus.SUCCEEDED),
                     "session.failed": (TaskStatus.FAILED, AttemptStatus.FAILED),
                     "session.cancelled": (TaskStatus.CANCELLED, AttemptStatus.CANCELLED),
+                    "session.blocked": (TaskStatus.BLOCKED, AttemptStatus.BLOCKED),
+                    "session.running": (TaskStatus.RUNNING, AttemptStatus.RUNNING),
                 }[event.event_type]
-                task_row.status = terminal[0].value
+                task_row.status = lifecycle[0].value
                 task_row.updated_at = now
-                attempt_row.status = terminal[1].value
-                attempt_row.completed_at = now
+                attempt_row.status = lifecycle[1].value
+                attempt_row.completed_at = (
+                    now
+                    if event.event_type
+                    in {"session.completed", "session.failed", "session.cancelled"}
+                    else None
+                )
                 attempt_row.updated_at = now
                 attempt_row.failure_code = _optional_payload(event, "failure_code")
                 attempt_row.failure_message = _optional_payload(event, "failure_message")
+                response_id = _optional_payload(event, "response_id")
+                if response_id is not None:
+                    attempt_row.response_id = response_id
+                session.flush()
+                _recompute_run_status(session, run_row, now)
             elif event.event_type == "plan.dependency":
                 task_id = _required_payload(event, "task_id")
                 depends_on = _required_payload(event, "depends_on_task_id")
@@ -389,6 +417,30 @@ class SqlAlchemyRunStore:
             ).scalars()
             return tuple(_attempt(row) for row in rows)
 
+    def get_latest_attempt_for_child(
+        self, run_id: str, child_session_id: str
+    ) -> tuple[Task, Attempt] | None:
+        with self._session() as session:
+            row = session.execute(
+                select(SqlRunTask, SqlAttempt)
+                .join(
+                    SqlAttempt,
+                    (
+                        (SqlAttempt.workspace_id == SqlRunTask.workspace_id)
+                        & (SqlAttempt.task_id == SqlRunTask.id)
+                    ),
+                )
+                .where(
+                    SqlRunTask.workspace_id == current_workspace_id(),
+                    SqlRunTask.run_id == run_id,
+                    SqlAttempt.child_session_id == child_session_id,
+                )
+                .order_by(SqlAttempt.created_at.desc(), SqlAttempt.id.desc())
+            ).first()
+            if row is None:
+                return None
+            return _task(row[0]), _attempt(row[1])
+
     def list_dependencies(self, run_id: str) -> tuple[tuple[str, str], ...]:
         task_ids = tuple(task.id for task in self.list_tasks(run_id))
         if not task_ids:
@@ -445,7 +497,7 @@ class SqlAlchemyRunStore:
                     message=attempt.failure_message or "Session failed without a detailed reason",
                 )
                 for attempt in attempts
-                if attempt.status is AttemptStatus.FAILED
+                if attempt.status in {AttemptStatus.FAILED, AttemptStatus.BLOCKED}
             ),
         )
 
@@ -663,3 +715,26 @@ def _required_payload(event: ProjectionEvent, key: str) -> str:
 def _optional_payload(event: ProjectionEvent, key: str) -> str | None:
     value = event.payload.get(key)
     return value if isinstance(value, str) and value else None
+
+
+def _recompute_run_status(session: object, run_row: SqlRun, now: int) -> None:
+    statuses = tuple(
+        session.execute(
+            select(SqlRunTask.status).where(
+                SqlRunTask.workspace_id == current_workspace_id(),
+                SqlRunTask.run_id == run_row.id,
+            )
+        ).scalars()
+    )
+    if not statuses:
+        return
+    if any(status in {TaskStatus.RUNNING.value, TaskStatus.BLOCKED.value} for status in statuses):
+        status = RunStatus.RUNNING
+    elif any(value == TaskStatus.FAILED.value for value in statuses):
+        status = RunStatus.FAILED
+    elif all(value == TaskStatus.CANCELLED.value for value in statuses):
+        status = RunStatus.CANCELLED
+    else:
+        status = RunStatus.COMPLETED
+    run_row.status = status.value
+    run_row.updated_at = now

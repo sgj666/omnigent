@@ -4329,6 +4329,24 @@ async def _relay_runner_stream(
                             # — the PTY idle oscillates on mid-turn lulls and
                             # would deliver a premature, lock-out completion.
                             _publish_status(session_id, status, status_error)
+                            from omnigent.runs.session_projection import observe
+
+                            projected_conv = await asyncio.to_thread(
+                                conversation_store.get_conversation, session_id
+                            )
+                            if projected_conv is not None:
+                                observe(
+                                    getattr(conversation_store, "run_projection", None),
+                                    "terminal",
+                                    projected_conv,
+                                    status=status,
+                                    failure_code=(
+                                        status_error.code if status_error is not None else None
+                                    ),
+                                    failure_message=(
+                                        status_error.message if status_error is not None else None
+                                    ),
+                                )
                         if status == "running":
                             text_acc.clear()
                         continue
@@ -5244,6 +5262,7 @@ async def _wake_parent_for_blocked_child(
 def configure_subagent_block_notifier(
     conversation_store: ConversationStore,
     runner_router: RunnerRouter | None,
+    run_projection: Any | None = None,
 ) -> Callable[[], None]:
     """
     Install the parent-wake notifier on the elicitation publish path.
@@ -5281,13 +5300,22 @@ def configure_subagent_block_notifier(
             ``False`` when it could not be delivered (so the notifier
             releases the debounce and a re-publish can retry).
         """
-        return await _wake_parent_for_blocked_child(
+        from hashlib import sha256
+
+        from omnigent.runs.session_projection import observe
+
+        block_id = sha256(notice.encode()).hexdigest()[:32]
+        observe(run_projection, "blocked", child, block_id=block_id, reason=notice)
+        delivered = await _wake_parent_for_blocked_child(
             parent_id,
             child,
             notice,
             conversation_store=conversation_store,
             runner_router=runner_router,
         )
+        if delivered:
+            observe(run_projection, "parent_inbox_relayed", child, status="blocked")
+        return delivered
 
     notifier = SubagentBlockNotifier(
         conversation_store=conversation_store,

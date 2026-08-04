@@ -35,6 +35,7 @@ from omnigent.harness_plugins import (
 )
 from omnigent.resources import examples as _examples_resources
 from omnigent.runs.service import RunService
+from omnigent.runs.session_projection import SessionRunProjection
 from omnigent.runtime import (
     get_terminal_registry,
     pending_elicitations,
@@ -936,6 +937,8 @@ def create_app(
     # a small local state boundary.
     team_store = team_store or SqlAlchemyTeamWorkspaceStore(agent_store.storage_location)
     run_store = SqlAlchemyRunStore(agent_store.storage_location)
+    run_projection = SessionRunProjection(run_store)
+    conversation_store.run_projection = run_projection
 
     async def _submit_run_session_event(
         session_id: str,
@@ -1040,6 +1043,7 @@ def create_app(
         _uninstall_subagent_block_notifier = configure_subagent_block_notifier(
             conversation_store,
             runner_router,
+            run_projection,
         )
 
         from omnigent.runner.resource_registry import (
@@ -1218,6 +1222,7 @@ def create_app(
     app = FastAPI(title="Omnigent Server", lifespan=_lifespan)
     app.state.run_store = run_store
     app.state.run_service = run_service
+    app.state.run_projection = run_projection
     from omnigent.runtime import telemetry
 
     telemetry.instrument_fastapi_app(app)

@@ -116,7 +116,7 @@ async def test_runs_api_is_authenticated_idempotent_and_rejects_execution_fields
     assert first.json()["actor_id"] == "alice"
     assert listing.status_code == detail.status_code == events.status_code == 200
     assert listing.json()["data"] == [detail.json()]
-    assert events.json() == {"object": "list", "data": []}
+    assert [event["event_type"] for event in events.json()["data"]] == ["run.root.created"]
     assert inspector.status_code == 200
     assert inspector.json()["root_session_id"] == first.json()["root_session_id"]
     assert inspector.json()["child_session_ids"] == []
