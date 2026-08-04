@@ -29,6 +29,8 @@ class FeishuDeviceSession:
     verification_uri_complete: str
     interval: int
     expires_in: int
+    verification_uri: str | None = None
+    user_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,8 @@ class FeishuRegistration:
     app_secret: str
     installer_open_id: str
     bot: dict[str, Any]
+    tenant_key: str | None = None
+    tenant_name: str | None = None
 
 
 def _text(value: object) -> str | None:
@@ -62,6 +66,10 @@ class FeishuPersonalAgentDeviceFlow:
         self._api = api_base_url.rstrip("/")
         self._registration_url = registration_url
         self._intervals: dict[str, int] = {}
+
+    def restore(self, session: str, interval: int) -> None:
+        """Restore persisted polling cadence after a process restart."""
+        self._intervals[session] = max(1, interval)
 
     async def _http_request(
         self,
@@ -113,6 +121,8 @@ class FeishuPersonalAgentDeviceFlow:
             raise FeishuDeviceFlowError("provider", "Feishu rejected registration")
         session = _text(payload.get("device_code"))
         uri = _text(payload.get("verification_uri_complete"))
+        verification_uri = _text(payload.get("verification_uri"))
+        user_code = _text(payload.get("user_code"))
         interval = payload.get("interval")
         expires = payload.get("expires_in", payload.get("expire_in"))
         if (
@@ -125,7 +135,14 @@ class FeishuPersonalAgentDeviceFlow:
         ):
             raise FeishuDeviceFlowError("protocol", "Incomplete registration session")
         self._intervals[session] = interval
-        return FeishuDeviceSession(session, uri, interval, expires)
+        return FeishuDeviceSession(
+            session,
+            uri,
+            interval,
+            expires,
+            verification_uri=verification_uri,
+            user_code=user_code,
+        )
 
     async def poll(self, session: str) -> FeishuRegistration | FeishuPending:
         payload = await self._request(
@@ -156,7 +173,14 @@ class FeishuPersonalAgentDeviceFlow:
             raise FeishuDeviceFlowError("protocol", "Incomplete registration result")
         bot = await self.bot_info(app_id, secret)
         self._intervals.pop(session, None)
-        return FeishuRegistration(app_id, secret, installer, bot)
+        return FeishuRegistration(
+            app_id,
+            secret,
+            installer,
+            bot,
+            tenant_key=_text(user.get("tenant_key")) if isinstance(user, Mapping) else None,
+            tenant_name=_text(user.get("tenant_name")) if isinstance(user, Mapping) else None,
+        )
 
     async def bot_info(self, app_id: str, app_secret: str) -> dict[str, Any]:
         token_payload = await self._request(

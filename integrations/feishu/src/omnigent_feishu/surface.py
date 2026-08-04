@@ -8,7 +8,12 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from omnigent_feishu.cards import NonceFactory, build_workspace_card, build_workspace_menu
+from omnigent_feishu.cards import (
+    PERSISTENT_ACTIONS,
+    NonceFactory,
+    build_workspace_card,
+    build_workspace_menu,
+)
 
 SURFACE_PROFILE_ID = "omnigent-agent"
 SURFACE_VERSION = 1
@@ -45,15 +50,40 @@ class SurfaceResult:
     provisioned_at: int
 
     def to_dict(self) -> dict[str, object]:
-        return {
-            "installation_id": self.installation_id,
-            "surface_profile_id": self.profile_id,
-            "surface_version": self.version,
-            "status": self.status,
-            "surface_type": self.surface_type,
-            "error": self.error,
-            "last_provisioned_at": self.provisioned_at,
+        return enrich_surface(
+            {
+                "installation_id": self.installation_id,
+                "surface_profile_id": self.profile_id,
+                "surface_version": self.version,
+                "status": self.status,
+                "surface_type": self.surface_type,
+                "error": self.error,
+                "last_provisioned_at": self.provisioned_at,
+            }
+        )
+
+
+def enrich_surface(values: Mapping[str, object]) -> dict[str, object]:
+    """Attach stable per-action results to one persisted aggregate surface."""
+    result = dict(values)
+    aggregate = str(result.get("status") or "pending")
+    updated_at = result.get("last_provisioned_at", result.get("updated_at"))
+    action_status = {
+        "pending": "pending",
+        "failed": "failed",
+    }.get(aggregate, "provisioned")
+    action_error = result.get("error") if action_status == "failed" else None
+    result["actions"] = [
+        {
+            "action_id": action_id,
+            "label_key": f"feishu.action.{action_id}",
+            "status": action_status,
+            "error": action_error,
+            "updated_at": updated_at,
         }
+        for action_id, _label in PERSISTENT_ACTIONS
+    ]
+    return result
 
 
 class BotSurfaceProvisioner:
@@ -150,4 +180,5 @@ __all__ = [
     "BotSurfaceProvisioner",
     "FeishuSurfaceClient",
     "SurfaceResult",
+    "enrich_surface",
 ]

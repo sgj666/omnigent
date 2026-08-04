@@ -19,6 +19,15 @@ class Installation:
     error: str | None
     created_at: int
     updated_at: int
+    verification_uri_base: str | None
+    user_code: str | None
+    interval: int | None
+    expires_at: int | None
+    expires_in: int | None
+    tenant_key: str | None
+    tenant_name: str | None
+    bot_name: str | None
+    bot_avatar_url: str | None
 
 
 @dataclass(frozen=True)

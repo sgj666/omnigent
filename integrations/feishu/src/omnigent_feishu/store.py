@@ -21,7 +21,10 @@ CREATE TABLE IF NOT EXISTS installations (
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, app_id TEXT,
   app_secret_ciphertext TEXT, installer_open_id TEXT, bot_open_id TEXT,
   status TEXT NOT NULL, device_session TEXT UNIQUE, verification_uri TEXT,
-  error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  verification_uri_base TEXT, user_code TEXT, interval INTEGER,
+  expires_at INTEGER, expires_in INTEGER, tenant_key TEXT, tenant_name TEXT,
+  bot_name TEXT, bot_avatar_url TEXT
 );
 CREATE INDEX IF NOT EXISTS installations_agent ON installations(agent_id, updated_at);
 CREATE TABLE IF NOT EXISTS thread_bindings (
@@ -57,6 +60,18 @@ CREATE TABLE IF NOT EXISTS auth_grants (
 );
 """
 
+_INSTALLATION_COLUMNS = {
+    "verification_uri_base": "TEXT",
+    "user_code": "TEXT",
+    "interval": "INTEGER",
+    "expires_at": "INTEGER",
+    "expires_in": "INTEGER",
+    "tenant_key": "TEXT",
+    "tenant_name": "TEXT",
+    "bot_name": "TEXT",
+    "bot_avatar_url": "TEXT",
+}
+
 
 class FeishuStore:
     """Small async store with one transaction per durable state transition."""
@@ -65,12 +80,22 @@ class FeishuStore:
         self.path = Path(path)
         self._clock = clock or (lambda: int(time.time()))
 
+    def now(self) -> int:
+        return int(self._clock())
+
     async def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.path) as db:
             await db.execute("PRAGMA journal_mode=WAL")
             await db.execute("PRAGMA foreign_keys=ON")
             await db.executescript(_SCHEMA)
+            existing = {
+                str(row[1])
+                for row in await (await db.execute("PRAGMA table_info(installations) ")).fetchall()
+            }
+            for name, sql_type in _INSTALLATION_COLUMNS.items():
+                if name not in existing:
+                    await db.execute(f"ALTER TABLE installations ADD COLUMN {name} {sql_type}")
             await db.execute(
                 "INSERT OR REPLACE INTO schema_meta(key,value) VALUES('schema_version','1')"
             )
@@ -137,18 +162,40 @@ class FeishuStore:
         agent_id: str,
         session: str,
         verification_uri: str,
+        verification_uri_base: str | None = None,
+        user_code: str | None = None,
+        interval: int | None = None,
+        expires_in: int | None = None,
         installation_id: str | None = None,
     ) -> Installation:
         now = self._clock()
         installation_id = installation_id or uuid.uuid4().hex
+        expires_at = now + expires_in if expires_in is not None else None
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 """INSERT INTO installations
-                (id,agent_id,status,device_session,verification_uri,created_at,updated_at)
-                VALUES(?,?, 'pending', ?, ?, ?, ?)
+                (id,agent_id,status,device_session,verification_uri,verification_uri_base,
+                 user_code,interval,expires_at,expires_in,created_at,updated_at)
+                VALUES(?,?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(device_session) DO UPDATE SET
-                  verification_uri=excluded.verification_uri, updated_at=excluded.updated_at""",
-                (installation_id, agent_id, session, verification_uri, now, now),
+                  verification_uri=excluded.verification_uri,
+                  verification_uri_base=excluded.verification_uri_base,
+                  user_code=excluded.user_code,interval=excluded.interval,
+                  expires_at=excluded.expires_at,expires_in=excluded.expires_in,
+                  status='pending',error=NULL,updated_at=excluded.updated_at""",
+                (
+                    installation_id,
+                    agent_id,
+                    session,
+                    verification_uri,
+                    verification_uri_base,
+                    user_code,
+                    interval,
+                    expires_at,
+                    expires_in,
+                    now,
+                    now,
+                ),
             )
             await db.commit()
         found = await self.get_installation_by_session(session)
@@ -163,18 +210,27 @@ class FeishuStore:
         app_secret_ciphertext: str,
         installer_open_id: str,
         bot_open_id: str,
+        tenant_key: str | None = None,
+        tenant_name: str | None = None,
+        bot_name: str | None = None,
+        bot_avatar_url: str | None = None,
     ) -> Installation:
         now = self._clock()
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 """UPDATE installations SET app_id=?,app_secret_ciphertext=?,
-                installer_open_id=?,bot_open_id=?,status='connected',error=NULL,updated_at=?
+                installer_open_id=?,bot_open_id=?,tenant_key=?,tenant_name=?,bot_name=?,
+                bot_avatar_url=?,status='connected',error=NULL,updated_at=?
                 WHERE id=?""",
                 (
                     app_id,
                     app_secret_ciphertext,
                     installer_open_id,
                     bot_open_id,
+                    tenant_key,
+                    tenant_name,
+                    bot_name,
+                    bot_avatar_url,
                     now,
                     installation_id,
                 ),
@@ -186,10 +242,19 @@ class FeishuStore:
         return found
 
     async def mark_installation_error(self, installation_id: str, error: str) -> None:
+        status = "expired" if error == "expired" else "error"
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
-                "UPDATE installations SET status='error',error=?,updated_at=? WHERE id=?",
-                (error, self._clock(), installation_id),
+                "UPDATE installations SET status=?,error=?,updated_at=? WHERE id=?",
+                (status, error, self._clock(), installation_id),
+            )
+            await db.commit()
+
+    async def update_pending_interval(self, installation_id: str, interval: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE installations SET interval=?,updated_at=? WHERE id=? AND status='pending'",
+                (interval, self._clock(), installation_id),
             )
             await db.commit()
 
@@ -211,11 +276,30 @@ class FeishuStore:
         self, where: str, params: tuple[object, ...]
     ) -> Installation | None:
         sql = f"""SELECT id,agent_id,app_id,app_secret_ciphertext,installer_open_id,
-        bot_open_id,status,device_session,verification_uri,error,created_at,updated_at
+        bot_open_id,status,device_session,verification_uri,error,created_at,updated_at,
+        verification_uri_base,user_code,interval,expires_at,expires_in,tenant_key,
+        tenant_name,bot_name,bot_avatar_url
         FROM installations WHERE {where}"""
         async with aiosqlite.connect(self.path) as db:
             row = await (await db.execute(sql, params)).fetchone()
-        return Installation(*row) if row else None
+        if row is None:
+            return None
+        installation = Installation(*row)
+        if (
+            installation.status == "pending"
+            and installation.expires_at is not None
+            and installation.expires_at <= self._clock()
+        ):
+            await self.mark_installation_error(installation.id, "expired")
+            return Installation(
+                **{
+                    **installation.__dict__,
+                    "status": "expired",
+                    "error": "expired",
+                    "updated_at": self._clock(),
+                }
+            )
+        return installation
 
     async def delete_agent_installation(self, agent_id: str) -> bool:
         async with aiosqlite.connect(self.path) as db:
@@ -290,6 +374,22 @@ class FeishuStore:
                         (installation_id, chat_id),
                     )
                 ).fetchone()
+        if row is None:
+            return None
+        values = list(row)
+        values[-1] = tuple(json.loads(values[-1]))
+        return ThreadBinding(*values)
+
+    async def get_agent_binding(self, agent_id: str) -> ThreadBinding | None:
+        async with aiosqlite.connect(self.path) as db:
+            row = await (
+                await db.execute(
+                    """SELECT id,installation_id,chat_id,thread_id,agent_id,workspace_id,
+                    run_id,host_id,execution_mode,allowed_members FROM thread_bindings
+                    WHERE agent_id=? ORDER BY updated_at DESC,id DESC LIMIT 1""",
+                    (agent_id,),
+                )
+            ).fetchone()
         if row is None:
             return None
         values = list(row)
