@@ -14,8 +14,15 @@ import {
 } from "@/components/ui/select";
 import { useHosts } from "@/hooks/useHosts";
 import { useCreateWorkspace, useWorkspaces } from "@/hooks/useWorkspaces";
-import { startMultiAgentRun } from "@/lib/multiAgentApi";
+import { ApiError } from "@/lib/apiError";
+import { createRun } from "@/lib/runsApi";
 import { useNavigate } from "@/lib/routing";
+
+const RETRYABLE_OR_AMBIGUOUS_4XX = new Set([408, 409, 425, 429]);
+
+function isDeterministicRejection(status: number): boolean {
+  return status >= 400 && status < 500 && !RETRYABLE_OR_AMBIGUOUS_4XX.has(status);
+}
 
 export function WorkspaceRunPanel({
   agentId,
@@ -35,7 +42,7 @@ export function WorkspaceRunPanel({
   const [taskInput, setTaskInput] = useState("");
   const [runError, setRunError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
-  const sourceEventId = useRef<string | null>(null);
+  const pendingRun = useRef<{ fingerprint: string; sourceEventId: string } | null>(null);
 
   useEffect(() => {
     if (!workspaceId && workspaces.data?.[0]) setWorkspaceId(workspaces.data[0].id);
@@ -58,22 +65,34 @@ export function WorkspaceRunPanel({
 
   async function run() {
     if (!selected || !hostId || !taskInput.trim()) return;
+    const input = taskInput.trim();
+    const fingerprint = JSON.stringify([agentId, input, selected.id, hostId]);
+    const pending =
+      pendingRun.current?.fingerprint === fingerprint
+        ? pendingRun.current
+        : {
+            fingerprint,
+            sourceEventId: `web:${crypto.randomUUID()}`,
+          };
+    pendingRun.current = pending;
     setRunError(null);
     setStarting(true);
-    sourceEventId.current ??= `web:${crypto.randomUUID()}`;
     try {
-      const started = await startMultiAgentRun({
+      const started = await createRun({
         agent_id: agentId,
         workspace_id: selected.id,
-        input: taskInput.trim(),
+        input,
         source: "web",
-        source_event_id: sourceEventId.current,
+        source_event_id: pending.sourceEventId,
         host_id: hostId,
         execution_mode: "auto",
       });
-      sourceEventId.current = null;
+      pendingRun.current = null;
       navigate(`/runs/${started.id}`);
     } catch (error) {
+      if (error instanceof ApiError && isDeterministicRejection(error.status)) {
+        pendingRun.current = null;
+      }
       setRunError(error instanceof Error ? error.message : t("workspace.runFailed"));
     } finally {
       setStarting(false);

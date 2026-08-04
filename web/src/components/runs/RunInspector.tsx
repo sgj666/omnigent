@@ -1,120 +1,149 @@
-import { ExternalLink, GitCommitHorizontal, Inbox, TriangleAlert } from "lucide-react";
+import { ExternalLink, Inbox, RefreshCw, TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { MultiAgentRunRecord } from "@/lib/multiAgentApi";
+import { Link } from "@/lib/routing";
+import type {
+  RunEvaluationDto,
+  RunInspectorAttemptDto,
+  RunInspectorResponseDto,
+} from "@/lib/runsApi";
 
-type JsonRecord = Record<string, unknown>;
-
-function record(value: unknown): JsonRecord {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : {};
+function display(value: string | number | null | undefined): string {
+  return value === null || value === undefined || value === "" ? "—" : String(value);
 }
 
-function list(value: unknown): JsonRecord[] {
-  return Array.isArray(value) ? value.map(record) : [];
+function formatTime(value: number | null): string {
+  if (value === null) return "—";
+  return new Date(value * 1_000).toLocaleString();
 }
 
-function text(value: unknown, fallback = "—"): string {
-  return value === undefined || value === null || value === "" ? fallback : String(value);
+function formatSeconds(value: number | null): string {
+  return value === null ? "—" : `${value} s`;
 }
 
-function formatTime(value: unknown): string {
-  if (value === undefined || value === null || value === "") return "—";
-  const date = new Date(
-    typeof value === "number" && value < 10_000_000_000 ? value * 1000 : String(value),
-  );
-  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+function formatPercent(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }
 
-function formatMetric(value: unknown, suffix = ""): string {
-  if (value === undefined || value === null) return "—";
-  if (typeof value === "number") return `${value}${suffix}`;
-  return `${String(value)}${suffix}`;
+function attemptDuration(attempt: RunInspectorAttemptDto): number | null {
+  if (attempt.started_at === null || attempt.completed_at === null) return null;
+  return Math.max(0, attempt.completed_at - attempt.started_at);
 }
 
-function duration(start: unknown, end: unknown, explicit: unknown): string {
-  if (typeof explicit === "number") return `${Math.round(explicit)} ms`;
-  if (start == null || end == null) return "—";
-  const startMs = new Date(
-    typeof start === "number" && start < 10_000_000_000 ? start * 1000 : String(start),
-  ).getTime();
-  const endMs = new Date(
-    typeof end === "number" && end < 10_000_000_000 ? end * 1000 : String(end),
-  ).getTime();
-  return Number.isNaN(startMs) || Number.isNaN(endMs) ? "—" : `${Math.max(0, endMs - startMs)} ms`;
+function attemptOverlaps(attempts: RunInspectorAttemptDto[]): Map<string, number | null> {
+  const overlaps = new Map<string, number | null>();
+  const boundaries = new Map<number, { starts: string[]; ends: string[] }>();
+  const boundary = (time: number) => {
+    const existing = boundaries.get(time);
+    if (existing) return existing;
+    const created = { starts: [], ends: [] };
+    boundaries.set(time, created);
+    return created;
+  };
+
+  for (const attempt of attempts) {
+    if (attempt.started_at === null || attempt.completed_at === null) {
+      overlaps.set(attempt.id, null);
+      continue;
+    }
+    overlaps.set(attempt.id, 0);
+    if (attempt.completed_at <= attempt.started_at) continue;
+    boundary(attempt.started_at).starts.push(attempt.id);
+    boundary(attempt.completed_at).ends.push(attempt.id);
+  }
+
+  const active = new Set<string>();
+  let previousTime: number | null = null;
+  for (const [time, events] of [...boundaries.entries()].sort(([left], [right]) => left - right)) {
+    if (previousTime !== null && active.size > 1) {
+      const duration = time - previousTime;
+      for (const attemptId of active) {
+        overlaps.set(attemptId, (overlaps.get(attemptId) ?? 0) + duration);
+      }
+    }
+    for (const attemptId of events.ends) active.delete(attemptId);
+    for (const attemptId of events.starts) active.add(attemptId);
+    previousTime = time;
+  }
+  return overlaps;
 }
 
-function shortDigest(value: unknown): string {
-  return typeof value === "string" ? value.replace(/^sha256:/, "").slice(0, 12) : "—";
+function safeArtifactHref(location: string): string | null {
+  if (location.startsWith("/") && !location.startsWith("//") && !location.includes("\\")) {
+    return location;
+  }
+  if (!/^https?:\/\//i.test(location)) return null;
+  try {
+    const url = new URL(location);
+    return url.protocol === "http:" || url.protocol === "https:" ? location : null;
+  } catch {
+    return null;
+  }
 }
 
-function formatPercent(value: unknown): string {
-  if (typeof value === "number" && value >= 0 && value <= 1) return `${Math.round(value * 100)}%`;
-  return formatMetric(value, "%");
-}
-
-function metric(metrics: JsonRecord, ...keys: string[]): unknown {
-  for (const key of keys) if (metrics[key] !== undefined) return metrics[key];
-  return undefined;
-}
-
-function Detail({ label, value }: { label: string; value: unknown }) {
+function Detail({ label, value }: { label: string; value: string | number | null | undefined }) {
+  const rendered = display(value);
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="truncate font-mono text-xs" title={text(value)}>
-        {text(value)}
+      <dd className="break-words font-mono text-xs" title={rendered}>
+        {rendered}
       </dd>
     </div>
   );
 }
 
-function LogBlock({ label, value }: { label: string; value: unknown }) {
-  if (value === undefined || value === null || value === "") return null;
-  return (
-    <div>
-      <p className="mb-1 text-xs font-medium text-muted-foreground">{label}</p>
-      <pre className="max-h-48 overflow-auto rounded-md bg-muted/60 p-3 font-mono text-xs whitespace-pre-wrap">
-        {String(value)}
-      </pre>
-    </div>
-  );
+function statusVariant(status: string): "destructive" | "outline" {
+  return status === "failed" ? "destructive" : "outline";
+}
+
+interface SafeEventPayloadDetail {
+  label: "eventStatus" | "eventTimestamp" | "failureCode" | "responseId" | "outputCommit";
+  value: string;
+}
+
+function safeEventPayloadDetails(payload: Record<string, unknown>): SafeEventPayloadDetail[] {
+  const details: SafeEventPayloadDetail[] = [];
+  const status = payload.status;
+  if (typeof status === "string" && status) {
+    details.push({ label: "eventStatus", value: status });
+  }
+  const occurredAt = payload.occurred_at;
+  if (typeof occurredAt === "number" && Number.isFinite(occurredAt)) {
+    details.push({ label: "eventTimestamp", value: formatTime(occurredAt) });
+  }
+  const references = [
+    ["failure_code", "failureCode"],
+    ["response_id", "responseId"],
+    ["output_commit", "outputCommit"],
+  ] as const;
+  for (const [field, label] of references) {
+    const value = payload[field];
+    if (typeof value === "string" && value) details.push({ label, value });
+  }
+  return details;
 }
 
 export interface RunInspectorProps {
-  run: MultiAgentRunRecord;
+  inspector: RunInspectorResponseDto;
+  evaluation?: RunEvaluationDto;
+  evaluationError?: string | null;
+  evaluationRefreshing?: boolean;
+  onRefreshEvaluation?: () => void;
 }
 
-export function RunInspector({ run }: RunInspectorProps) {
+export function RunInspector({
+  inspector,
+  evaluation,
+  evaluationError = null,
+  evaluationRefreshing = false,
+  onRefreshEvaluation,
+}: RunInspectorProps) {
   const { t } = useTranslation("agents", { keyPrefix: "multiAgent.runInspector" });
-  const data = record(run);
-  const workspace = record(data.workspace);
-  const workspaceName = data.workspace_name ?? workspace.name ?? data.workspace_id;
-  const tasks = list(data.tasks ?? data.task_dag ?? data.run_tasks);
-  const attempts = [
-    ...list(data.attempts),
-    ...tasks.flatMap((task) =>
-      list(task.attempts).map((attempt): JsonRecord => ({
-        ...attempt,
-        task_id: attempt.task_id ?? task.id,
-      })),
-    ),
-  ];
-  const rootSession = record(data.root_session ?? data.rootSession);
-  const childSessions = list(data.child_sessions ?? data.childSessions ?? data.sessions);
-  const sessions: JsonRecord[] = [
-    ...(Object.keys(rootSession).length ? [{ ...rootSession, session_role: "root" }] : []),
-    ...childSessions.map((session) => ({ ...session, session_role: "child" })),
-  ];
-  const events = list(data.events ?? data.ledger_events ?? data.parent_inbox_events);
-  const inbox = list(data.parent_inbox ?? data.parentInbox);
-  const artifacts = list(data.artifacts);
-  const commits = list(data.commits);
-  const metrics = record(
-    data.evaluation ?? data.metrics ?? data.ledger_summary ?? data.evaluation_summary,
-  );
-  const delivery =
-    data.delivery_status ?? data.deliveryState ?? metric(metrics, "delivery_status", "delivery");
+  const { run, agent_snapshot: snapshot, workspace } = inspector;
+  const overlapByAttemptId = attemptOverlaps(inspector.attempts);
 
   return (
     <div className="space-y-6">
@@ -123,36 +152,59 @@ export function RunInspector({ run }: RunInspectorProps) {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <CardTitle>{t("title")}</CardTitle>
-              <CardDescription className="mt-1 font-mono">
-                {text(data.id ?? run.id)}
-              </CardDescription>
+              <CardDescription className="mt-1 font-mono">{run.id}</CardDescription>
             </div>
-            <Badge variant={data.status === "failed" ? "destructive" : "outline"}>
-              {text(data.status ?? run.status)}
-            </Badge>
+            <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
           </div>
         </CardHeader>
         <CardContent>
           <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Detail label={t("labels.team")} value={data.team_id ?? run.team_id} />
-            <Detail label={t("labels.source")} value={data.source ?? run.source} />
-            <Detail label={t("labels.workspace")} value={workspaceName} />
-            <Detail label={t("labels.workspaceId")} value={data.workspace_id ?? run.workspace_id} />
+            <Detail label={t("labels.source")} value={run.source} />
+            <Detail label={t("labels.actor")} value={run.actor_id} />
+            <Detail label={t("labels.authScope")} value={run.auth_scope} />
+            <Detail label={t("labels.workspaceId")} value={run.workspace_id} />
+            <Detail label={t("labels.rootSessionId")} value={inspector.root_session_id} />
+            <Detail label={t("labels.sourceEventId")} value={run.source_event_id} />
+            <Detail label={t("labels.created")} value={formatTime(run.created_at)} />
           </dl>
-          <p className="mt-4 rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-            <span className="font-mono text-foreground">workspace: {text(workspaceName)}</span> ·{" "}
-            {t("workspaceImmutable")}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            <Badge variant="outline">
-              {t("bundleVersionValue", {
-                version: text(data.bundle_version ?? data.agent_bundle_version),
-              })}
-            </Badge>
-            <Badge variant="outline" title={text(data.bundle_digest ?? data.agent_bundle_digest)}>
-              {shortDigest(data.bundle_digest ?? data.agent_bundle_digest)}
-            </Badge>
-          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("snapshot")}</CardTitle>
+          <CardDescription>{t("snapshotDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {snapshot ? (
+            <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Detail label={t("labels.agentId")} value={snapshot.id} />
+              <Detail label={t("labels.bundleVersion")} value={snapshot.bundle_version} />
+              <Detail label={t("labels.bundleDigest")} value={snapshot.bundle_digest} />
+              <Detail label={t("labels.bundleLocation")} value={snapshot.bundle_location} />
+            </dl>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t("noSnapshot")}</p>
+          )}
+          {workspace ? (
+            <div className="rounded-lg border border-border/70 p-3">
+              <dl className="grid gap-4 sm:grid-cols-2">
+                <Detail label={t("labels.workspaceId")} value={workspace.id} />
+                <Detail label={t("labels.rootPath")} value={workspace.root_path} />
+              </dl>
+              <h3 className="mt-4 text-sm font-medium">{t("repositories")}</h3>
+              <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+                {workspace.repositories.map((repository) => (
+                  <li key={repository.id} className="rounded-md bg-muted/40 p-2 text-xs">
+                    <span className="font-medium">{repository.name}</span>
+                    <span className="ml-2 font-mono text-muted-foreground">{repository.path}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t("noWorkspace")}</p>
+          )}
         </CardContent>
       </Card>
 
@@ -162,81 +214,28 @@ export function RunInspector({ run }: RunInspectorProps) {
           <CardDescription>{t("sessionsDescription")}</CardDescription>
         </CardHeader>
         <CardContent>
-          {sessions.length === 0 ? (
+          {inspector.sessions.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("noSessions")}</p>
           ) : (
-            <div className="space-y-2">
-              {sessions.map((session, index) => (
-                <div
-                  key={text(session.id ?? session.session_id, String(index))}
-                  className="rounded-lg border border-border/70 p-3"
+            <ul className="space-y-2">
+              {inspector.sessions.map((session) => (
+                <li
+                  key={session.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-border/70 p-3"
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <span className="mr-2 text-xs font-medium text-muted-foreground">
-                        {session.session_role === "root" ? t("root") : t("child")}
-                      </span>
-                      <span className="font-medium">
-                        {text(session.title ?? session.worker_title ?? session.agent_name)}
-                      </span>
-                    </div>
-                    <Badge variant={session.status === "failed" ? "destructive" : "outline"}>
-                      {text(session.status)}
-                    </Badge>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 font-mono text-xs text-muted-foreground">
-                    <span>{text(session.id ?? session.session_id)}</span>
-                    <span>
-                      {t("labels.duration")}:{" "}
-                      {duration(session.started_at, session.finished_at, session.duration_ms)}
-                    </span>
-                  </div>
-                </div>
+                  <Link
+                    className="font-mono text-sm text-primary hover:underline"
+                    to={`/c/${session.id}`}
+                  >
+                    {session.id}
+                  </Link>
+                  <Badge variant="outline">
+                    {session.kind === "root" ? t("root") : t("child")}
+                  </Badge>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("evaluation")}</CardTitle>
-          <CardDescription>{t("evaluationDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Detail
-              label={t("labels.completionRate")}
-              value={formatPercent(metric(metrics, "completion_rate", "completed_rate"))}
-            />
-            <Detail
-              label={t("labels.firstSuccess")}
-              value={formatPercent(
-                metric(metrics, "first_success_rate", "first_attempt_success_rate"),
-              )}
-            />
-            <Detail label={t("labels.retries")} value={metric(metrics, "retry_count", "retries")} />
-            <Detail
-              label={t("labels.approvals")}
-              value={metric(metrics, "human_approval_count", "approvals")}
-            />
-            <Detail
-              label={t("labels.averageStage")}
-              value={formatMetric(
-                metric(metrics, "average_stage_duration", "avg_stage_duration"),
-                " ms",
-              )}
-            />
-            <Detail
-              label={t("labels.parallel")}
-              value={formatPercent(metric(metrics, "parallel_utilization", "parallel_utilisation"))}
-            />
-            <Detail
-              label={t("labels.resources")}
-              value={metric(metrics, "resource_consumption", "tokens", "token_usage", "cost")}
-            />
-            <Detail label={t("labels.delivery")} value={delivery} />
-          </dl>
         </CardContent>
       </Card>
 
@@ -246,30 +245,32 @@ export function RunInspector({ run }: RunInspectorProps) {
           <CardDescription>{t("taskDescription")}</CardDescription>
         </CardHeader>
         <CardContent>
-          {tasks.length === 0 ? (
+          {inspector.tasks.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("noTasks")}</p>
           ) : (
             <div className="space-y-2">
-              {tasks.map((task, index) => {
-                const deps = task.depends_on ?? task.dependencies ?? task.parents;
+              {inspector.tasks.map((task) => {
+                const dependencies = inspector.dependencies
+                  .filter((dependency) => dependency.task_id === task.id)
+                  .map((dependency) => dependency.depends_on_task_id);
                 return (
-                  <div
-                    key={text(task.id, String(index))}
-                    className="rounded-lg border border-border/70 p-3"
-                  >
+                  <article key={task.id} className="rounded-lg border border-border/70 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-medium">
-                        {text(task.title ?? task.name ?? task.id, `Task ${index + 1}`)}
-                      </span>
-                      <Badge variant="outline">{text(task.status)}</Badge>
+                      <h3 className="font-medium">{task.title}</h3>
+                      <Badge variant={statusVariant(task.status)}>{task.status}</Badge>
                     </div>
-                    <p className="mt-1 font-mono text-xs text-muted-foreground">{text(task.id)}</p>
-                    {Array.isArray(deps) && deps.length > 0 && (
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        {t("dependsOn", { dependencies: deps.map(String).join(", ") })}
+                    <dl className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <Detail label={t("labels.taskId")} value={task.id} />
+                      <Detail label={t("labels.dispatchTitle")} value={task.dispatch_title} />
+                      <Detail label={t("labels.purpose")} value={task.purpose} />
+                      <Detail label={t("labels.childSessionId")} value={task.child_session_id} />
+                    </dl>
+                    {dependencies.length > 0 && (
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        {t("dependsOn", { dependencies: dependencies.join(", ") })}
                       </p>
                     )}
-                  </div>
+                  </article>
                 );
               })}
             </div>
@@ -282,96 +283,105 @@ export function RunInspector({ run }: RunInspectorProps) {
           <CardTitle>{t("attempts")}</CardTitle>
           <CardDescription>{t("attemptsDescription")}</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {attempts.length === 0 ? (
+        <CardContent>
+          {inspector.attempts.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("noAttempts")}</p>
           ) : (
-            attempts.map((attempt, index) => {
-              const failureCode = attempt.failure_code ?? record(attempt.failure).code;
-              const failureReason =
-                attempt.failure_reason ?? record(attempt.failure).message ?? attempt.error;
-              const retryAdvice =
-                attempt.retry_suggestion ?? attempt.retry_recommendation ?? attempt.next_action;
-              return (
-                <article
-                  key={text(attempt.id, String(index))}
-                  className="rounded-lg border border-border/70 p-4"
-                >
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="font-medium">
-                      {text(
-                        attempt.worker_title ?? attempt.title,
-                        t("attemptNumber", { number: index + 1 }),
-                      )}{" "}
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {text(attempt.id)}
-                      </span>
-                    </h3>
-                    <Badge variant={attempt.status === "failed" ? "destructive" : "outline"}>
-                      {text(attempt.status)}
-                    </Badge>
+            <div className="space-y-3">
+              {inspector.attempts.map((attempt) => (
+                <article key={attempt.id} className="rounded-lg border border-border/70 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-mono text-sm">{attempt.id}</h3>
+                    <Badge variant={statusVariant(attempt.status)}>{attempt.status}</Badge>
                   </div>
-                  <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <dl className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <Detail label={t("labels.taskId")} value={attempt.task_id} />
+                    <Detail label={t("labels.worker")} value={attempt.worker_name} />
+                    <Detail label={t("labels.purpose")} value={attempt.purpose} />
+                    <Detail label={t("labels.workerConfig")} value={attempt.worker_config_path} />
+                    <Detail label={t("labels.harness")} value={attempt.harness} />
+                    <Detail label={t("labels.model")} value={attempt.model} />
+                    <Detail label={t("labels.started")} value={formatTime(attempt.started_at)} />
                     <Detail
-                      label={t("labels.agentProfile")}
-                      value={attempt.agent_profile ?? attempt.agent_profile_id ?? attempt.profile}
-                    />
-                    <Detail
-                      label={t("labels.worktree")}
-                      value={
-                        attempt.worktree_path ?? attempt.worktree ?? attempt.workspace_lease_id
-                      }
-                    />
-                    <Detail label={t("labels.stage")} value={attempt.stage ?? attempt.phase} />
-                    <Detail
-                      label={t("labels.toolCalls")}
-                      value={attempt.tool_calls ?? attempt.tools}
-                    />
-                    <Detail
-                      label={t("labels.started")}
-                      value={formatTime(attempt.started_at ?? attempt.start_time)}
-                    />
-                    <Detail
-                      label={t("labels.ended")}
-                      value={formatTime(
-                        attempt.finished_at ?? attempt.ended_at ?? attempt.end_time,
-                      )}
+                      label={t("labels.completed")}
+                      value={formatTime(attempt.completed_at)}
                     />
                     <Detail
                       label={t("labels.duration")}
-                      value={duration(
-                        attempt.started_at ?? attempt.start_time,
-                        attempt.finished_at ?? attempt.ended_at ?? attempt.end_time,
-                        attempt.duration_ms,
-                      )}
+                      value={formatSeconds(attemptDuration(attempt))}
                     />
                     <Detail
-                      label={t("labels.retryCount")}
-                      value={attempt.retry_count ?? attempt.retries}
+                      label={t("labels.parallelOverlap")}
+                      value={formatSeconds(overlapByAttemptId.get(attempt.id) ?? null)}
                     />
-                    <Detail label={t("labels.exitCode")} value={attempt.exit_code} />
+                    <Detail label={t("labels.childSessionId")} value={attempt.child_session_id} />
                   </dl>
-                  {failureCode !== undefined && (
-                    <p className="mt-3 flex items-center gap-2 text-sm text-destructive">
-                      <TriangleAlert className="size-4" />
-                      {t("failureCode", { code: String(failureCode) })}
-                    </p>
-                  )}
-                  {failureReason !== undefined && (
-                    <p className="mt-2 text-sm text-destructive">{String(failureReason)}</p>
-                  )}
-                  {retryAdvice !== undefined && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      {t("retrySuggestion", { advice: String(retryAdvice) })}
-                    </p>
-                  )}
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
-                    <LogBlock label={t("labels.stdout")} value={attempt.stdout} />
-                    <LogBlock label={t("labels.stderr")} value={attempt.stderr} />
-                  </div>
                 </article>
-              );
-            })
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("leases")}</CardTitle>
+          <CardDescription>{t("leasesDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {inspector.leases.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("noLeases")}</p>
+          ) : (
+            <div className="space-y-3">
+              {inspector.leases.map((lease) => (
+                <article key={lease.id} className="rounded-lg border border-border/70 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono text-sm">{lease.id}</span>
+                    <Badge variant="outline">{lease.status}</Badge>
+                  </div>
+                  <dl className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <Detail label={t("labels.worktree")} value={lease.worktree_path} />
+                    <Detail label={t("labels.branch")} value={lease.branch} />
+                    <Detail label={t("labels.baseCommit")} value={lease.base_commit} />
+                    <Detail label={t("labels.outputCommit")} value={lease.output_commit} />
+                    <Detail label={t("labels.host")} value={lease.host_id} />
+                    <Detail label={t("labels.repositoryId")} value={lease.repository_id} />
+                    <Detail label={t("labels.owner")} value={lease.owner_id} />
+                    <Detail label={t("labels.childSessionId")} value={lease.child_session_id} />
+                  </dl>
+                </article>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <TriangleAlert className="size-4" />
+            {t("failures")}
+          </CardTitle>
+          <CardDescription>{t("failuresDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {inspector.failures.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("noFailures")}</p>
+          ) : (
+            <ul className="space-y-2">
+              {inspector.failures.map((failure) => (
+                <li
+                  key={`${failure.attempt_id ?? "run"}-${failure.code}-${failure.message}`}
+                  className="rounded-lg border border-destructive/30 p-3"
+                >
+                  <p className="font-mono text-xs text-destructive">{failure.code}</p>
+                  <p className="mt-1 text-sm">{failure.message}</p>
+                  <p className="mt-1 font-mono text-xs text-muted-foreground">
+                    {t("attemptReference", { id: display(failure.attempt_id) })}
+                  </p>
+                </li>
+              ))}
+            </ul>
           )}
         </CardContent>
       </Card>
@@ -385,103 +395,220 @@ export function RunInspector({ run }: RunInspectorProps) {
           <CardDescription>{t("parentInboxDescription")}</CardDescription>
         </CardHeader>
         <CardContent>
-          {[
-            ...inbox,
-            ...events.filter((event) =>
-              String(event.type ?? event.event_type ?? "")
-                .toLowerCase()
-                .includes("inbox"),
-            ),
-          ].length === 0 ? (
+          {inspector.events.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t("noInbox")}</p>
           ) : (
             <div className="space-y-2">
-              {[
-                ...inbox,
-                ...events.filter((event) =>
-                  String(event.type ?? event.event_type ?? "")
-                    .toLowerCase()
-                    .includes("inbox"),
-                ),
-              ].map((event, index) => (
-                <div
-                  key={text(event.id ?? event.event_id, String(index))}
-                  className="rounded-md bg-muted/40 p-3 text-xs"
-                >
-                  <div className="flex justify-between gap-3">
-                    <span className="font-medium">
-                      {text(event.type ?? event.event_type ?? event.kind)}
-                    </span>
-                    <span className="text-muted-foreground">
-                      {formatTime(event.occurred_at ?? event.created_at)}
-                    </span>
-                  </div>
-                  <pre className="mt-2 whitespace-pre-wrap font-mono">
-                    {JSON.stringify(event.payload ?? event.message ?? event, null, 2)}
-                  </pre>
-                </div>
-              ))}
+              {inspector.events.map((event) => {
+                const safePayloadDetails = safeEventPayloadDetails(event.payload);
+                return (
+                  <article
+                    key={`${event.source}:${event.source_event_id}`}
+                    className="rounded-lg border border-border/70 p-3"
+                  >
+                    <h3 className="font-medium">{event.event_type}</h3>
+                    <dl className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <Detail label={t("labels.eventSource")} value={event.source} />
+                      <Detail label={t("labels.sourceEventId")} value={event.source_event_id} />
+                      <Detail label={t("labels.taskId")} value={event.task_id} />
+                      <Detail label={t("labels.attemptId")} value={event.attempt_id} />
+                      <Detail label={t("labels.sessionId")} value={event.session_id} />
+                      <Detail
+                        label={t("labels.conversationItemId")}
+                        value={event.conversation_item_id}
+                      />
+                      {safePayloadDetails.map((detail) => (
+                        <Detail
+                          key={detail.label}
+                          label={t(`labels.${detail.label}`)}
+                          value={detail.value}
+                        />
+                      ))}
+                    </dl>
+                  </article>
+                );
+              })}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {(commits.length > 0 || artifacts.length > 0) && (
-        <Card>
-          <CardHeader>
-            <CardTitle>{t("outputs")}</CardTitle>
-            <CardDescription>{t("outputsDescription")}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {commits.length > 0 && (
-              <div>
-                <h3 className="mb-2 flex items-center gap-2 text-sm font-medium">
-                  <GitCommitHorizontal className="size-4" />
-                  {t("commits")}
-                </h3>
-                <ul className="space-y-1">
-                  {commits.map((commit, index) => (
-                    <li
-                      key={text(commit.id ?? commit.sha, String(index))}
-                      className="font-mono text-xs"
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("references")}</CardTitle>
+          <CardDescription>{t("referencesDescription")}</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-5 md:grid-cols-2">
+          <div>
+            <h3 className="text-sm font-medium">{t("logs")}</h3>
+            {inspector.log_references.length === 0 ? (
+              <p className="mt-2 text-sm text-muted-foreground">{t("noLogs")}</p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {inspector.log_references.map((reference) => (
+                  <li key={`${reference.session_id}-${reference.href}`}>
+                    <a
+                      className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                      href={reference.href}
                     >
-                      {text(commit.sha ?? commit.commit)} {text(commit.message, "")}
+                      <ExternalLink className="size-3" />
+                      {t("logLink", { sessionId: reference.session_id })}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div>
+            <h3 className="text-sm font-medium">{t("artifacts")}</h3>
+            {inspector.artifact_references.length === 0 ? (
+              <p className="mt-2 text-sm text-muted-foreground">{t("noArtifacts")}</p>
+            ) : (
+              <ul className="mt-2 space-y-2">
+                {inspector.artifact_references.map((artifact) => {
+                  const href = safeArtifactHref(artifact.location);
+                  return (
+                    <li key={artifact.id}>
+                      {href ? (
+                        <a
+                          className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
+                          href={href}
+                        >
+                          <ExternalLink className="size-3" />
+                          {artifact.name}
+                        </a>
+                      ) : (
+                        <span className="text-sm">{artifact.name}</span>
+                      )}
                     </li>
-                  ))}
-                </ul>
-              </div>
+                  );
+                })}
+              </ul>
             )}
-            {artifacts.length > 0 && (
-              <div>
-                <h3 className="mb-2 text-sm font-medium">{t("artifacts")}</h3>
-                <ul className="space-y-1">
-                  {artifacts.map((artifact, index) => {
-                    const href = artifact.url ?? artifact.href;
-                    return (
-                      <li
-                        key={text(artifact.id ?? artifact.name, String(index))}
-                        className="text-sm"
-                      >
-                        {typeof href === "string" ? (
-                          <a
-                            className="inline-flex items-center gap-1 text-primary hover:underline"
-                            href={href}
-                          >
-                            <ExternalLink className="size-3" />
-                            {text(artifact.name ?? artifact.path ?? href)}
-                          </a>
-                        ) : (
-                          text(artifact.name ?? artifact.path)
-                        )}
-                      </li>
-                    );
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>{t("evaluation")}</CardTitle>
+              <CardDescription>{t("evaluationDescription")}</CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              {evaluation && (
+                <Badge variant="outline">{t(`evaluationStatus.${evaluation.status}`)}</Badge>
+              )}
+              {onRefreshEvaluation && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={evaluationRefreshing}
+                  onClick={onRefreshEvaluation}
+                >
+                  <RefreshCw className={evaluationRefreshing ? "animate-spin" : undefined} />
+                  {evaluationRefreshing ? t("refreshingEvaluation") : t("refreshEvaluation")}
+                </Button>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {evaluationError && (
+            <p role="alert" className="mb-4 text-sm text-destructive">
+              {t("evaluationError", { message: evaluationError })}
+            </p>
+          )}
+          {!evaluation ? (
+            <p className="text-sm text-muted-foreground">{t("noEvaluation")}</p>
+          ) : (
+            <div className="space-y-5">
+              <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <Detail
+                  label={t("labels.completionRate")}
+                  value={formatPercent(evaluation.metrics.task_completion_rate)}
+                />
+                <Detail
+                  label={t("labels.attemptSuccess")}
+                  value={t("successValue", {
+                    value: formatPercent(evaluation.metrics.attempt_success_rate),
                   })}
-                </ul>
+                />
+                <Detail label={t("labels.retries")} value={evaluation.metrics.retry_count} />
+                <Detail label={t("labels.blocked")} value={evaluation.metrics.blocked_count} />
+                <Detail
+                  label={t("labels.blockedDuration")}
+                  value={formatSeconds(evaluation.metrics.blocked_duration_seconds)}
+                />
+                <Detail
+                  label={t("labels.parallelOverlap")}
+                  value={formatSeconds(evaluation.metrics.parallel_overlap_seconds)}
+                />
+                <Detail
+                  label={t("labels.maxConcurrency")}
+                  value={evaluation.metrics.max_concurrency}
+                />
+                <Detail
+                  label={t("labels.workerDuration")}
+                  value={formatSeconds(evaluation.metrics.worker_duration_seconds)}
+                />
+                <Detail
+                  label={t("labels.parentInboxLatency")}
+                  value={formatSeconds(evaluation.metrics.parent_inbox_latency_seconds)}
+                />
+                <Detail
+                  label={t("labels.parentInboxSamples")}
+                  value={evaluation.metrics.parent_inbox_latency_samples}
+                />
+              </dl>
+              <div>
+                <h3 className="text-sm font-medium">{t("workers")}</h3>
+                {evaluation.workers.length === 0 ? (
+                  <p className="mt-2 text-sm text-muted-foreground">{t("noWorkers")}</p>
+                ) : (
+                  <div className="mt-2 space-y-2">
+                    {evaluation.workers.map((worker) => (
+                      <article key={worker.worker_name} className="rounded-lg bg-muted/40 p-3">
+                        <h4 className="font-medium">
+                          {t("workerValue", { name: worker.worker_name })}
+                        </h4>
+                        <dl className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                          <Detail label={t("labels.tasks")} value={worker.task_count} />
+                          <Detail label={t("labels.attempts")} value={worker.attempt_count} />
+                          <Detail label={t("labels.successes")} value={worker.success_count} />
+                          <Detail
+                            label={t("labels.duration")}
+                            value={formatSeconds(worker.duration_seconds)}
+                          />
+                        </dl>
+                      </article>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+              <div className="grid gap-5 md:grid-cols-2">
+                <div>
+                  <h3 className="text-sm font-medium">{t("evidenceCounts")}</h3>
+                  <dl className="mt-2 grid grid-cols-2 gap-3">
+                    {Object.entries(evaluation.metrics.evidence_counts).map(([kind, count]) => (
+                      <Detail key={kind} label={t(`evidence.${kind}`)} value={count} />
+                    ))}
+                  </dl>
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium">{t("evidenceReferences")}</h3>
+                  <ul className="mt-2 space-y-1 font-mono text-xs">
+                    {evaluation.evidence_refs.map((reference) => (
+                      <li key={reference}>{reference}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

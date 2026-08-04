@@ -2,12 +2,18 @@ import { Link, useParams } from "@/lib/routing";
 import { useTranslation } from "react-i18next";
 import { PageScroll } from "@/components/PageScroll";
 import { RunInspector } from "@/components/runs/RunInspector";
-import { useRun } from "@/hooks/useRuns";
+import { useRefreshRunEvaluation, useRun, useRunEvaluation } from "@/hooks/useRuns";
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export function RunInspectorPage() {
   const { t } = useTranslation("agents", { keyPrefix: "multiAgent.runInspector" });
   const { runId } = useParams<{ runId: string }>();
   const run = useRun(runId ?? null);
+  const evaluation = useRunEvaluation(runId ?? null, Boolean(run.data));
+  const refreshEvaluation = useRefreshRunEvaluation();
 
   if (!runId)
     return (
@@ -24,7 +30,7 @@ export function RunInspectorPage() {
   if (run.isError)
     return (
       <div role="alert" className="p-8 text-sm text-destructive">
-        {t("loadError", { message: run.error.message })}
+        {t("loadError", { message: errorMessage(run.error) })}
       </div>
     );
   if (!run.data)
@@ -40,9 +46,21 @@ export function RunInspectorPage() {
         <Link to="/multi-agents" className="text-sm text-muted-foreground hover:underline">
           {t("back")}
         </Link>
-        <h1 className="text-2xl font-semibold">{t("runTitle", { id: run.data.id })}</h1>
+        <h1 className="text-2xl font-semibold">{t("runTitle", { id: run.data.run.id })}</h1>
       </div>
-      <RunInspector run={run.data} />
+      <RunInspector
+        inspector={run.data}
+        evaluation={evaluation.data}
+        evaluationError={
+          refreshEvaluation.isError
+            ? errorMessage(refreshEvaluation.error)
+            : evaluation.isError
+              ? errorMessage(evaluation.error)
+              : null
+        }
+        evaluationRefreshing={refreshEvaluation.isPending}
+        onRefreshEvaluation={() => refreshEvaluation.mutate(run.data.run.id)}
+      />
     </PageScroll>
   );
 }
