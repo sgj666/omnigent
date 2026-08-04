@@ -31,10 +31,25 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from omnigent.db.compression import CompressedText
 
-# 32-byte sha256 digest column. LargeBinary → BYTEA (Postgres) / BLOB (SQLite),
-# but MySQL cannot index a BLOB without a key-prefix length, so use fixed-length
-# BINARY(32) there — an exact fit for the digest and fully indexable.
-_CKSUM32 = LargeBinary(32).with_variant(MySQLBinary(32), "mysql")
+
+def _uses_mysql_binary(dialect: Any) -> bool:
+    """Return whether *dialect* requires indexable fixed-width binary columns."""
+    return dialect.name in {"mysql", "mariadb"} or bool(getattr(dialect, "is_mariadb", False))
+
+
+class _Checksum32(TypeDecorator[bytes]):
+    """A SHA-256 digest stored indexably on MySQL and MariaDB."""
+
+    impl = LargeBinary(32)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect: Any) -> Any:
+        if _uses_mysql_binary(dialect):
+            return dialect.type_descriptor(MySQLBinary(32))
+        return dialect.type_descriptor(LargeBinary(32))
+
+
+_CKSUM32 = _Checksum32()
 
 
 # Hex length of a bare uuid4 id, the canonical Python-side form.
@@ -150,7 +165,7 @@ class Uuid16(TypeDecorator[str]):
     cache_ok = True
 
     def load_dialect_impl(self, dialect: Any) -> Any:
-        if dialect.name == "mysql":
+        if _uses_mysql_binary(dialect):
             return dialect.type_descriptor(MySQLBinary(16))
         return dialect.type_descriptor(LargeBinary(16))
 
@@ -767,6 +782,11 @@ class SqlConversation(ConversationBase):
     :param next_position: Monotonic allocator for the next item position.
     :param agent_id: Agent bound to the conversation at creation time.
         ``None`` for conversations created without an agent binding.
+    :param agent_bundle_version: Immutable Agent Bundle version captured
+        for this Session tree. ``None`` on legacy/non-Agent-bound rows.
+    :param agent_bundle_digest: SHA-256 digest for the captured bundle.
+    :param agent_bundle_location: Internal artifact-store location for the
+        captured bundle. Kept private from public Session API schemas.
     :param session_overrides: Compact JSON blob of per-session config
         overrides (reasoning_effort, model_override,
         cost_control_mode_override, harness_override). ``None`` when the
@@ -801,6 +821,9 @@ class SqlConversation(ConversationBase):
     # created without an agent binding. Indexed for the agent→conversation
     # reverse lookup and the list filters (agent_id / has_agent_id / agent_name).
     agent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    agent_bundle_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    agent_bundle_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    agent_bundle_location: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # Per-session config overrides packed as a compact JSON object, e.g.
     # ``{"model_override":"claude-opus-4-8","reasoning_effort":"high"}``. Keys:
     # reasoning_effort, model_override, cost_control_mode_override,
@@ -1734,7 +1757,14 @@ class SqlRun(OmnigentBase):
         default=current_workspace_id,
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
-    team_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    team_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    bundle_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bundle_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    root_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    legacy_state: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="legacy_unbound", default="legacy_unbound"
+    )
     workspace_bundle_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -1742,7 +1772,11 @@ class SqlRun(OmnigentBase):
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    __table_args__ = (Index("ix_runs_team_status", "workspace_id", "team_id", "status", "id"),)
+    __table_args__ = (
+        Index("ix_runs_team_status", "workspace_id", "team_id", "status", "id"),
+        Index("ix_runs_agent_status", "workspace_id", "agent_id", "status", "id"),
+        Index("uq_runs_root_session", "workspace_id", "root_session_id", unique=True),
+    )
 
 
 class SqlRunTask(OmnigentBase):
@@ -1759,12 +1793,20 @@ class SqlRunTask(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     run_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    root_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    child_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    dispatch_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    purpose: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_event_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    __table_args__ = (Index("ix_run_tasks_run_status", "workspace_id", "run_id", "status", "id"),)
+    __table_args__ = (
+        Index("ix_run_tasks_run_status", "workspace_id", "run_id", "status", "id"),
+        Index("uq_run_tasks_source_event", "workspace_id", "source_event_id", unique=True),
+    )
 
 
 class SqlTaskDependency(OmnigentBase):
@@ -1806,12 +1848,29 @@ class SqlAttempt(OmnigentBase):
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
     task_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
-    agent_profile_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    agent_profile_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    child_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    worker_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    worker_config_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    purpose: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    harness: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    dispatch_call_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    response_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    turn_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    started_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    retry_of_attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    source_event_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    __table_args__ = (Index("ix_attempts_task_status", "workspace_id", "task_id", "status", "id"),)
+    __table_args__ = (
+        Index("ix_attempts_task_status", "workspace_id", "task_id", "status", "id"),
+        Index("uq_attempts_source_event", "workspace_id", "source_event_id", unique=True),
+    )
 
 
 class SqlHarnessEvent(OmnigentBase):
@@ -1832,6 +1891,10 @@ class SqlHarnessEvent(OmnigentBase):
     run_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    conversation_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    source_kind: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_event_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     event_type: Mapped[str] = mapped_column(String(128), nullable=False)
     payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -1841,6 +1904,13 @@ class SqlHarnessEvent(OmnigentBase):
         UniqueConstraint("workspace_id", "sequence", name="uq_harness_events_sequence"),
         Index("ix_harness_events_workspace_sequence", "workspace_id", "sequence", "id"),
         Index("ix_harness_events_attempt_id", "workspace_id", "attempt_id", "id"),
+        Index(
+            "uq_harness_events_source",
+            "workspace_id",
+            "source_kind",
+            "source_event_id",
+            unique=True,
+        ),
     )
 
 
@@ -1881,7 +1951,11 @@ class SqlFeishuInstallation(OmnigentBase):
         default=current_workspace_id,
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
-    team_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    team_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    tenant_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    bot_open_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    installer_open_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     app_id: Mapped[str] = mapped_column(String(256), nullable=False)
     app_secret_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
@@ -1892,6 +1966,111 @@ class SqlFeishuInstallation(OmnigentBase):
     __table_args__ = (
         UniqueConstraint("workspace_id", "app_id", name="uq_feishu_installations_app_id"),
         Index("ix_feishu_installations_team_id", "workspace_id", "team_id", "id"),
+        Index("ix_feishu_installations_agent_id", "workspace_id", "agent_id", "id"),
+    )
+
+
+class SqlFeishuThreadBinding(OmnigentBase):
+    """A Feishu chat/thread binding to an Agent and execution surface."""
+
+    __tablename__ = "feishu_thread_bindings"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    installation_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    agent_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    chat_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    thread_id: Mapped[str] = mapped_column(String(256), nullable=False, server_default="")
+    default_workspace_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    host_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    execution_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="auto", default="auto"
+    )
+    allowed_members: Mapped[str | None] = mapped_column(Text, nullable=True)
+    surface_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "installation_id",
+            "chat_id",
+            "thread_id",
+            name="uq_feishu_thread_bindings_chat_thread",
+        ),
+        Index("ix_feishu_thread_bindings_agent", "workspace_id", "agent_id", "id"),
+    )
+
+
+def worktree_path_cksum(worktree_path: str) -> bytes:
+    """Return SHA-256 of the exact UTF-8 worktree path bytes.
+
+    Lease writers must use this digest without normalizing or case-folding the
+    path. The fixed 32-byte value is the unique-key representation; the full
+    path remains stored in ``worktree_path``.
+    """
+    return hashlib.sha256(worktree_path.encode("utf-8")).digest()
+
+
+def _default_worktree_path_cksum(context: Any) -> bytes:
+    """Derive ``worktree_path_cksum`` for ORM inserts."""
+    return worktree_path_cksum(context.get_current_parameters()["worktree_path"])
+
+
+class SqlWorktreeLease(OmnigentBase):
+    """A durable ownership lease for one child Session worktree."""
+
+    __tablename__ = "worktree_leases"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    child_session_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    host_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    repository_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    worktree_path: Mapped[str] = mapped_column(String(2048), nullable=False)
+    # sha256(exact UTF-8 worktree_path), never normalized or case-folded.
+    worktree_path_cksum: Mapped[bytes] = mapped_column(
+        _CKSUM32,
+        nullable=False,
+        default=_default_worktree_path_cksum,
+    )
+    branch: Mapped[str] = mapped_column(String(512), nullable=False)
+    owner_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    heartbeat_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    output_commit: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    released_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "host_id",
+            "worktree_path_cksum",
+            name="uq_worktree_leases_host_path",
+        ),
+        Index(
+            "ix_worktree_leases_child",
+            "workspace_id",
+            "child_session_id",
+            "state",
+            "id",
+        ),
     )
 
 

@@ -47,6 +47,7 @@ _SQLITE_UNSAFE_OPS = frozenset(
 )
 
 _VERSIONS_DIR = Path(omnigent.db.__file__).parent / "migrations" / "versions"
+_SESSION_PROJECTION_MIGRATION = _VERSIONS_DIR / "zc1d2e3f4a5b_pin_bundle_and_project_sessions.py"
 
 
 def _raw_unsafe_op_calls(source: str) -> list[tuple[str, int]]:
@@ -107,6 +108,15 @@ def test_no_migration_uses_sqlite_unsafe_raw_ddl() -> None:
         "pre-3.35). Wrap each in `with op.batch_alter_table(<table>) as "
         f"batch_op:` and use `batch_op.<op>(...)`. Offenders: {offenders}"
     )
+
+
+def test_session_projection_migration_is_present_and_sqlite_safe() -> None:
+    """The additive Session projection revision uses batch mode for unsafe DDL."""
+    assert _SESSION_PROJECTION_MIGRATION.exists()
+    source = _SESSION_PROJECTION_MIGRATION.read_text()
+    assert 'revision: str = "zc1d2e3f4a5b"' in source
+    assert 'down_revision: str | None = "zb2c3d4e5f6a"' in source
+    assert _raw_unsafe_op_calls(source) == []
 
 
 def test_full_migration_chain_round_trips_on_sqlite() -> None:
