@@ -1,7 +1,7 @@
 # Omnigent × 飞书团队多 Agent Harness 设计规格
 
 日期：2026-08-03
-状态：设计已获用户确认，待实施计划
+状态：已由 `2026-08-04-multi-agent-bundle-builder-design.md` 取代；仅保留为历史记录
 基线：本地 Omnigent fork（`main` 当前版本）
 
 ## 1. 背景与目标
