@@ -11,6 +11,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { AgentConfigEditor } from "@/components/multi-agent/AgentConfigEditor";
+import { AgentFeishuPairingDialog } from "@/components/multi-agent/AgentFeishuPairingDialog";
 import { BundleDiagnostics } from "@/components/multi-agent/BundleDiagnostics";
 import { WorkspaceRunPanel } from "@/components/multi-agent/WorkspaceRunPanel";
 import { PageScroll } from "@/components/PageScroll";
@@ -22,7 +23,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useAgentFormSchema,
-  useConnectMultiAgentFeishu,
   useCreateMultiAgent,
   useMultiAgent,
   useUpdateMultiAgent,
@@ -161,7 +161,6 @@ export function MultiAgentDetailPage() {
   const bundle = useMultiAgent(isNew ? null : agentId);
   useAgentFormSchema(!isNew);
   const update = useUpdateMultiAgent();
-  const connectFeishu = useConnectMultiAgentFeishu();
   const [mode, setMode] = useState("visual");
   const [coordinator, setCoordinator] = useState<EditableFile | null>(null);
   const [workers, setWorkers] = useState<EditableFile[]>([]);
@@ -172,6 +171,7 @@ export function MultiAgentDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [initializedVersion, setInitializedVersion] = useState<string | null>(null);
   const [feishuStatus, setFeishuStatus] = useState<string | null>(null);
+  const [feishuOpen, setFeishuOpen] = useState(false);
 
   useEffect(() => {
     if (!bundle.data) return;
@@ -289,17 +289,6 @@ export function MultiAgentDetailPage() {
     }
   }
 
-  async function connect() {
-    if (!agentId) return;
-    setFeishuStatus("pending");
-    try {
-      const result = await connectFeishu.mutateAsync(agentId);
-      setFeishuStatus(result.status);
-    } catch {
-      setFeishuStatus("error");
-    }
-  }
-
   if (!isNew && bundle.isLoading)
     return (
       <div className="flex min-h-full items-center justify-center text-sm text-muted-foreground">
@@ -353,13 +342,8 @@ export function MultiAgentDetailPage() {
                 <Badge variant={feishuStatus === "error" ? "destructive" : "outline"}>
                   {t(`status.${feishuStatus ?? "disconnected"}`)}
                 </Badge>
-                <Button
-                  variant="outline"
-                  onClick={() => void connect()}
-                  disabled={connectFeishu.isPending}
-                >
-                  <LinkIcon />{" "}
-                  {connectFeishu.isPending ? t("feishu.connecting") : t("feishu.connect")}
+                <Button variant="outline" onClick={() => setFeishuOpen(true)}>
+                  <LinkIcon /> {t("feishu.connect")}
                 </Button>
                 {!readonly && (
                   <Button onClick={() => void save()} disabled={update.isPending}>
@@ -529,17 +513,13 @@ export function MultiAgentDetailPage() {
               </Card>
             </div>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("feishu.title")}</CardTitle>
-                <CardDescription>{t("feishu.description")}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Badge variant={feishuStatus === "error" ? "destructive" : "outline"}>
-                  {t(`status.${feishuStatus ?? "disconnected"}`)}
-                </Badge>
-              </CardContent>
-            </Card>
+            <AgentFeishuPairingDialog
+              agentId={bundle.data.agent.id}
+              agentName={bundle.data.agent.name}
+              open={feishuOpen}
+              onOpenChange={setFeishuOpen}
+              onStatusChange={setFeishuStatus}
+            />
             <WorkspaceRunPanel agentId={bundle.data.agent.id} />
           </div>
         )

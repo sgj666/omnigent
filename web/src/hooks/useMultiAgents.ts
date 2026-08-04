@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   cloneAgentBundle,
-  connectAgentBundleFeishu,
   createAgentBundle,
   deleteAgentBundle,
   getAgentBundle,
@@ -98,14 +97,5 @@ export function useDeleteMultiAgent() {
   return useMutation({
     mutationFn: (agent_id: string) => deleteAgentBundle(agent_id),
     onSuccess: (_data, agent_id) => invalidateMultiAgentCaches(queryClient, agent_id),
-  });
-}
-
-export function useConnectMultiAgentFeishu() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (agent_id: string) => connectAgentBundleFeishu(agent_id),
-    onSuccess: (_result, agent_id) =>
-      queryClient.invalidateQueries({ queryKey: multiAgentQueryKey(agent_id) }),
   });
 }

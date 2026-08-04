@@ -63,7 +63,6 @@ vi.mock("@/hooks/useMultiAgents", () => ({
   useCloneMultiAgent: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteMultiAgent: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useImportMultiAgent: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useConnectMultiAgentFeishu: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@/lib/CapabilitiesContext", () => ({

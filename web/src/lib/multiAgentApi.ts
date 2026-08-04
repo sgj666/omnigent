@@ -32,15 +32,14 @@ export interface MultiAgentSummary {
   recent_run: MultiAgentRecentRun | null;
 }
 
-export interface BundleFeishuConnection {
-  status: BundleFeishuStatus;
-  detail?: string | null;
-}
-
 export interface StartMultiAgentRunInput {
   agent_id: string;
   workspace_id: string;
-  host_id: string;
+  input: string;
+  source: "web" | string;
+  source_event_id: string;
+  host_id?: string;
+  execution_mode: "auto" | string;
 }
 
 export interface MultiAgentRun {
@@ -393,14 +392,6 @@ export async function exportAgentBundle(agent_id: string): Promise<Blob> {
   const response = await authenticatedFetch(`/v1/agents/${encodeURIComponent(agent_id)}/export`);
   if (!response.ok) throw await errorFromResponse(response);
   return response.blob();
-}
-
-export async function connectAgentBundleFeishu(agent_id: string): Promise<BundleFeishuConnection> {
-  const response = await authenticatedFetch(
-    `/v1/agents/${encodeURIComponent(agent_id)}/feishu/connect`,
-    { method: "POST" },
-  );
-  return readJson<BundleFeishuConnection>(response);
 }
 
 export async function startMultiAgentRun(input: StartMultiAgentRunInput): Promise<MultiAgentRun> {

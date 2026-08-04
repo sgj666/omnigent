@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MultiAgentDetailPage } from "./MultiAgentDetailPage";
@@ -9,7 +9,6 @@ const hooks = vi.hoisted(() => ({
   schema: vi.fn(),
   create: { mutateAsync: vi.fn(), isPending: false, isError: false, error: null },
   update: { mutateAsync: vi.fn(), isPending: false, isError: false, error: null },
-  connect: { mutateAsync: vi.fn(), isPending: false },
 }));
 
 vi.mock("@/hooks/useMultiAgents", () => ({
@@ -17,7 +16,6 @@ vi.mock("@/hooks/useMultiAgents", () => ({
   useAgentFormSchema: () => hooks.schema(),
   useCreateMultiAgent: () => hooks.create,
   useUpdateMultiAgent: () => hooks.update,
-  useConnectMultiAgentFeishu: () => hooks.connect,
 }));
 
 vi.mock("@/hooks/useWorkspaces", () => ({
@@ -40,6 +38,19 @@ vi.mock("@/hooks/useWorkspaces", () => ({
 
 vi.mock("@/hooks/useHosts", () => ({
   useHosts: () => ({ data: [{ host_id: "host_1", name: "Local Mac", status: "online" }] }),
+}));
+
+vi.mock("@/hooks/useFeishuInstall", () => ({
+  useAgentFeishuConnection: () => ({ data: null, isLoading: false, error: null }),
+  useBeginAgentFeishu: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
+  useDisconnectAgentFeishu: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
+  useBindAgentFeishuWorkspace: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
+  useAgentFeishuSurface: () => ({ data: undefined, error: null }),
+  useReinitializeAgentFeishuSurface: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    error: null,
+  }),
 }));
 
 const draft = {
@@ -137,5 +148,14 @@ describe("MultiAgentDetailPage", () => {
     expect(screen.getByText("api")).toBeVisible();
     expect(screen.getByText("web")).toBeVisible();
     expect(screen.getByRole("button", { name: "Run" })).toBeVisible();
+  });
+
+  it("opens Agent-scoped Feishu pairing instead of completing from a status-only button", () => {
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connect Feishu" }));
+
+    expect(screen.getByRole("dialog", { name: "Connect Feishu" })).toBeVisible();
+    expect(screen.getByText("Coordinator connection")).toBeVisible();
   });
 });

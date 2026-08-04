@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FolderGit2Icon, PlayIcon, PlusIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -31,8 +32,10 @@ export function WorkspaceRunPanel({
   const [workspaceId, setWorkspaceId] = useState("");
   const [hostId, setHostId] = useState("");
   const [rootPath, setRootPath] = useState("");
+  const [taskInput, setTaskInput] = useState("");
   const [runError, setRunError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
+  const sourceEventId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!workspaceId && workspaces.data?.[0]) setWorkspaceId(workspaces.data[0].id);
@@ -54,15 +57,21 @@ export function WorkspaceRunPanel({
   }
 
   async function run() {
-    if (!selected || !hostId) return;
+    if (!selected || !hostId || !taskInput.trim()) return;
     setRunError(null);
     setStarting(true);
+    sourceEventId.current ??= `web:${crypto.randomUUID()}`;
     try {
       const started = await startMultiAgentRun({
         agent_id: agentId,
         workspace_id: selected.id,
+        input: taskInput.trim(),
+        source: "web",
+        source_event_id: sourceEventId.current,
         host_id: hostId,
+        execution_mode: "auto",
       });
+      sourceEventId.current = null;
       navigate(`/runs/${started.id}`);
     } catch (error) {
       setRunError(error instanceof Error ? error.message : t("workspace.runFailed"));
@@ -133,6 +142,22 @@ export function WorkspaceRunPanel({
             ))}
           </div>
         )}
+        <div className="space-y-1.5">
+          <label
+            htmlFor="multi-agent-run-input"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            {t("workspace.taskInput")}
+          </label>
+          <Textarea
+            id="multi-agent-run-input"
+            value={taskInput}
+            onChange={(event) => setTaskInput(event.target.value)}
+            placeholder={t("workspace.taskInputPlaceholder")}
+            disabled={disabled}
+            rows={3}
+          />
+        </div>
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-52 flex-1 space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">
@@ -157,7 +182,7 @@ export function WorkspaceRunPanel({
           </div>
           <Button
             onClick={() => void run()}
-            disabled={disabled || !selected || !hostId || starting}
+            disabled={disabled || !selected || !hostId || !taskInput.trim() || starting}
           >
             <PlayIcon /> {starting ? t("workspace.starting") : t("workspace.run")}
           </Button>

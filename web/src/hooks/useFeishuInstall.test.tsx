@@ -2,16 +2,35 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { createElement, useState, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { beginFeishuInstall, pollFeishuInstall, type FeishuInstallSession } from "@/lib/feishuApi";
-import { useFeishuInstall, useFeishuInstallStatus } from "./useFeishuInstall";
+import {
+  beginFeishuInstall,
+  getAgentFeishuInstallation,
+  pollAgentFeishuInstall,
+  pollFeishuInstall,
+  type FeishuInstallSession,
+} from "@/lib/feishuApi";
+import {
+  useAgentFeishuConnection,
+  useFeishuInstall,
+  useFeishuInstallStatus,
+} from "./useFeishuInstall";
 
 vi.mock("@/lib/feishuApi", () => ({
   beginFeishuInstall: vi.fn(),
   pollFeishuInstall: vi.fn(),
+  getAgentFeishuInstallation: vi.fn(),
+  pollAgentFeishuInstall: vi.fn(),
+  beginAgentFeishuInstall: vi.fn(),
+  disconnectAgentFeishu: vi.fn(),
+  bindAgentFeishuWorkspace: vi.fn(),
+  getAgentFeishuSurface: vi.fn(),
+  reinitializeAgentFeishuSurface: vi.fn(),
 }));
 
 const pollMock = vi.mocked(pollFeishuInstall);
 const beginMock = vi.mocked(beginFeishuInstall);
+const getAgentMock = vi.mocked(getAgentFeishuInstallation);
+const pollAgentMock = vi.mocked(pollAgentFeishuInstall);
 
 function wrapper({ children }: { children: ReactNode }) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -129,5 +148,32 @@ describe("useFeishuInstallStatus", () => {
     expect(result.current.data?.verification_uri_complete).toBe(
       "https://open.feishu.cn/page/launcher?user_code=TEST",
     );
+  });
+
+  it("polls a pending Agent grant to connected without losing the Agent scope", async () => {
+    getAgentMock.mockResolvedValue({
+      id: "installation-1",
+      agent_id: "agent-1",
+      session: "grant-1",
+      status: "pending",
+      verification_uri_complete: "https://open.feishu.test/PAIR",
+    });
+    pollAgentMock.mockResolvedValue({
+      id: "installation-1",
+      agent_id: "agent-1",
+      status: "connected",
+      bot_open_id: "bot-1",
+    });
+    const { result } = renderHook(() => useAgentFeishuConnection("agent-1"), { wrapper });
+
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(result.current.data?.status).toBe("pending");
+    await act(async () => {
+      await result.current.refetch();
+      await vi.advanceTimersByTimeAsync(1);
+    });
+
+    expect(pollAgentMock).toHaveBeenCalledWith("agent-1", "grant-1");
+    expect(result.current.data?.status).toBe("connected");
   });
 });

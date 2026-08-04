@@ -97,7 +97,11 @@ describe("multi-agent bundle API", () => {
     await startMultiAgentRun({
       agent_id: "ag_custom",
       workspace_id: "ws_1",
+      input: "Investigate the failing checkout flow",
+      source: "web",
+      source_event_id: "web:event-1",
       host_id: "host_1",
+      execution_mode: "auto",
     });
 
     expect(fetchMock).toHaveBeenCalledWith("/v1/runs", {
@@ -106,7 +110,11 @@ describe("multi-agent bundle API", () => {
       body: JSON.stringify({
         agent_id: "ag_custom",
         workspace_id: "ws_1",
+        input: "Investigate the failing checkout flow",
+        source: "web",
+        source_event_id: "web:event-1",
         host_id: "host_1",
+        execution_mode: "auto",
       }),
     });
   });
