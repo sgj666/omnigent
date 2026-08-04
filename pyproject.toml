@@ -235,6 +235,11 @@ memory = ["hindsight-client>=0.4.0"]
 slack = [
     "omnigent-slack==0.8.0.dev0",
 ]
+# Standalone PersonalAgent integration. Like Slack, core launches the provider
+# package by module name and never imports its implementation.
+feishu = [
+    "omnigent-feishu==0.8.0.dev0",
+]
 databricks = [
     # Floor matches what core code was tested against when the SDK was a
     # default dependency (it moved here from `dependencies` above).
@@ -344,6 +349,7 @@ omnigent-ui-sdk = { path = "sdks/ui", editable = true }
 # Local resolution for the `slack` extra. Only pulled in when `omnigent[slack]`
 # is requested (the extra is opt-in), so a default install never builds it.
 omnigent-slack = { path = "integrations/slack", editable = true }
+omnigent-feishu = { path = "integrations/feishu", editable = true }
 
 [tool.setuptools]
 include-package-data = true

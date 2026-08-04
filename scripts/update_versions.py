@@ -8,6 +8,7 @@ version:
 - ``omnigent-client``  — ``sdks/python-client/pyproject.toml``
 - ``omnigent-ui-sdk``  — ``sdks/ui/pyproject.toml``
 - ``omnigent-slack``   — ``integrations/slack/pyproject.toml``
+- ``omnigent-feishu``  — ``integrations/feishu/pyproject.toml``
 
 Each declares its own ``[project].version``. The first three ``==``-pin
 their siblings in ``[project].dependencies``; the root ``omnigent``
@@ -92,7 +93,12 @@ def packages(root: Path) -> list[Package]:
         Package(
             "omnigent",
             root / "pyproject.toml",
-            ("omnigent-client", "omnigent-ui-sdk", "omnigent-slack"),
+            (
+                "omnigent-client",
+                "omnigent-ui-sdk",
+                "omnigent-slack",
+                "omnigent-feishu",
+            ),
         ),
         Package(
             "omnigent-client",
@@ -113,6 +119,11 @@ def packages(root: Path) -> list[Package]:
         Package(
             "omnigent-slack",
             root / "integrations" / "slack" / "pyproject.toml",
+            (),
+        ),
+        Package(
+            "omnigent-feishu",
+            root / "integrations" / "feishu" / "pyproject.toml",
             (),
         ),
     ]

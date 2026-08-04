@@ -8386,6 +8386,27 @@ class _ConfigGroup(click.Group):
 
 # ── Integrations (Slack, …) ───────────────────────────────────────────
 
+
+@dataclass(frozen=True)
+class IntegrationCliSpec:
+    """Provider-neutral subprocess lifecycle metadata."""
+
+    name: str
+    module: str
+    display_name: str
+    install_hint: str
+
+
+def _integration_installed(spec: IntegrationCliSpec) -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec(spec.module) is not None
+
+
+def _integration_argv(spec: IntegrationCliSpec) -> list[str]:
+    return [sys.executable, "-m", spec.module]
+
+
 # Slack socket-mode bot: a separate `omnigent-slack` package (heavy deps —
 # slack_bolt/aiohttp — kept out of the core CLI install). The CLI launches it
 # as a subprocess and never imports it.
@@ -8397,18 +8418,17 @@ _SLACK_INSTALL_HINT = (
     "or, from a source checkout:\n"
     "  uv sync --extra slack"
 )
+_SLACK_SPEC = IntegrationCliSpec("slack", _SLACK_PACKAGE, "Slack bot", _SLACK_INSTALL_HINT)
 
 
 def _slack_installed() -> bool:
     """Whether the ``omnigent_slack`` package is importable (not imported)."""
-    import importlib.util
-
-    return importlib.util.find_spec(_SLACK_PACKAGE) is not None
+    return _integration_installed(_SLACK_SPEC)
 
 
 def _slack_argv() -> list[str]:
     """Argv that runs the Slack bot in the current interpreter."""
-    return [sys.executable, "-m", _SLACK_PACKAGE]
+    return _integration_argv(_SLACK_SPEC)
 
 
 def _integration_state_dir() -> Path:
@@ -8430,6 +8450,7 @@ def integration(ctx: click.Context) -> None:
     \b
     Available integrations:
       slack   The @omnigent Slack socket-mode bot.
+      feishu  The standalone Omnigent Feishu PersonalAgent service.
 
     Run ``omni integration slack`` to start the Slack bot in the foreground,
     or ``omni integration slack --background`` to run it in the background.
@@ -8568,6 +8589,124 @@ def slack_logs(follow: bool) -> None:
     if not log_path.exists():
         raise click.ClickException(f"Log file not found: {log_path}")
     # Delegate to `tail -f` for a portable follow without reimplementing it.
+    try:
+        subprocess.run(["tail", "-f", str(log_path)], check=False)
+    except FileNotFoundError as exc:
+        raise click.ClickException(
+            f"`tail` not available to follow the log. Log file: {log_path}"
+        ) from exc
+
+
+_FEISHU_PACKAGE = "omnigent_feishu"
+_FEISHU_INSTALL_HINT = (
+    "The Feishu integration (omnigent-feishu) isn't installed in this "
+    "environment. Install it alongside omnigent with the `feishu` extra:\n"
+    '  uv pip install "omnigent[feishu]"\n'
+    "or, from a source checkout:\n"
+    "  uv sync --extra feishu"
+)
+_FEISHU_SPEC = IntegrationCliSpec(
+    "feishu", _FEISHU_PACKAGE, "Feishu service", _FEISHU_INSTALL_HINT
+)
+
+
+def _feishu_installed() -> bool:
+    """Whether the external package is importable without importing it."""
+    return _integration_installed(_FEISHU_SPEC)
+
+
+def _feishu_argv() -> list[str]:
+    return _integration_argv(_FEISHU_SPEC)
+
+
+def _feishu_daemon() -> IntegrationDaemon:
+    return IntegrationDaemon("feishu", _integration_state_dir())
+
+
+@integration.group("feishu", invoke_without_command=True)
+@click.option(
+    "--background",
+    is_flag=True,
+    default=False,
+    help="Run the standalone Feishu service as a detached daemon.",
+)
+@click.pass_context
+def feishu(ctx: click.Context, background: bool) -> None:
+    """Run the standalone Agent-scoped Feishu integration."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if not _feishu_installed():
+        raise click.ClickException(_FEISHU_INSTALL_HINT)
+    if background:
+        _start_feishu_background()
+        return
+    existing = _feishu_daemon().running_record()
+    if existing is not None:
+        raise click.ClickException(
+            f"A background Feishu service is already running (pid {existing.pid}). "
+            "Stop it first with `omni integration feishu stop`."
+        )
+    click.echo("Starting the Omnigent Feishu service (foreground). Press Ctrl-C to stop.")
+    result = subprocess.run(_feishu_argv(), env=os.environ.copy(), check=False)
+    raise SystemExit(result.returncode)
+
+
+def _start_feishu_background() -> None:
+    daemon = _feishu_daemon()
+    existing = daemon.running_record()
+    if existing is not None:
+        click.echo(f"Feishu service already running (pid {existing.pid}).")
+        click.echo(f"Logs: {_display_path(Path(existing.log_path))}")
+        return
+    record = daemon.start(_feishu_argv(), os.environ.copy())
+    if not daemon.confirm_alive(record, grace_seconds=2.0):
+        tail = daemon.read_log_tail()
+        message = "The Feishu service exited immediately after starting."
+        if tail:
+            message += f"\nLast log lines:\n{tail}"
+        message += f"\nFull log: {_display_path(Path(record.log_path))}"
+        raise click.ClickException(message)
+    click.echo(f"Started the Omnigent Feishu service in the background (pid {record.pid}).")
+    click.echo(f"Logs: {_display_path(Path(record.log_path))}")
+    click.echo("Stop it with: omni integration feishu stop")
+
+
+@feishu.command("status")
+def feishu_status() -> None:
+    """Show standalone Feishu daemon status."""
+    record = _feishu_daemon().running_record()
+    if record is None:
+        click.echo("Feishu service: not running.")
+        return
+    started = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(record.started_at))
+    click.echo(f"Feishu service: running (pid {record.pid}, since {started}).")
+    click.echo(f"Logs: {_display_path(Path(record.log_path))}")
+
+
+@feishu.command("stop")
+def feishu_stop() -> None:
+    """Stop the standalone Feishu daemon."""
+    record = _feishu_daemon().stop()
+    if record is None:
+        click.echo("Feishu service: not running.")
+        return
+    click.echo(f"Stopped the Omnigent Feishu service (pid {record.pid}).")
+
+
+@feishu.command("logs")
+@click.option("-f", "--follow", is_flag=True, help="Follow the log (like tail -f).")
+def feishu_logs(follow: bool) -> None:
+    """Print or follow the standalone Feishu daemon log."""
+    record = _feishu_daemon().read_record()
+    if record is None:
+        click.echo("No Feishu daemon has been started yet.")
+        return
+    log_path = Path(record.log_path)
+    if not follow:
+        click.echo(str(log_path))
+        return
+    if not log_path.exists():
+        raise click.ClickException(f"Log file not found: {log_path}")
     try:
         subprocess.run(["tail", "-f", str(log_path)], check=False)
     except FileNotFoundError as exc:
