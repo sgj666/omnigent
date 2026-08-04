@@ -26,6 +26,7 @@
 import { TerminalIcon, XIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { TerminalView } from "@/components/blocks/TerminalView";
 import { Button } from "@/components/ui/button";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
@@ -73,6 +74,7 @@ export function TerminalsPanel({
   fluid = false,
   readOnly = false,
 }: TerminalsPanelProps) {
+  const { t: translate } = useTranslation("workspace");
   const [expanded, setExpanded] = useState(false);
   const ref = useRef<HTMLElement>(null);
   const {
@@ -173,14 +175,20 @@ export function TerminalsPanel({
       )}
 
       <header className="flex shrink-0 items-center justify-between border-border border-b px-4 py-2">
-        <h2 className="font-medium text-sm">Shells</h2>
+        <h2 className="font-medium text-sm">{translate("shells")}</h2>
         <div className="flex items-center gap-1">
           {/* Renders only when the agent's spec declares terminals. */}
           <NewTerminalButton
             conversationId={conversationId}
             onCreated={(key) => setActiveKey(key)}
           />
-          <Button type="button" variant="ghost" size="icon-sm" aria-label="Close" onClick={onClose}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={translate("close")}
+            onClick={onClose}
+          >
             <XIcon className="size-4" />
           </Button>
         </div>

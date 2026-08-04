@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SessionStateBadge } from "./SessionStateBadge";
 import type { SessionState } from "@/hooks/useSessionState";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 function renderBadge(state: SessionState) {
   return render(
@@ -15,6 +16,18 @@ function renderBadge(state: SessionState) {
 afterEach(cleanup);
 
 describe("SessionStateBadge — per-state rendering", () => {
+  it("localizes approval state copy in Simplified Chinese", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      renderBadge({ kind: "awaiting", count: 3 });
+      const badge = screen.getByTestId("session-state-badge");
+      expect(badge).toHaveAttribute("aria-label", "有 3 个审批请求待处理");
+      expect(badge).toHaveTextContent("需要响应");
+    } finally {
+      await restore();
+    }
+  });
+
   it("renders awaiting as a 'Needs response' tag with a count-aware accessible label", () => {
     renderBadge({ kind: "awaiting", count: 3 });
     const badge = screen.getByTestId("session-state-badge");

@@ -41,6 +41,7 @@ import {
   TerminalIcon,
   XIcon,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -178,6 +179,7 @@ export function ApprovalCard({
   canApprove = true,
   onSubmit,
 }: ApprovalCardProps) {
+  const { t } = useTranslation("tools");
   const submit: SubmitApprovalFn =
     onSubmit ??
     ((id, action, content) => {
@@ -250,12 +252,12 @@ export function ApprovalCard({
   const isExternalUrl = typeof url === "string" && url.length > 0 && !url.startsWith("/approve/");
   const askUserQuestionTitle =
     policyName.startsWith("agy_") || phase.startsWith("agy_")
-      ? "Antigravity needs your input"
+      ? t("approval.antigravityNeedsInput", { defaultValue: "Antigravity needs your input" })
       : policyName.startsWith("codex_") || phase.startsWith("codex_")
-        ? "Codex needs input"
+        ? t("approval.codexNeedsInput", { defaultValue: "Codex needs input" })
         : policyName.startsWith("cursor_") || phase.startsWith("cursor_")
-          ? "Cursor has questions"
-          : "Claude has questions";
+          ? t("approval.cursorQuestions", { defaultValue: "Cursor has questions" })
+          : t("approval.claudeQuestions", { defaultValue: "Claude has questions" });
 
   // Hide the raw JSON preview for AskUserQuestion (the form already
   // renders the questions + options structurally) and for option-
@@ -284,19 +286,25 @@ export function ApprovalCard({
   // than letting the short button label imply a narrower scope.
   const rememberTitle = rememberScope
     ? rememberScope.host
-      ? `Won't ask again for ${rememberScope.host} for the rest of this session`
-      : `Won't ask again for any ${rememberScope.tool} call for the rest of this session`
+      ? t("approval.rememberHostTitle", {
+          host: rememberScope.host,
+          defaultValue: `Won't ask again for ${rememberScope.host} for the rest of this session`,
+        })
+      : t("approval.rememberToolTitle", {
+          tool: rememberScope.tool,
+          defaultValue: `Won't ask again for any ${rememberScope.tool} call for the rest of this session`,
+        })
     : undefined;
   const binaryButtons = (
     <div className="flex flex-wrap gap-2 pt-1">
       <Button size="sm" onClick={() => submitBinary("accept")} disabled={!canApprove}>
         <CheckIcon className="mr-1 size-3.5" />
-        Approve
+        {t("approval.approve", { defaultValue: "Approve" })}
       </Button>
       {allowAllEdits && (
         <Button size="sm" variant="outline" onClick={submitAllowAllEdits} disabled={!canApprove}>
           <CheckIcon className="mr-1 size-3.5" />
-          Accept & allow all edits
+          {t("approval.acceptAllEdits", { defaultValue: "Accept & allow all edits" })}
         </Button>
       )}
       {rememberTarget && (
@@ -309,12 +317,15 @@ export function ApprovalCard({
           data-testid="approval-card-remember"
         >
           <CheckIcon className="mr-1 size-3.5" />
-          Approve &amp; don't ask again for {rememberTarget}
+          {t("approval.approveDontAsk", {
+            target: rememberTarget,
+            defaultValue: "Approve & don't ask again for {{target}}",
+          })}
         </Button>
       )}
       <Button size="sm" variant="outline" onClick={() => submitBinary("decline")}>
         <XIcon className="mr-1 size-3.5" />
-        Reject
+        {t("approval.reject", { defaultValue: "Reject" })}
       </Button>
     </div>
   );
@@ -322,7 +333,7 @@ export function ApprovalCard({
     <div className="flex flex-wrap items-center gap-2 pt-1" data-testid="codex-command-actions">
       <Button size="sm" onClick={() => submitBinary("accept")} disabled={!canApprove}>
         <CheckIcon className="mr-1 size-3.5" />
-        Approve
+        {t("approval.approve", { defaultValue: "Approve" })}
       </Button>
       {execPolicyAmendment && (
         <Button
@@ -332,12 +343,12 @@ export function ApprovalCard({
           disabled={!canApprove}
         >
           <CheckIcon className="mr-1 size-3.5" />
-          Approve and remember
+          {t("approval.approveRemember", { defaultValue: "Approve and remember" })}
         </Button>
       )}
       <Button size="sm" variant="outline" onClick={() => submitBinary("decline")}>
         <XIcon className="mr-1 size-3.5" />
-        Reject
+        {t("approval.reject", { defaultValue: "Reject" })}
       </Button>
     </div>
   );
@@ -374,7 +385,9 @@ export function ApprovalCard({
         : null;
 
     let icon = <XIcon className="size-4 text-destructive" />;
-    let label = isExitPlanMode ? "Plan rejected" : "Rejected";
+    let label = isExitPlanMode
+      ? t("approval.planRejected", { defaultValue: "Plan rejected" })
+      : t("approval.rejected", { defaultValue: "Rejected" });
     if (autoResolved) {
       // Card was cleared by the chat store when the gated tool's
       // function_call_output arrived without a UI verdict —
@@ -383,27 +396,37 @@ export function ApprovalCard({
       // verdict, so render a neutral pill rather than implying an
       // accept/reject decision the UI never witnessed.
       icon = <InfoIcon className="size-4 text-muted-foreground" />;
-      label = "Resolved elsewhere";
+      label = t("approval.resolvedElsewhere", { defaultValue: "Resolved elsewhere" });
     } else if (submittedAnswers !== null) {
       icon = <CheckIcon className="size-4 text-success" />;
-      label = "Submitted";
+      label = t("approval.submitted", { defaultValue: "Submitted" });
     } else if (selectedAnswer !== null) {
       icon = <CheckIcon className="size-4 text-success" />;
-      label = `Selected: ${selectedAnswer}`;
+      label = t("approval.selected", {
+        answer: selectedAnswer,
+        defaultValue: "Selected: {{answer}}",
+      });
     } else if (acceptedWithExecPolicy) {
       icon = <CheckIcon className="size-4 text-success" />;
-      label = "Approved and remembered";
+      label = t("approval.approvedRemembered", { defaultValue: "Approved and remembered" });
     } else if (acceptedAllEdits) {
       icon = <CheckIcon className="size-4 text-success" />;
-      label = isExitPlanMode ? "Plan approved · auto mode" : "Approved · auto-accepting edits";
+      label = isExitPlanMode
+        ? t("approval.planAuto", { defaultValue: "Plan approved · auto mode" })
+        : t("approval.autoEdits", { defaultValue: "Approved · auto-accepting edits" });
     } else if (acceptedRemember) {
       icon = <CheckIcon className="size-4 text-success" />;
       label = rememberTarget
-        ? `Approved · won't ask again for ${rememberTarget}`
-        : "Approved · won't ask again";
+        ? t("approval.wontAskTarget", {
+            target: rememberTarget,
+            defaultValue: "Approved · won't ask again for {{target}}",
+          })
+        : t("approval.wontAsk", { defaultValue: "Approved · won't ask again" });
     } else if (accepted) {
       icon = <CheckIcon className="size-4 text-success" />;
-      label = isExitPlanMode ? "Plan approved" : "Approved";
+      label = isExitPlanMode
+        ? t("approval.planApproved", { defaultValue: "Plan approved" })
+        : t("approval.approved", { defaultValue: "Approved" });
     }
 
     return (
@@ -472,14 +495,14 @@ export function ApprovalCard({
           <MessageCircleQuestionMark className="size-4 text-yellow-600 dark:text-yellow-400" />
         )}
         {isCodexCommandApproval
-          ? "Command approval"
+          ? t("approval.command", { defaultValue: "Command approval" })
           : isExitPlanMode
-            ? "Plan review"
+            ? t("approval.planReview", { defaultValue: "Plan review" })
             : isAskUserQuestion
               ? askUserQuestionTitle
               : isMultiChoice
-                ? "Choose an option"
-                : "Approval required"}
+                ? t("approval.chooseOption", { defaultValue: "Choose an option" })
+                : t("approval.required", { defaultValue: "Approval required" })}
         {policyName && !isAskUserQuestion && !isExitPlanMode && (
           <span className="text-muted-foreground text-xs">· {policyName}</span>
         )}
@@ -490,12 +513,20 @@ export function ApprovalCard({
       <AlertDescription className="flex flex-col gap-2">
         {!canApprove && (
           <span className="text-xs text-muted-foreground" role="note">
-            Only the session owner or a delegated approver can approve. You can still reject.
+            {t("approval.onlyOwner", {
+              defaultValue:
+                "Only the session owner or a delegated approver can approve. You can still reject.",
+            })}
           </span>
         )}
         {isExitPlanMode ? (
           <>
-            <span>Claude finished planning and wants to proceed.</span>
+            <span>
+              {t("approval.finishedPlanning", {
+                agent: "Claude",
+                defaultValue: "Claude finished planning and wants to proceed.",
+              })}
+            </span>
             <ExitPlanModeReview
               plan={exitPlanModePlan}
               onAcceptAuto={submitAllowAllEdits}
@@ -513,7 +544,12 @@ export function ApprovalCard({
           />
         ) : isCodexCommandApproval ? (
           <>
-            <span>Codex wants to run this command.</span>
+            <span>
+              {t("approval.wantsRun", {
+                agent: "Codex",
+                defaultValue: "Codex wants to run this command.",
+              })}
+            </span>
             {codexCommand.reason && <span className="text-foreground">{codexCommand.reason}</span>}
             <pre className="overflow-x-auto rounded bg-muted px-2 py-1 font-mono text-xs text-foreground whitespace-pre-wrap">
               {codexCommand.command}
@@ -539,7 +575,7 @@ export function ApprovalCard({
                 <Button size="sm" asChild>
                   <a href={url!} target="_blank" rel="noopener noreferrer">
                     <ExternalLinkIcon className="mr-1 size-3.5" />
-                    Open approval page
+                    {t("approval.openPage", { defaultValue: "Open approval page" })}
                   </a>
                 </Button>
               </div>

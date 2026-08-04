@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { ServerInfo, SharingMode } from "@/lib/capabilities";
+import { withTestLanguage } from "@/i18n/testHelpers";
 import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
 import { PermissionsModal } from "./PermissionsModal";
 
@@ -108,6 +109,34 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("PermissionsModal", () => {
+  it("localizes approval suffixes and names permission controls by user id", async () => {
+    await withTestLanguage("zh-CN", async () => {
+      listMock.mockResolvedValue([
+        {
+          user_id: "alice@example.com",
+          conversation_id: "conv_abc",
+          level: 2,
+          can_approve: true,
+        },
+      ]);
+      render(
+        <PermissionsModal
+          sessionId="conv_abc"
+          open={true}
+          onOpenChange={() => {}}
+          canDelegateApprovals
+        />,
+        { wrapper: createWrapper() },
+      );
+      await waitFor(() => expect(screen.getByText("alice@example.com")).toBeInTheDocument());
+      const levelControl = screen
+        .getAllByRole("combobox")
+        .find((element) => element.getAttribute("aria-label") === "alice@example.com 的权限级别");
+      expect(levelControl).toBeDefined();
+      expect(levelControl).toHaveAttribute("aria-label", "alice@example.com 的权限级别");
+    });
+  });
+
   it("fetches and displays grants when opened", async () => {
     listMock.mockResolvedValue([
       { user_id: "alice@example.com", conversation_id: "conv_abc", level: 3 },

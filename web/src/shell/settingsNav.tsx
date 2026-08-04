@@ -12,6 +12,7 @@ import {
   ArrowLeftIcon,
   DownloadIcon,
   GitBranchIcon,
+  LanguagesIcon,
   KeyboardIcon,
   PaletteIcon,
   PanelRightOpenIcon,
@@ -29,9 +30,11 @@ import { isSingleUserMode } from "@/lib/capabilities";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { isElectronShell } from "@/lib/nativeBridge";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 export type SettingsSectionId =
   | "appearance"
+  | "language"
   | "git"
   | "shortcuts"
   | "account"
@@ -44,6 +47,7 @@ export type SettingsSectionId =
 
 const SECTION_IDS: readonly SettingsSectionId[] = [
   "appearance",
+  "language",
   "git",
   "shortcuts",
   "account",
@@ -85,6 +89,7 @@ export function settingsNavGroups(
 ): SettingsNavGroup[] {
   const general: SettingsNavItem[] = [
     { id: "appearance", label: "Appearance", icon: PaletteIcon },
+    { id: "language", label: "Language", icon: LanguagesIcon },
     { id: "git", label: "Git", icon: GitBranchIcon },
     { id: "shortcuts", label: "Keyboard shortcuts", icon: KeyboardIcon, hideOnMobile: true },
   ];
@@ -198,6 +203,9 @@ export function SettingsSidebarBody({
   onNavClick: (e: React.MouseEvent<HTMLAnchorElement>) => void;
   onClose: () => void;
 }) {
+  const { t: tSettings } = useTranslation("settings");
+  const { t: tAccount } = useTranslation("account");
+  const { t: tAdmin } = useTranslation("admin");
   const info = useServerInfo();
   // Account section shows whenever there's a login session (accounts OR OIDC).
   const hasAuthSession = info !== "loading" && info.login_url !== null;
@@ -226,7 +234,7 @@ export function SettingsSidebarBody({
           (persistent card), so dropping it changes nothing there. */}
           <Link to={settingsReturnPath}>
             <ArrowLeftIcon className="size-4" />
-            Back to Omnigent
+            {tSettings("nav.back")}
           </Link>
         </Button>
         <Tooltip>
@@ -235,21 +243,27 @@ export function SettingsSidebarBody({
               type="button"
               variant="ghost"
               size="icon"
-              aria-label="Close sidebar"
+              aria-label={tSettings("nav.close")}
               onClick={onClose}
               className="rounded-full"
             >
               <PanelRightOpenIcon className="size-4" />
             </Button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">Collapse sidebar</TooltipContent>
+          <TooltipContent side="bottom">{tSettings("nav.collapse")}</TooltipContent>
         </Tooltip>
       </div>
       <nav className="flex flex-1 flex-col gap-4 overflow-y-auto px-3 py-3">
         {groups.map((group) => (
           <div key={group.title} className="flex flex-col gap-0.5">
             <h2 className="px-2 py-1 text-muted-foreground text-xs font-medium uppercase tracking-wide">
-              {group.title}
+              {group.title === "Admin"
+                ? tAdmin("title")
+                : group.title === "General"
+                  ? tSettings("nav.general")
+                  : group.title === "Desktop"
+                    ? tSettings("nav.desktop")
+                    : tSettings("nav.archived")}
             </h2>
             {group.items.map((item) => {
               const Icon = item.icon;
@@ -272,7 +286,29 @@ export function SettingsSidebarBody({
                     aria-current={selected ? "page" : undefined}
                   >
                     <Icon className="size-4 text-muted-foreground" />
-                    {item.label}
+                    {item.id === "account"
+                      ? tAccount("title")
+                      : item.id === "members"
+                        ? tAdmin("members.title")
+                        : item.id === "policies"
+                          ? tAdmin("policies.title")
+                          : item.id === "appearance"
+                            ? tSettings("appearance.title")
+                            : item.id === "language"
+                              ? tSettings("language.title")
+                              : item.id === "git"
+                                ? tSettings("git.title")
+                                : item.id === "shortcuts"
+                                  ? tSettings("shortcuts.title")
+                                  : item.id === "cli"
+                                    ? tSettings("nav.localCli")
+                                    : item.id === "updates"
+                                      ? tSettings("nav.updates")
+                                      : item.id === "sharing"
+                                        ? tSettings("nav.sharing")
+                                        : item.id === "archived"
+                                          ? tSettings("nav.archivedSessions")
+                                          : item.label}
                   </Link>
                 </Button>
               );

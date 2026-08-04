@@ -13,6 +13,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams } from "@/lib/routing";
 import { useSessionHostOnline, useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
 import { useChatStore } from "@/store/chatStore";
@@ -82,13 +83,14 @@ function HiddenFilesToggle({
   size: "4" | "3.5";
   hiddenCount: number;
 }) {
+  const { t } = useTranslation("workspace");
   const hasHidden = hiddenCount > 0 && !showHidden;
-  const ariaLabel = showHidden ? "Hide hidden files" : "Show hidden files";
+  const ariaLabel = showHidden ? t("hideHidden") : t("showHidden");
   const tooltipLabel = showHidden
-    ? "Hide hidden files"
+    ? t("hideHidden")
     : hasHidden
-      ? `${hiddenCount} file${hiddenCount === 1 ? "" : "s"} in hidden directories. Click to show.`
-      : "Show hidden files";
+      ? `${t("hiddenFileCount", { count: hiddenCount })} ${t("clickToShow")}`
+      : t("showHidden");
   const iconSize = size === "4" ? "size-4" : "size-3.5";
   return (
     <TooltipProvider>
@@ -118,11 +120,15 @@ function HiddenFilesToggle({
 // SortSelector
 // ---------------------------------------------------------------------------
 
-const SORT_OPTIONS: { value: ChangedSort; label: string; Icon: typeof ArrowDownAZIcon }[] = [
-  { value: "alpha", label: "Filename", Icon: ArrowDownAZIcon },
-  { value: "recent", label: "Last edited", Icon: FileClockIcon },
-  { value: "size", label: "Size", Icon: ArrowDownWideNarrowIcon },
-  { value: "type", label: "Type", Icon: FileTypeIcon },
+const SORT_OPTIONS: {
+  value: ChangedSort;
+  labelKey: "filename" | "lastEdited" | "size" | "type";
+  Icon: typeof ArrowDownAZIcon;
+}[] = [
+  { value: "alpha", labelKey: "filename", Icon: ArrowDownAZIcon },
+  { value: "recent", labelKey: "lastEdited", Icon: FileClockIcon },
+  { value: "size", labelKey: "size", Icon: ArrowDownWideNarrowIcon },
+  { value: "type", labelKey: "type", Icon: FileTypeIcon },
 ];
 
 function SortSelector({
@@ -132,25 +138,26 @@ function SortSelector({
   sort: ChangedSort;
   onChange: (next: ChangedSort) => void;
 }) {
+  const { t } = useTranslation("workspace");
   const active = SORT_OPTIONS.find((o) => o.value === sort) ?? SORT_OPTIONS[0];
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label={`Sort: ${active.label}`}
+          aria-label={`${t("sort")} ${t(active.labelKey)}`}
           className="flex shrink-0 cursor-pointer items-center gap-1 rounded-full px-2.5 py-[4px] text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
         >
-          <span>Sort:</span>
+          <span>{t("sort")}</span>
           <active.Icon className="size-3.5" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-40">
         <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onChange(v as ChangedSort)}>
-          {SORT_OPTIONS.map(({ value, label, Icon }) => (
+          {SORT_OPTIONS.map(({ value, labelKey, Icon }) => (
             <DropdownMenuRadioItem key={value} value={value}>
               <Icon className="size-3.5" />
-              {label}
+              {t(labelKey)}
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
@@ -176,6 +183,7 @@ function FileScopeSwitch({
   onChange: (flatView: boolean) => void;
   count: number;
 }) {
+  const { t } = useTranslation("workspace");
   const changedSelected = flatView;
   const allSelected = !flatView;
   const pill =
@@ -183,18 +191,18 @@ function FileScopeSwitch({
   const activePill = "bg-muted text-foreground";
   const idlePill = "text-muted-foreground hover:text-foreground";
   return (
-    <div role="radiogroup" aria-label="File scope" className="flex shrink-0 items-center gap-1">
+    <div role="radiogroup" aria-label={t("fileScope")} className="flex shrink-0 items-center gap-1">
       <button
         type="button"
         role="radio"
         aria-checked={changedSelected}
-        aria-label="Changed"
-        title="Show changed files only"
+        aria-label={t("changed")}
+        title={t("showChangedOnly")}
         onClick={() => onChange(true)}
         className={cn(pill, changedSelected ? activePill : idlePill)}
       >
         <ListIcon className="size-3.5 shrink-0" />
-        Changed
+        {t("changed")}
         {count > 0 && (
           <span className="shrink-0 font-normal text-[11px] text-muted-foreground tabular-nums">
             {count}
@@ -205,13 +213,13 @@ function FileScopeSwitch({
         type="button"
         role="radio"
         aria-checked={allSelected}
-        aria-label="All"
-        title="Show the full folder tree"
+        aria-label={t("all")}
+        title={t("showFullTree")}
         onClick={() => onChange(false)}
         className={cn(pill, allSelected ? activePill : idlePill)}
       >
         <FolderTreeIcon className="size-3.5 shrink-0" />
-        All
+        {t("all")}
       </button>
     </div>
   );
@@ -273,6 +281,7 @@ export function FilesPanel({
   onClose,
   frameless,
 }: FilesPanelProps) {
+  const { t } = useTranslation("workspace");
   const { conversationId } = useParams<{ conversationId: string }>();
   // The runner went offline (e.g. its host restarted): `sessionStatus`
   // is "failed", set by `_on_runner_disconnect` server-side when the
@@ -382,7 +391,7 @@ export function FilesPanel({
     >
       {/* Header — single row: [title · workingDir] [eye] [close?] */}
       <div className="flex shrink-0 items-center gap-2 px-3 py-2">
-        <span className="shrink-0 font-medium text-sm">Working folder</span>
+        <span className="shrink-0 font-medium text-sm">{t("workingFolder")}</span>
         {workingDir && <WorkingDirLabel dir={workingDir} />}
         {servedFromHost && (
           <TooltipProvider>
@@ -393,11 +402,11 @@ export function FilesPanel({
                   className="flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
                 >
                   <MoonIcon className="size-3 shrink-0" />
-                  Asleep
+                  {t("agentAsleep")}
                 </span>
               </TooltipTrigger>
               <TooltipContent>
-                Agent is asleep — files shown live from the host. Send a message to wake it.
+                {t("agentAsleep")} — {t("sendMessageToReconnect")}
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -412,7 +421,7 @@ export function FilesPanel({
           {onClose && (
             <button
               type="button"
-              aria-label="Close files"
+              aria-label={t("closeFiles")}
               className="cursor-pointer rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
               onClick={onClose}
             >
@@ -437,10 +446,10 @@ export function FilesPanel({
             <div className="flex min-w-0 flex-1 items-center gap-[6px] rounded-full border border-border px-[10px] py-[4px] transition-colors focus-within:border-border-strong">
               <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
               <input
-                aria-label="Search changed files"
+                aria-label={t("searchChangedFiles")}
                 className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
                 onChange={(event) => setChangedSearch(event.target.value)}
-                placeholder="Search"
+                placeholder={t("searchPlaceholder")}
                 type="search"
                 value={changedSearch}
               />
@@ -457,19 +466,19 @@ export function FilesPanel({
               <div className="flex min-w-0 flex-1 items-center gap-[6px] rounded-full border border-border px-[10px] py-[4px] transition-colors focus-within:border-border-strong">
                 <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
                 <input
-                  aria-label="Search all files"
+                  aria-label={t("searchAllFiles")}
                   className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
                   onChange={(event) => setTreeSearch(event.target.value)}
-                  placeholder="Search"
+                  placeholder={t("searchPlaceholder")}
                   type="search"
                   value={treeSearch}
                 />
               </div>
               <button
                 type="button"
-                aria-label={showSearchFilters ? "Hide search filters" : "Show search filters"}
+                aria-label={showSearchFilters ? t("hideSearchFilters") : t("showSearchFilters")}
                 aria-expanded={showSearchFilters}
-                title="Files to include / exclude"
+                title={t("fileFilters")}
                 className={cn(
                   "flex shrink-0 cursor-pointer items-center gap-1 rounded-full px-2.5 py-[4px] hover:bg-muted",
                   showSearchFilters || treeFiltersActive
@@ -489,14 +498,14 @@ export function FilesPanel({
           {showSearchFilters && (
             <div className="flex flex-col gap-1.5 border-border border-t px-3 py-2">
               <SearchFilterInput
-                label="files to include"
-                placeholder="e.g. *.ts, src/**"
+                label={t("filesInclude")}
+                placeholder={t("filesIncludePlaceholder")}
                 value={treeInclude}
                 onChange={setTreeInclude}
               />
               <SearchFilterInput
-                label="files to exclude"
-                placeholder="e.g. **/node_modules, *.test.ts"
+                label={t("filesExclude")}
+                placeholder={t("filesExcludePlaceholder")}
                 value={treeExclude}
                 onChange={setTreeExclude}
               />

@@ -6,9 +6,11 @@ const { createRequire } = require("node:module");
 const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
+const { createUpdateOverlay } = require("../src/update_overlay");
 
 function loadMainHarness({
   settings = {},
+  osLocale = "en-US",
   forceDevUpdateConfig = false,
   dialogResponses = [{ response: 1, checkboxChecked: false }],
   serverShutdown = () => Promise.resolve(),
@@ -17,6 +19,7 @@ function loadMainHarness({
   fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify(settings), "utf8");
 
   const ipcHandlers = new Map();
+  const ipcEvents = new Map();
   const appEvents = new Map();
   const calls = {
     appQuit: 0,
@@ -74,6 +77,7 @@ function loadMainHarness({
         calls.appExit += 1;
       },
       setAppUserModelId: () => {},
+      getLocale: () => osLocale,
     },
     BrowserWindow: Object.assign(function BrowserWindow() {}, {
       fromWebContents: (webContents) => (webContents === sender ? win : null),
@@ -94,7 +98,7 @@ function loadMainHarness({
     },
     ipcMain: {
       handle: (channel, handler) => ipcHandlers.set(channel, handler),
-      on: () => {},
+      on: (channel, listener) => ipcEvents.set(channel, listener),
     },
     nativeImage: {
       createFromPath: () => ({ isEmpty: () => true }),
@@ -191,6 +195,7 @@ function loadMainHarness({
       unpinned: { sender, senderFrame: { url: "https://evil.example/app" } },
     },
     ipcHandlers,
+    ipcEvents,
     readSettings: () => JSON.parse(fs.readFileSync(path.join(userData, "settings.json"), "utf8")),
   };
 }
@@ -214,7 +219,113 @@ function findMenuItem(menu, id) {
   return null;
 }
 
+describe("update overlay locale propagation", () => {
+  it("defers locale resolution until the overlay is created", () => {
+    let ready = false;
+    const getLocale = () => {
+      if (!ready) throw new Error("app is not ready");
+      return "zh-CN";
+    };
+    const parent = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+    });
+    const loaded = [];
+    const webContents = Object.assign(new EventEmitter(), { send: () => {} });
+    const overlay = Object.assign(new EventEmitter(), {
+      webContents,
+      isDestroyed: () => false,
+      isVisible: () => true,
+      loadFile: (_page, options) => {
+        loaded.push(options.search);
+        return Promise.resolve();
+      },
+      setBounds: () => {},
+      setIgnoreMouseEvents: () => {},
+      showInactive: () => {},
+      destroy: () => {},
+    });
+    function BrowserWindow() {
+      return overlay;
+    }
+    const nativeTheme = Object.assign(new EventEmitter(), { shouldUseDarkColors: false });
+
+    const manager = createUpdateOverlay({
+      BrowserWindow,
+      ipcMain: { on: () => {}, handle: () => {} },
+      nativeTheme,
+      updater: {},
+      overlayPage: "/overlay.html",
+      preloadPath: "/overlay-preload.js",
+      getLocale,
+    });
+    ready = true;
+    manager.ensureOverlay(parent);
+    assert.equal(loaded[0], "theme=light&locale=zh-CN");
+  });
+
+  it("includes the effective locale in the overlay URL and refreshes it", () => {
+    const parent = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+    });
+    const loaded = [];
+    const webContents = Object.assign(new EventEmitter(), {
+      send: () => {},
+      getURL: () => "file:///overlay",
+    });
+    const overlay = Object.assign(new EventEmitter(), {
+      webContents,
+      isDestroyed: () => false,
+      isVisible: () => true,
+      loadFile: (_page, options) => {
+        loaded.push(options.search);
+        return Promise.resolve();
+      },
+      setBounds: () => {},
+      setIgnoreMouseEvents: () => {},
+      showInactive: () => {},
+      destroy: () => {},
+    });
+    function BrowserWindow() {
+      return overlay;
+    }
+    const nativeTheme = Object.assign(new EventEmitter(), { shouldUseDarkColors: false });
+    const manager = createUpdateOverlay({
+      BrowserWindow,
+      ipcMain: { on: () => {}, handle: () => {} },
+      nativeTheme,
+      updater: {},
+      overlayPage: "/overlay.html",
+      preloadPath: "/overlay-preload.js",
+      getLocale: () => "zh-CN",
+    });
+    manager.ensureOverlay(parent);
+    assert.equal(loaded[0], "theme=light&locale=zh-CN");
+    manager.setLocale("en");
+    assert.equal(loaded[1], "theme=light&locale=en");
+  });
+});
+
 describe("auto-update main-process wiring", () => {
+  it("persists valid language settings from pinned senders and rejects foreign/invalid values", (t) => {
+    const harness = loadMainHarness({ osLocale: "zh-CN" });
+    t.after(harness.cleanup);
+    harness.api.registerIpc();
+    const handler = harness.ipcEvents.get("omnigent:set-language");
+    handler(harness.events.pinned, { preference: "system", effectiveLanguage: "zh-CN" });
+    assert.deepEqual(harness.readSettings(), {
+      ui_language: "system",
+      ui_locale: "zh-CN",
+    });
+    handler(harness.events.unpinned, { preference: "en", effectiveLanguage: "en" });
+    assert.equal(harness.readSettings().ui_language, "system");
+    handler(harness.events.pinned, { preference: "bogus", effectiveLanguage: "zh-CN" });
+    assert.equal(harness.readSettings().ui_language, "system");
+    handler(harness.events.pinned, { preference: "system", effectiveLanguage: "en" });
+    assert.equal(harness.readSettings().ui_locale, "zh-CN");
+  });
+
   it("preserves unrelated settings keys when writing update config", (t) => {
     const harness = loadMainHarness({
       settings: {

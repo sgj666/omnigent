@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import type { Comment } from "@/hooks/useComments";
 import type { ActiveSelection } from "./codeViewerHelpers";
 import { displayAnchorContent } from "./pdfCommentHelpers";
+import { useTranslation } from "react-i18next";
 
 function avatarStyle(name: string): { backgroundColor: string; color: string } {
   let hash = 0;
@@ -15,14 +16,18 @@ function avatarStyle(name: string): { backgroundColor: string; color: string } {
   return { backgroundColor: `hsl(${hash % 360} 60% 50%)`, color: "white" };
 }
 
-function formatCommentTime(createdAt: number): string {
+function formatCommentTime(
+  createdAt: number,
+  todayLabel = "Today",
+  yesterdayLabel = "Yesterday",
+): string {
   const date = new Date(createdAt * 1000);
   const now = new Date();
   const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  if (date.toDateString() === now.toDateString()) return `${time} Today`;
+  if (date.toDateString() === now.toDateString()) return `${time} ${todayLabel}`;
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return `${time} Yesterday`;
+  if (date.toDateString() === yesterday.toDateString()) return `${time} ${yesterdayLabel}`;
   return `${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${time}`;
 }
 
@@ -85,6 +90,7 @@ export function CommentsPanel({
   pendingBodyRef,
   onCopyCommentLink,
 }: CommentsPanelProps) {
+  const { t: translate } = useTranslation("common");
   const [body, setBody] = useState("");
   const [tab, setTab] = useState<Tab>("open");
   const addCommentTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -162,7 +168,7 @@ export function CommentsPanel({
       )}
       {/* Header — fixed height so layout doesn't shift when button is hidden */}
       <div className="flex h-11 shrink-0 items-center justify-between px-3 border-b border-border">
-        <span className="text-xs font-semibold">Comments</span>
+        <span className="text-xs font-semibold">{translate("comments.title")}</span>
         {tab === "open" && (
           <Button
             type="button"
@@ -173,7 +179,7 @@ export function CommentsPanel({
             onClick={onAddressAll}
           >
             <WandSparklesIcon className="size-3.5" />
-            Address All
+            {translate("comments.addressAll")}
           </Button>
         )}
       </div>
@@ -194,7 +200,7 @@ export function CommentsPanel({
               )}
               onClick={() => setTab(t)}
             >
-              {t === "open" ? "Open" : "Addressed"}
+              {t === "open" ? translate("comments.open") : translate("comments.addressed")}
               {count > 0 && (
                 <span className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] tabular-nums">
                   {count}
@@ -207,7 +213,7 @@ export function CommentsPanel({
 
       {!canEdit && (
         <div className="shrink-0 border-b border-border px-3 py-2 text-xs text-muted-foreground">
-          You have read-only access to this session.
+          {translate("comments.readOnly")}
         </div>
       )}
 
@@ -224,7 +230,7 @@ export function CommentsPanel({
             <div className="space-y-2 border-b border-border px-3 py-2">
               {activeSelection.anchor_content && (
                 <div className="truncate rounded bg-muted/40 px-2 py-1 font-mono text-[10px] text-muted-foreground">
-                  <span className="text-foreground/60">Selection: </span>
+                  <span className="text-foreground/60">{translate("comments.selection")}</span>
                   {displayAnchorContent(activeSelection.anchor_content).split("\n")[0]}
                 </div>
               )}
@@ -232,7 +238,7 @@ export function CommentsPanel({
                 ref={addCommentTextareaRef}
                 className="w-full resize-none rounded border border-border bg-background px-2 py-1.5 text-xs placeholder:text-muted-foreground"
                 rows={3}
-                placeholder="Add a comment…"
+                placeholder={translate("comments.addPlaceholder")}
                 value={body}
                 onChange={(e) => {
                   setBody(e.target.value);
@@ -258,7 +264,7 @@ export function CommentsPanel({
                   if (pendingBodyRef) pendingBodyRef.current = "";
                 }}
               >
-                Add Comment
+                {translate("comments.add")}
               </Button>
             </div>
           ) : null)}
@@ -267,7 +273,7 @@ export function CommentsPanel({
         {tab === "open" ? (
           comments.length === 0 ? (
             <div className="flex items-center justify-center p-8 text-xs text-muted-foreground">
-              No open comments.
+              {translate("comments.noneOpen")}
             </div>
           ) : (
             <div className="space-y-2 p-3">
@@ -292,7 +298,7 @@ export function CommentsPanel({
           )
         ) : addressedComments.length === 0 ? (
           <div className="flex items-center justify-center p-8 text-xs text-muted-foreground">
-            No addressed comments.
+            {translate("comments.noneAddressed")}
           </div>
         ) : (
           <div className="space-y-2 p-3">
@@ -342,6 +348,7 @@ function CommentCard({
   onDelete,
   onCopyLink,
 }: CommentCardProps) {
+  const { t: translate } = useTranslation("common");
   const [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState(c.body);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -382,7 +389,7 @@ function CommentCard({
     if (!editing) setEditBody(c.body);
   }, [c.id, c.body, editing]);
 
-  const statusLabel = c.status === "addressed" ? "Addressed" : null;
+  const statusLabel = c.status === "addressed" ? translate("comments.addressed") : null;
 
   function startEdit() {
     setEditBody(c.body);
@@ -431,10 +438,10 @@ function CommentCard({
           />
           <div className="flex gap-1.5">
             <Button type="button" size="xs" disabled={!editBody.trim()} onClick={saveEdit}>
-              Save
+              {translate("comments.save")}
             </Button>
             <Button type="button" size="xs" variant="ghost" onClick={() => setEditing(false)}>
-              Cancel
+              {translate("comments.cancel")}
             </Button>
           </div>
         </div>
@@ -459,7 +466,7 @@ function CommentCard({
                 setExpanded((v) => !v);
               }}
             >
-              {expanded ? "Show less" : "Show more"}
+              {expanded ? translate("comments.showLess") : translate("comments.showMore")}
             </button>
           )}
         </div>
@@ -472,23 +479,27 @@ function CommentCard({
             <div className="flex min-w-0 items-center gap-1.5">
               <span
                 className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[8px] font-semibold uppercase"
-                style={avatarStyle(c.created_by ?? "You")}
+                style={avatarStyle(c.created_by ?? translate("comments.you"))}
               >
-                {(c.created_by ?? "Y")[0].toUpperCase()}
+                {(c.created_by ?? translate("comments.you"))[0]!.toUpperCase()}
               </span>
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span className="truncate text-[11px] text-muted-foreground">
-                      {c.created_by ?? "You"}
+                      {c.created_by ?? translate("comments.you")}
                     </span>
                   </TooltipTrigger>
-                  <TooltipContent>{c.created_by ?? "You"}</TooltipContent>
+                  <TooltipContent>{c.created_by ?? translate("comments.you")}</TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             </div>
             <span className="text-[10px] text-muted-foreground/70">
-              {formatCommentTime(c.created_at)}
+              {formatCommentTime(
+                c.created_at,
+                translate("comments.today"),
+                translate("comments.yesterday"),
+              )}
             </span>
             {statusLabel && (
               <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] w-fit">
@@ -507,7 +518,7 @@ function CommentCard({
                     startEdit();
                   }}
                 >
-                  Edit
+                  {translate("comments.edit")}
                 </button>
               )}
               {onDelete && (
@@ -519,13 +530,13 @@ function CommentCard({
                     onDelete();
                   }}
                 >
-                  Delete
+                  {translate("comments.delete")}
                 </button>
               )}
               {onCopyLink && (
                 <button
                   type="button"
-                  aria-label="Copy link to comment"
+                  aria-label={translate("comments.copyLink")}
                   className="cursor-pointer text-[11px] text-muted-foreground transition-colors hover:text-foreground"
                   onClick={(e) => {
                     e.stopPropagation();

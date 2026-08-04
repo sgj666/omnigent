@@ -45,6 +45,7 @@ import {
 } from "@/lib/scheduleBuilder";
 import { ScheduledTaskApiError, type ScheduledTask } from "@/lib/scheduledTasksApi";
 import { localTimezone } from "@/lib/timezones";
+import { useTranslation } from "react-i18next";
 
 // Agents hidden from the scheduled-task picker (mirrors NewChatDialog's set):
 // superseded / SDK-only harnesses that shouldn't be user-pickable here.
@@ -65,6 +66,7 @@ export function CreateScheduledTaskDialog({
   initialPrompt?: string;
   editingTask?: ScheduledTask | null;
 }) {
+  const { t } = useTranslation("tasks");
   const { data: agents } = useAvailableAgents({ enabled: open });
   const { data: hosts } = useHosts({ enabled: open });
   const createMutation = useCreateScheduledTask();
@@ -111,7 +113,7 @@ export function CreateScheduledTaskDialog({
     ? selectedAgent.display_name
     : isEdit && editingTask
       ? editingTask.agentId
-      : "Select agent";
+      : t("selectAgent");
 
   function handleSelectAgent(agent: AvailableAgent) {
     setPickedAgentId(agent.id);
@@ -305,8 +307,8 @@ export function CreateScheduledTaskDialog({
           : err instanceof Error
             ? err.message
             : isEdit
-              ? "Couldn't update the automation."
-              : "Couldn't create the automation.",
+              ? t("updateError")
+              : t("createError"),
       );
     }
   }
@@ -325,11 +327,9 @@ export function CreateScheduledTaskDialog({
         onInteractOutside={guardDialogDismiss}
       >
         <DialogHeader className="shrink-0 px-6 pt-6 pb-0">
-          <DialogTitle>{isEdit ? "Edit automation" : "New automation"}</DialogTitle>
+          <DialogTitle>{isEdit ? t("editAutomation") : t("newAutomation")}</DialogTitle>
           <DialogDescription>
-            {isEdit
-              ? "Update this recurring agent session. It fires on a connected host."
-              : "Runs an agent session on a recurring schedule. Fires on a connected host."}
+            {isEdit ? t("editDescription") : t("newDescription")}
           </DialogDescription>
         </DialogHeader>
 
@@ -338,7 +338,7 @@ export function CreateScheduledTaskDialog({
           data-testid="scheduled-task-dialog-body"
         >
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="task-name">Name</Label>
+            <Label htmlFor="task-name">{t("name")}</Label>
             <Input
               id="task-name"
               value={name}
@@ -350,12 +350,12 @@ export function CreateScheduledTaskDialog({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="task-prompt">Prompt</Label>
+            <Label htmlFor="task-prompt">{t("prompt")}</Label>
             <Textarea
               id="task-prompt"
               value={prompt}
               rows={3}
-              placeholder="What should the agent do each run?"
+              placeholder={t("promptPlaceholder")}
               data-testid="task-prompt-input"
               // No native resize grip — match the clean styling of the other fields.
               className="resize-none text-sm"
@@ -367,7 +367,7 @@ export function CreateScheduledTaskDialog({
             {/* "Runs with" — the unified picker offers BOTH harnesses (Claude
                 Code / Codex / Pi …) and agents (Polly / Debby), so "Agent" would
                 be misleading. */}
-            <Label>Runs with</Label>
+            <Label>{t("runsWith")}</Label>
             {isEdit ? (
               <div
                 className="flex h-8 w-full items-center rounded-lg border border-input bg-transparent px-2.5 text-sm text-foreground dark:bg-input/30"
@@ -421,9 +421,7 @@ export function CreateScheduledTaskDialog({
               </div>
             )}
             {!showModelEffort && (
-              <p className="text-[11px] text-muted-foreground">
-                Uses this agent&apos;s default model, effort, and permission settings
-              </p>
+              <p className="text-[11px] text-muted-foreground">{t("defaultSettingsHint")}</p>
             )}
           </div>
 
@@ -440,9 +438,7 @@ export function CreateScheduledTaskDialog({
                 onEffortChange={setPickedEffort}
                 onSelectOpenChange={handleSelectOpenChange}
               />
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
-                Leave on Default to use the agent&apos;s configured model and effort.
-              </p>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">{t("leaveDefaultHint")}</p>
             </div>
           )}
 
@@ -456,7 +452,7 @@ export function CreateScheduledTaskDialog({
           />
           {scheduleUnsupported && (
             <p className="text-xs text-destructive" role="alert">
-              This schedule can&apos;t be edited in this form yet.
+              {t("unsupportedSchedule")}
             </p>
           )}
 
@@ -467,7 +463,7 @@ export function CreateScheduledTaskDialog({
           {/* Optional host + workspace pin. Left unset, the server resolves the
               owner's connected host and its home directory at fire time. */}
           <div className="flex flex-col gap-1.5" data-testid="task-host-field">
-            <Label htmlFor="task-host">Host (optional)</Label>
+            <Label htmlFor="task-host">{t("hostOptional")}</Label>
             <Select
               value={hostId === "" ? UNSET_HOST : hostId}
               onValueChange={(v) => {
@@ -484,26 +480,22 @@ export function CreateScheduledTaskDialog({
               </SelectTrigger>
               <SelectContent position="popper" align="start">
                 <SelectItem value={UNSET_HOST} disabled={preservePinnedHost}>
-                  Resolve at fire time
+                  {t("resolveAtFire")}
                 </SelectItem>
                 {hostOptions.map((host) => (
                   <SelectItem key={host.host_id} value={host.host_id}>
-                    {host.name} {host.status === "offline" ? "(offline)" : ""}
+                    {host.name} {host.status === "offline" ? `(${t("offline")})` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <p className="text-[11px] text-muted-foreground">
-              Leave unset to run on your connected host when the task fires.
-            </p>
+            <p className="text-[11px] text-muted-foreground">{t("hostHint")}</p>
           </div>
 
           {hostId !== "" && (
             <div className="flex flex-col gap-1.5">
-              <Label>Workspace (optional)</Label>
-              <p className="text-[11px] text-muted-foreground">
-                Defaults to the host&apos;s home directory. Pick a directory to pin it.
-              </p>
+              <Label>{t("workspaceOptional")}</Label>
+              <p className="text-[11px] text-muted-foreground">{t("workspaceHint")}</p>
               <div className="h-56 overflow-hidden rounded-md border border-border">
                 <WorkspacePicker
                   hostId={hostId}
@@ -523,7 +515,7 @@ export function CreateScheduledTaskDialog({
               data-testid="workspace-without-host-error"
             >
               <TriangleAlertIcon className="size-3.5 shrink-0" />
-              Pick a host before pinning a workspace.
+              {t("pickHostFirst")}
             </p>
           )}
 
@@ -541,7 +533,7 @@ export function CreateScheduledTaskDialog({
 
         <DialogFooter className="mx-0 mb-0 shrink-0 rounded-none border-t-0 bg-transparent px-6 py-4 sm:justify-end">
           <Button variant="outline" onClick={() => handleOpenChange(false)}>
-            Cancel
+            {t("cancel")}
           </Button>
           <Button
             onClick={handleSubmit}
@@ -549,7 +541,7 @@ export function CreateScheduledTaskDialog({
             data-testid="create-scheduled-task-submit"
           >
             {mutationPending && <Loader2Icon className="mr-1 size-4 animate-spin" />}
-            {isEdit ? "Save changes" : "Create task"}
+            {isEdit ? t("saveChanges") : t("createTask")}
           </Button>
         </DialogFooter>
       </DialogContent>

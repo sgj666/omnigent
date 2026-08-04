@@ -26,6 +26,7 @@ import {
   modelViewerTheme,
 } from "./codeViewerHelpers";
 import { TruncatedBanner } from "./TruncatedBanner";
+import { useTranslation } from "react-i18next";
 
 // What parseModel produces: the object to add to the scene, plus a handle to
 // the STL default material when we created one. The material handle lets the
@@ -222,6 +223,7 @@ function teardownScene(res: SceneResources): void {
 }
 
 export function ModelViewer({ data, path }: { data: FileContentResponse; path: string }) {
+  const { t } = useTranslation("workspace");
   const containerRef = useRef<HTMLDivElement>(null);
   const [errored, setErrored] = useState(false);
 
@@ -373,9 +375,7 @@ export function ModelViewer({ data, path }: { data: FileContentResponse; path: s
   }, [data, path]);
 
   const filename = path.split("/").pop() ?? path;
-  const errorMessage = data.truncated
-    ? "Model is too large to preview (truncated by the server)."
-    : "Unable to render 3D model.";
+  const errorMessage = data.truncated ? t("modelTooLarge") : t("unableRenderModel");
 
   const content = (
     // The container is ALWAYS mounted so its ref stays live — the error is an
@@ -385,7 +385,7 @@ export function ModelViewer({ data, path }: { data: FileContentResponse; path: s
     <div className="relative min-h-0 flex-1 overflow-hidden">
       <div
         ref={containerRef}
-        aria-label={`3D preview of ${filename}`}
+        aria-label={t("modelPreviewAriaLabel", { filename })}
         className="absolute inset-0 cursor-grab active:cursor-grabbing"
       />
       {errored && (

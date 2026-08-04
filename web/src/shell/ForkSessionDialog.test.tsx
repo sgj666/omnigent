@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ForkSessionDialog } from "./ForkSessionDialog";
+import { withTestLanguage } from "@/i18n/testHelpers";
 import { forkSession, launchRunner } from "@/lib/sessionsApi";
 import {
   useAvailableAgents,
@@ -193,6 +194,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("ForkSessionDialog", () => {
+  it("localizes the fork dialog chrome in Simplified Chinese", async () => {
+    await withTestLanguage("zh-CN", () => {
+      renderDialog({ sourceTitle: "我的会话" });
+      expect(screen.getByRole("heading", { name: "克隆会话" })).toBeInTheDocument();
+      expect(screen.getByLabelText("克隆会话会做什么？")).toBeInTheDocument();
+      expect(screen.getByText("智能体")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "取消" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "克隆" })).toBeInTheDocument();
+    });
+  });
   it("leaves the name optional, suggesting 'Fork of <title>' as the placeholder", () => {
     renderDialog({ sourceTitle: "My session" });
     // Name lives under Advanced now (optional, prefilled-by-placeholder).

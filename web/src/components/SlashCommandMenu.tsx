@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { CommandIcon, WandSparklesIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +20,14 @@ export const BUILTIN_SLASH_COMMANDS: Record<string, string> = {
   "/effort": "Set reasoning effort: /effort low | medium | high | default",
   "/model": "Switch the model for this session: /model <name> | default",
   "/help": "Show available slash commands",
+};
+
+const BUILTIN_DESCRIPTION_KEYS: Record<string, string> = {
+  "/compact": "slashDescriptions.compact",
+  "/context": "slashDescriptions.context",
+  "/effort": "slashDescriptions.effort",
+  "/model": "slashDescriptions.model",
+  "/help": "slashDescriptions.help",
 };
 
 // First token must read as a command name (`/cross-review`,
@@ -170,6 +179,7 @@ export function SlashCommandMenu({
   onSelect,
   commands,
 }: SlashCommandMenuProps) {
+  const { t } = useTranslation("tools");
   const matchedNames = rankedSlashCommandNames(commands, query);
   const listRef = useRef<HTMLDivElement>(null);
   // Keep the keyboard-highlighted row visible as the user arrows past the
@@ -188,7 +198,9 @@ export function SlashCommandMenu({
   // visual = keyboard order.
   const rows: MenuRow[] = matchedNames.map((name, flatIndex) => ({
     name,
-    description: commands[name] ?? "",
+    description: BUILTIN_DESCRIPTION_KEYS[name]
+      ? t(BUILTIN_DESCRIPTION_KEYS[name]!, { defaultValue: commands[name] ?? "" })
+      : (commands[name] ?? ""),
     flatIndex,
   }));
   const builtinRows = rows.filter((r) => r.name in BUILTIN_SLASH_COMMANDS);
@@ -203,7 +215,7 @@ export function SlashCommandMenu({
     <div className="absolute bottom-full left-0 z-10 mb-2 flex items-end gap-2">
       <div className="w-64 shrink-0 overflow-hidden rounded-xl border border-border bg-popover shadow-lg">
         <div ref={listRef} className="max-h-80 overflow-y-auto p-1">
-          {builtinRows.length > 0 && sectionHeader("Commands")}
+          {builtinRows.length > 0 && sectionHeader(t("commands", { defaultValue: "Commands" }))}
           {builtinRows.map((row) => (
             <MenuRowButton
               key={row.name}
@@ -212,7 +224,7 @@ export function SlashCommandMenu({
               onSelect={onSelect}
             />
           ))}
-          {skillRows.length > 0 && sectionHeader("Skills")}
+          {skillRows.length > 0 && sectionHeader(t("skills", { defaultValue: "Skills" }))}
           {skillRows.map((row) => (
             <MenuRowButton
               key={row.name}

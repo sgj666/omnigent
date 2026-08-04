@@ -20,6 +20,7 @@ import * as agentsHook from "@/hooks/useAvailableAgents";
 import * as hostsHook from "@/hooks/useHosts";
 import * as scheduledHooks from "@/hooks/useScheduledTasks";
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 vi.mock("@/hooks/useAvailableAgents", () => ({ useAvailableAgents: vi.fn() }));
 // useHostModelOptions is consumed by the ModelEffortFields sub-form (model
@@ -600,6 +601,24 @@ describe("CreateScheduledTaskDialog submit", () => {
     fireEvent.change(screen.getByTestId("schedule-time"), { target: { value: "25:99" } });
     expect(screen.getByTestId("schedule-error")).toHaveTextContent("Enter a valid time");
     expect(screen.getByTestId("create-scheduled-task-submit")).toBeDisabled();
+  });
+
+  it("localizes detailed schedule validation copy", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      renderDialog();
+      const name = screen.getByTestId("task-name-input");
+      const prompt = screen.getByTestId("task-prompt-input");
+      fireEvent.change(name, { target: { value: "任务" } });
+      fireEvent.change(prompt, { target: { value: "检查" } });
+      fireEvent.change(screen.getByTestId("schedule-time"), {
+        target: { value: "25:99" },
+      });
+      expect(screen.getByTestId("schedule-error")).toHaveTextContent("请输入有效时间");
+      expect(screen.getByTestId("schedule-error")).not.toHaveTextContent("Enter a valid time");
+    } finally {
+      await restore();
+    }
   });
 
   it("Hourly preset shows a minute-only text input", async () => {

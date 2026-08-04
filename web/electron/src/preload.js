@@ -170,6 +170,13 @@ contextBridge.exposeInMainWorld("omnigentDesktop", {
    * @param {"light" | "dark" | "system"} scheme
    */
   setColorScheme: (scheme) => ipcRenderer.send("omnigent:set-color-scheme", scheme),
+  /**
+   * Persist the web language preference and effective locale in the shell.
+   * @param {"system" | "en" | "zh-CN"} preference
+   * @param {"en" | "zh-CN"} effectiveLanguage
+   */
+  setLanguage: (preference, effectiveLanguage) =>
+    ipcRenderer.send("omnigent:set-language", { preference, effectiveLanguage }),
 
   // ── Embedded browser pane ──────────────────────────────────────────────
   // The relay hook (web/src/hooks/useBrowserAgentRelay.ts) drives a native

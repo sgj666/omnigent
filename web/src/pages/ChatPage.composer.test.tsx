@@ -8,6 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatStore } from "@/store/chatStore";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 // Composer reads workspace files via a TanStack query hook (for "@"-file
 // mentions). These slash-command tests don't exercise that, so stub the hook
@@ -48,7 +49,7 @@ vi.mock("@/lib/agentLabels", async (importOriginal) => ({
 }));
 import type { ElicitationBlock } from "@/lib/blocks";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Composer, shouldQueueSend } from "./ChatPage";
+import { Composer, HistoryLoadingIndicator, shouldQueueSend } from "./ChatPage";
 import type { QueuedMessage } from "@/store/chatStore";
 import {
   BUILTIN_SLASH_COMMANDS,
@@ -631,6 +632,173 @@ describe("Composer slash-command submit routing", () => {
     expect(setModel).toHaveBeenCalledWith("gpt-5.4");
     expect(onSend).not.toHaveBeenCalled();
   });
+
+  it("localizes slash-command usage and preserves command arguments in Chinese", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      renderWithTooltips(<Composer {...composerProps({ effortLevels: ["low", "high"] })} />);
+      const ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "/effort turbo" } });
+      fireEvent.keyDown(ta, { key: "Enter" });
+
+      expect(screen.getByText("用法：/effort low | high | default")).toBeInTheDocument();
+
+      cleanup();
+      useChatStore.setState({ llmModel: "anthropic/claude-opus-4-8" });
+      renderWithTooltips(
+        <Composer
+          {...composerProps({
+            isTerminalFirst: true,
+            isNativeWrapper: true,
+            showModels: true,
+            modelPickerKind: "claude",
+            codexModelOptions: [],
+          })}
+        />,
+      );
+      const modelTextarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(modelTextarea, { target: { value: "/model " } });
+      fireEvent.keyDown(modelTextarea, { key: "Enter" });
+
+      const modelHint = screen.getByText(/模型：anthropic\/claude-opus-4-8/);
+      expect(modelHint).toHaveTextContent("用法：/model <name> · /model default 重置模型");
+      expect(modelHint).toHaveTextContent("anthropic/claude-opus-4-8");
+    } finally {
+      await restore();
+    }
+  });
+
+  it("localizes compact and model failure feedback while preserving raw errors", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    const realCompact = useChatStore.getState().compact;
+    const originalSetModelForFailureTest = useChatStore.getState().setModel;
+    const originalSetCodexPlanMode = useChatStore.getState().setCodexPlanMode;
+    try {
+      const compact = vi.fn().mockRejectedValue(new Error("runner timeout"));
+      useChatStore.setState({ compact });
+      renderWithTooltips(
+        <Composer
+          {...composerProps({
+            isTerminalFirst: true,
+            isNativeWrapper: true,
+          })}
+        />,
+      );
+      const compactTextarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(compactTextarea, { target: { value: "/compact" } });
+      fireEvent.keyDown(compactTextarea, { key: "Enter" });
+      await waitFor(() =>
+        expect(screen.getByText("会话压缩失败：runner timeout")).toBeInTheDocument(),
+      );
+
+      cleanup();
+      const setModel = vi.fn().mockRejectedValue(new Error("provider unavailable"));
+      useChatStore.setState({ setModel });
+      renderWithTooltips(<Composer {...composerProps()} />);
+      const modelTextarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(modelTextarea, { target: { value: "/model gpt-5.4" } });
+      fireEvent.keyDown(modelTextarea, { key: "Enter" });
+      await waitFor(() =>
+        expect(screen.getByText("设置模型失败：provider unavailable")).toBeInTheDocument(),
+      );
+
+      cleanup();
+      useChatStore.setState({
+        codexPlanMode: false,
+        setCodexPlanMode: vi.fn().mockRejectedValue(new Error("plan service unavailable")),
+      });
+      renderWithTooltips(<Composer {...composerProps({ showCodexPlanMode: true })} />);
+      fireEvent.click(screen.getByTestId("codex-plan-mode-toggle"));
+      await waitFor(() =>
+        expect(screen.getByText("无法进入规划模式：plan service unavailable")).toBeInTheDocument(),
+      );
+    } finally {
+      useChatStore.setState({
+        compact: realCompact,
+        setModel: originalSetModelForFailureTest,
+        setCodexPlanMode: originalSetCodexPlanMode,
+      });
+      await restore();
+    }
+  });
+
+  it("uses localized fallbacks when slash-command failures have no Error details", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    const realCompact = useChatStore.getState().compact;
+    const realSetEffort = useChatStore.getState().setEffort;
+    const realSetModelForFallbackTest = useChatStore.getState().setModel;
+    try {
+      useChatStore.setState({ compact: vi.fn().mockRejectedValue(null) });
+      renderWithTooltips(
+        <Composer
+          {...composerProps({
+            isTerminalFirst: true,
+            isNativeWrapper: true,
+          })}
+        />,
+      );
+      let ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "/compact" } });
+      fireEvent.keyDown(ta, { key: "Enter" });
+      await waitFor(() => expect(screen.getByText("会话压缩失败：未知错误")).toBeInTheDocument());
+
+      cleanup();
+      useChatStore.setState({ setEffort: vi.fn().mockRejectedValue({ code: "offline" }) });
+      renderWithTooltips(<Composer {...composerProps()} />);
+      ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "/effort high" } });
+      fireEvent.keyDown(ta, { key: "Enter" });
+      await waitFor(() =>
+        expect(screen.getByText("设置推理强度失败：未知错误")).toBeInTheDocument(),
+      );
+
+      cleanup();
+      useChatStore.setState({ setModel: vi.fn().mockRejectedValue("offline") });
+      renderWithTooltips(<Composer {...composerProps()} />);
+      ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "/model gpt-5.4" } });
+      fireEvent.keyDown(ta, { key: "Enter" });
+      await waitFor(() => expect(screen.getByText("设置模型失败：未知错误")).toBeInTheDocument());
+    } finally {
+      useChatStore.setState({
+        compact: realCompact,
+        setEffort: realSetEffort,
+        setModel: realSetModelForFallbackTest,
+      });
+      await restore();
+    }
+  });
+
+  it("localizes the agent-default label while preserving model ids", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      useChatStore.setState({ llmModel: null, sessionModelOverride: null });
+      renderWithTooltips(<Composer {...composerProps()} />);
+      const ta = screen.getByRole("textbox") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "/model " } });
+      fireEvent.keyDown(ta, { key: "Enter" });
+      expect(screen.getByText(/模型：智能体默认模型/)).toBeInTheDocument();
+    } finally {
+      await restore();
+    }
+  });
+});
+
+describe("HistoryLoadingIndicator localization", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it("renders the Chinese loading copy", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      render(<HistoryLoadingIndicator />);
+      expect(screen.getByRole("status")).toHaveTextContent("正在加载更早的消息…");
+    } finally {
+      await restore();
+    }
+  });
 });
 
 describe("Composer model/effort label", () => {
@@ -675,6 +843,28 @@ describe("Composer model/effort label", () => {
     // Model black, effort grey.
     expect(within(label()).getByText("Opus")).toHaveClass("text-foreground");
     expect(within(label()).getByText("High")).toHaveClass("text-muted-foreground");
+  });
+
+  it("localizes known reasoning efforts in the composer status label", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      useChatStore.setState({ selectedModel: "opus", selectedEffort: "xhigh" });
+      renderWithTooltips(
+        <Composer
+          {...composerProps({
+            agents: [{ id: "a1", name: "claude" }],
+            selectedAgentId: "a1",
+            modelPickerKind: "claude",
+            showModels: true,
+            codexModelOptions: CLAUDE_MODEL_OPTIONS,
+          })}
+        />,
+      );
+      expect(label()).toHaveTextContent("超高");
+      expect(label()).not.toHaveTextContent("xHigh");
+    } finally {
+      await restore();
+    }
   });
 
   it("reads 'Smart Routing' with no model/effort when routing is on", () => {
@@ -1503,7 +1693,7 @@ describe("Composer sub-agent tray", () => {
     // The name proves the passed label reaches the rendered tray, not just
     // that some tray exists.
     expect(screen.getByText("check-account-eligibility")).toBeTruthy();
-    expect(screen.getByText(/Chatting with sub-agent/)).toBeTruthy();
+    expect(screen.getByText("Chatting with sub-agent")).toBeTruthy();
   });
 });
 

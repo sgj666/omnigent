@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { FileViewerContext } from "@/shell/FileViewerContext";
 import type { RenderItem } from "@/lib/renderItems";
+import { withTestLanguage } from "@/i18n/testHelpers";
 import { ToolCard, ToolGroupSummary, formatToolDuration, getOutputPreview } from "./ToolCard";
 
 afterEach(cleanup);
@@ -255,5 +256,21 @@ describe("ToolGroupSummary", () => {
       ),
     );
     expect(screen.getByText("Ran 1 shell command, read 2 files")).toBeInTheDocument();
+  });
+
+  it("localizes tool chrome while preserving raw command payloads", async () => {
+    await withTestLanguage("zh-CN", () => {
+      const { container } = renderCard({
+        name: "sys_os_read",
+        arguments: { path: "src/模型.ts" },
+        output: "原始工具输出",
+        state: "output-available",
+      });
+      expect(screen.getByText("读取")).toBeInTheDocument();
+      expect(screen.getByText("src/模型.ts")).toBeInTheDocument();
+      fireEvent.click(container.querySelector<HTMLElement>('[data-slot="collapsible-trigger"]')!);
+      expect(screen.getByText("参数")).toBeInTheDocument();
+      expect(screen.getByText("原始工具输出")).toBeInTheDocument();
+    });
   });
 });

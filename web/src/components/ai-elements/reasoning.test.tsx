@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "./reasoning";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 afterEach(cleanup);
 
@@ -14,6 +15,23 @@ function renderReasoning(isStreaming: boolean, expandable = true) {
 }
 
 describe("Reasoning — auto-expand", () => {
+  it("localizes live and settled reasoning labels in Simplified Chinese", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      const { rerender } = renderReasoning(true);
+      expect(screen.getByText("思考中…")).toBeInTheDocument();
+      rerender(
+        <Reasoning isStreaming={false} duration={2.5}>
+          <ReasoningTrigger />
+          <ReasoningContent>Some reasoning text</ReasoningContent>
+        </Reasoning>,
+      );
+      expect(screen.getByText("已思考 2.5 秒")).toBeInTheDocument();
+    } finally {
+      await restore();
+    }
+  });
+
   it("blocks external image markdown and renders a placeholder", async () => {
     render(
       <Reasoning isStreaming={true}>

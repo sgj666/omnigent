@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NotebookPreview } from "./NotebookPreview";
+import { withTestLanguage } from "@/i18n/testHelpers";
 
 // Stub Shiki (same rationale as CodeViewer.test.tsx) — render code verbatim so
 // assertions can target cell source without async highlighting.
@@ -148,6 +149,16 @@ describe("NotebookPreview — invalid input", () => {
   it("rejects valid JSON that is not a notebook", () => {
     render(<NotebookPreview content='{"foo": 1}' />);
     expect(screen.getByText(/missing cells array/)).toBeInTheDocument();
+  });
+
+  it("localizes the known structure diagnostic while retaining parser terminology", async () => {
+    await withTestLanguage("zh-CN", () => {
+      render(<NotebookPreview content='{"foo": 1}' />);
+      expect(
+        screen.getByText("不是 Notebook：缺少 cells 数组（missing cells array）"),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/源文件视图/)).toBeInTheDocument();
+    });
   });
 
   it("recovers from raw control characters (unescaped ANSI) in cell output", () => {

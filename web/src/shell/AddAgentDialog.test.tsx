@@ -6,6 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { AddAgentDialog } from "./AddAgentDialog";
+import { withTestLanguage } from "@/i18n/testHelpers";
 import { useAvailableAgents, type AvailableAgent } from "@/hooks/useAvailableAgents";
 import { createSession } from "@/lib/sessionsApi";
 
@@ -71,6 +72,15 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("AddAgentDialog", () => {
+  it("localizes the add-agent controls in Simplified Chinese", async () => {
+    await withTestLanguage("zh-CN", () => {
+      renderDialog();
+      expect(screen.getByRole("heading", { name: "添加智能体" })).toBeInTheDocument();
+      expect(screen.getByText("选择智能体")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "取消" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "添加" })).toBeInTheDocument();
+    });
+  });
   it("lists the available agents from the catalog", () => {
     renderDialog();
     expect(screen.getByTestId("agent-card-ag_claude")).toHaveTextContent("Claude Code");

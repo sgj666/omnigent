@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { TerminalCommandCard } from "./TerminalCommandCard";
+import { withTestLanguage } from "@/i18n/testHelpers";
 
 afterEach(cleanup);
 
@@ -61,5 +62,33 @@ describe("TerminalCommandCard", () => {
       screen.getAllByText((_, node) => Boolean(node?.textContent?.includes("command not found")))
         .length,
     ).toBeGreaterThan(0);
+  });
+
+  it("uses Chinese terminal labels while preserving stdout and stderr", async () => {
+    await withTestLanguage("zh-CN", () => {
+      const { container } = render(
+        <TerminalCommandCard
+          kind="output"
+          input={null}
+          stdout="/home/user"
+          stderr="command not found"
+        />,
+      );
+      expect(screen.getByText("输出")).toBeDefined();
+      const trigger = container.querySelector<HTMLElement>('[data-slot="collapsible-trigger"]');
+      expect(trigger).not.toBeNull();
+      fireEvent.click(trigger!);
+      expect(screen.getAllByText("标准输出").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("标准错误").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("/home/user").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("command not found").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("localizes the no-output status in Chinese", async () => {
+    await withTestLanguage("zh-CN", () => {
+      render(<TerminalCommandCard kind="output" input={null} stdout={null} stderr={null} />);
+      expect(screen.getByText("（无输出）")).toBeDefined();
+    });
   });
 });

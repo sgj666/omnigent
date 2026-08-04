@@ -8,18 +8,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CliCommandBlock } from "./CliCommandBlock";
 import { ForkSessionForm } from "./ForkSessionDialog";
+import { useTranslation } from "react-i18next";
 
 const CLAUDE_NATIVE_WRAPPER = "claude-code-native-ui";
-
-const HOST_OWNER_DESCRIPTION =
-  "This session's host is offline. Run the command below from the host machine to reconnect.";
-
-const HOST_VIEWER_DESCRIPTION =
-  "This session's host machine is offline and only its owner can reconnect it. " +
-  "Clone the session to continue in a copy you own.";
-
-const RUN_DESCRIPTION =
-  "Run the command below from the machine where you started this session to reconnect.";
 
 /**
  * The liveness state this dialog reconnects from. Maps to the
@@ -138,6 +129,7 @@ export function ReconnectSessionDialog({
   sourceHostId?: string | null;
   sourceGitBranch?: string | null;
 }) {
+  const { t } = useTranslation("workspace");
   const isHostReconnect = state === "host_offline";
   // A non-owner can't reach the host machine to reconnect it, so the
   // CLI command is useless to them. Owners of both states, and anyone
@@ -146,12 +138,12 @@ export function ReconnectSessionDialog({
   const command = buildReconnectCommand({ conversationId, serverUrl, wrapper, state });
   // Titles mirror the unreachable banner's wording ("Host is offline —
   // click to reconnect" / "Agent disconnected — click to reconnect").
-  const title = isHostReconnect ? "Host is offline" : "Agent disconnected";
+  const title = isHostReconnect ? t("hostOffline") : t("agentDisconnected");
   const description = isHostReconnect
     ? isOwner
-      ? HOST_OWNER_DESCRIPTION
-      : HOST_VIEWER_DESCRIPTION
-    : RUN_DESCRIPTION;
+      ? t("hostOfflineOwnerDescription")
+      : t("hostOfflineViewerDescription")
+    : t("localStrandedDescription");
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -172,10 +164,10 @@ export function ReconnectSessionDialog({
         >
           <TabsList className="w-full">
             <TabsTrigger value="reconnect" data-testid="reconnect-session-tab-reconnect">
-              Reconnect
+              {t("reconnectTab")}
             </TabsTrigger>
             <TabsTrigger value="clone" data-testid="reconnect-session-tab-clone">
-              Clone
+              {t("cloneTab")}
             </TabsTrigger>
           </TabsList>
           <TabsContent value="reconnect" className="flex flex-col gap-4">

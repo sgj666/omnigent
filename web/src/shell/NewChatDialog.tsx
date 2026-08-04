@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "@/lib/routing";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -54,6 +55,7 @@ import {
   EFFORT_SELECT_NONE,
   MODEL_SELECT_DEFAULT,
   MODEL_SELECT_SMART,
+  translateConfigOptionLabel,
 } from "@/components/HarnessConfigControls";
 import {
   DropdownMenu,
@@ -888,6 +890,7 @@ export function AgentHarnessPicker({
   /** Extra classes merged onto the trigger's label span. */
   triggerLabelClassName?: string;
 }) {
+  const { t } = useTranslation("agents");
   // Controlled so picking a row can close the menu.
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
@@ -1002,7 +1005,7 @@ export function AgentHarnessPicker({
       className="gap-2 rounded-sm px-2 py-1.5 text-13 text-muted-foreground"
     >
       <PlusIcon className="size-3.5" />
-      Create custom agent
+      {t("picker.createCustom")}
     </DropdownMenuItem>
   ) : null;
   const hasCustomGroup = hasCustomAgents;
@@ -1021,7 +1024,9 @@ export function AgentHarnessPicker({
         >
           <div className="flex min-w-0 flex-1 items-baseline gap-2.5">
             <span className="truncate">{pendingAgent.name}</span>
-            <span className="truncate text-[11px] text-muted-foreground/70">Custom</span>
+            <span className="truncate text-[11px] text-muted-foreground/70">
+              {t("picker.custom")}
+            </span>
           </div>
         </DropdownMenuItem>
       )}
@@ -1080,7 +1085,7 @@ export function AgentHarnessPicker({
           <span
             className={cn("max-w-[12rem] truncate text-xs text-foreground", triggerLabelClassName)}
           >
-            {hasAgents ? agentLabel : "No agents"}
+            {hasAgents ? agentLabel : t("picker.noAgents")}
           </span>
           <ChevronDownIcon className="size-3.5 opacity-60" />
         </Button>
@@ -1112,7 +1117,7 @@ export function AgentHarnessPicker({
               className="items-center gap-1.5 rounded-sm px-2 py-1.5 text-13 font-medium"
             >
               <ChevronLeftIcon className="size-4 shrink-0 opacity-70" />
-              <span className="truncate">More</span>
+              <span className="truncate">{t("picker.more")}</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {moreHarnessEntries.map(renderEntry)}
@@ -1129,7 +1134,7 @@ export function AgentHarnessPicker({
               className="items-center gap-1.5 rounded-sm px-2 py-1.5 text-13 font-medium"
             >
               <ChevronLeftIcon className="size-4 shrink-0 opacity-70" />
-              <span className="truncate">Custom agents</span>
+              <span className="truncate">{t("picker.customAgents")}</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {customAgentsBody}
@@ -1141,7 +1146,7 @@ export function AgentHarnessPicker({
             list inline; "needs setup" ones fold into a "More" group. */}
             {(readyHarnessEntries.length > 0 || moreHarnessEntries.length > 0) && (
               <>
-                <PickerSectionHeader>Harnesses</PickerSectionHeader>
+                <PickerSectionHeader>{t("picker.harnesses")}</PickerSectionHeader>
                 {readyHarnessEntries.map(renderEntry)}
                 {moreHarnessEntries.length > 0 &&
                   (isMobile ? (
@@ -1154,7 +1159,7 @@ export function AgentHarnessPicker({
                       }}
                       className="items-center gap-2 rounded-sm px-2 py-1.5 text-13"
                     >
-                      <span className="flex-1">More</span>
+                      <span className="flex-1">{t("picker.more")}</span>
                       <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground/70" />
                     </DropdownMenuItem>
                   ) : (
@@ -1164,7 +1169,7 @@ export function AgentHarnessPicker({
                         data-testid="new-chat-landing-harness-more"
                         className="items-center gap-2 rounded-sm px-2 py-1.5 text-13"
                       >
-                        <span className="flex-1">More</span>
+                        <span className="flex-1">{t("picker.more")}</span>
                       </DropdownMenuSubTrigger>
                       <DropdownMenuSubContent className="max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-56 max-w-[calc(100vw-2rem)] overflow-y-auto p-1">
                         {moreHarnessEntries.map(renderEntry)}
@@ -1175,7 +1180,7 @@ export function AgentHarnessPicker({
               </>
             )}
             {/* Agents group — built-in bundle agents (Polly / Debby) inline. */}
-            <PickerSectionHeader>Agents</PickerSectionHeader>
+            <PickerSectionHeader>{t("picker.agents")}</PickerSectionHeader>
             {bundleEntries.map(renderEntry)}
             {/* Existing custom agents fold into a "Custom agents" submenu (with
             the pending upload and the create action). With no custom agents the
@@ -1193,7 +1198,7 @@ export function AgentHarnessPicker({
                   }}
                   className="items-center gap-2 rounded-sm px-2 py-1.5 text-13"
                 >
-                  <span className="flex-1">Custom agents</span>
+                  <span className="flex-1">{t("picker.customAgents")}</span>
                   <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground/70" />
                 </DropdownMenuItem>
               ) : (
@@ -1203,7 +1208,7 @@ export function AgentHarnessPicker({
                     data-testid="new-chat-landing-custom-agents"
                     className="items-center gap-2 rounded-sm px-2 py-1.5 text-13"
                   >
-                    <span className="flex-1">Custom agents</span>
+                    <span className="flex-1">{t("picker.customAgents")}</span>
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent className="max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-56 max-w-[calc(100vw-2rem)] overflow-y-auto p-1">
                     {customAgentsBody}
@@ -1288,6 +1293,7 @@ function HarnessConfigModal({
   setPickedHarness: (harness: string | null, agentId?: string) => void;
   setCostControlMode: (mode: CostControlMode) => void;
 }) {
+  const { t } = useTranslation("models");
   const info = useServerInfo();
   // Feature ON → single "needs setup" badge; OFF → per-reason original text.
   const collapsedBadge = info !== "loading" && info.harness_install_enabled;
@@ -1401,9 +1407,9 @@ function HarnessConfigModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md" data-testid="new-chat-landing-config-modal">
         <DialogHeader>
-          <DialogTitle>Configure {agent.display_name}</DialogTitle>
+          <DialogTitle>{t("configure", { name: agent.display_name })}</DialogTitle>
           <DialogDescription className="sr-only">
-            Configure how {agent.display_name} runs for this session.
+            {t("newSessionDescription", { name: agent.display_name })}
           </DialogDescription>
         </DialogHeader>
 
@@ -1412,13 +1418,13 @@ function HarnessConfigModal({
           that have no Model dropdown to fold it into (Codex, bundle agents, …).
           Claude offers it as a Model option instead, so it's excluded here. */}
           {smartRoutingEligible && !hasPermission && (
-            <ConfigRow label="Smart Routing" description="Auto-pick the model per turn by task">
+            <ConfigRow label={t("smartRouting")} description={t("autoPick")}>
               <div className="flex h-8 items-center justify-end">
                 <Switch
                   size="sm"
                   checked={smartRoutingOn}
                   data-testid="new-chat-landing-config-smart-routing"
-                  aria-label="Smart Routing"
+                  aria-label={t("smartRoutingAria")}
                   onCheckedChange={(next) => setDraftRouting(next ? "on" : "off")}
                 />
               </div>
@@ -1426,12 +1432,12 @@ function HarnessConfigModal({
           )}
           {hasPermission && (
             <>
-              <ConfigRow label="Model" description="Underlying LLM">
+              <ConfigRow label={t("model")} description={t("underlyingLlm")}>
                 <Select value={modelValue} onValueChange={onModelChange}>
                   <SelectTrigger
                     className="w-full"
                     data-testid="new-chat-landing-config-model"
-                    aria-label="Model"
+                    aria-label={t("model")}
                   >
                     <SelectValue />
                   </SelectTrigger>
@@ -1441,9 +1447,9 @@ function HarnessConfigModal({
                     className="[&_[data-slot=select-item]]:pl-2.5"
                   >
                     {smartRoutingEligible && (
-                      <SelectItem value={MODEL_SELECT_SMART}>Smart Routing</SelectItem>
+                      <SelectItem value={MODEL_SELECT_SMART}>{t("smartRouting")}</SelectItem>
                     )}
-                    <SelectItem value={MODEL_SELECT_DEFAULT}>Default</SelectItem>
+                    <SelectItem value={MODEL_SELECT_DEFAULT}>{t("reasoning.default")}</SelectItem>
                     {claudeModelOptions.map((m) => (
                       <SelectItem key={m.id} value={m.id}>
                         {m.displayName}
@@ -1451,19 +1457,19 @@ function HarnessConfigModal({
                     ))}
                     {claudeModelsLoading && (
                       <div className="px-2.5 py-1 text-xs text-muted-foreground">
-                        Loading models…
+                        {t("loadingModels")}
                       </div>
                     )}
                     {!claudeModelsLoading && claudeModelOptions.length === 0 && (
                       <div className="px-2.5 py-1 text-xs text-muted-foreground">
-                        Models unavailable
+                        {t("modelsUnavailable")}
                       </div>
                     )}
                   </SelectContent>
                 </Select>
               </ConfigRow>
 
-              <ConfigRow label="Effort" description="Reasoning depth vs. speed">
+              <ConfigRow label={t("effort")} description={t("reasoningDepth")}>
                 <Select
                   value={draftEffort || EFFORT_SELECT_NONE}
                   onValueChange={(v) => setDraftEffort(v === EFFORT_SELECT_NONE ? "" : v)}
@@ -1474,7 +1480,7 @@ function HarnessConfigModal({
                   <SelectTrigger
                     className="w-full"
                     data-testid="new-chat-landing-config-effort"
-                    aria-label="Reasoning effort"
+                    aria-label={t("effort")}
                   >
                     <SelectValue />
                   </SelectTrigger>
@@ -1483,35 +1489,35 @@ function HarnessConfigModal({
                     align="start"
                     className="[&_[data-slot=select-item]]:pl-2.5"
                   >
-                    <SelectItem value={EFFORT_SELECT_NONE}>Default</SelectItem>
+                    <SelectItem value={EFFORT_SELECT_NONE}>{t("reasoning.default")}</SelectItem>
                     {CLAUDE_NATIVE_EFFORTS.map((e) => (
                       <SelectItem key={e.value} value={e.value}>
-                        {e.label}
+                        {translateConfigOptionLabel(t, e.value, e.label)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </ConfigRow>
 
-              <ConfigRow label="Permissions" description="What the agent can do without asking">
+              <ConfigRow label={t("permissions")} description={t("permissionsDescription")}>
                 <DescribedSelect
                   value={draftPermission}
                   onValueChange={setDraftPermission}
                   options={CLAUDE_NATIVE_PERMISSION_MODES}
                   testId="new-chat-landing-config-permission"
-                  ariaLabel="Permissions"
+                  ariaLabel={t("permissions")}
                 />
               </ConfigRow>
             </>
           )}
 
           {hasApproval && isCodex && (
-            <ConfigRow label="Model" description="Underlying LLM">
+            <ConfigRow label={t("model")} description={t("underlyingLlm")}>
               <Select value={modelValue} onValueChange={onModelChange}>
                 <SelectTrigger
                   className="w-full"
                   data-testid="new-chat-landing-config-model"
-                  aria-label="Model"
+                  aria-label={t("model")}
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -1521,7 +1527,10 @@ function HarnessConfigModal({
                   className="[&_[data-slot=select-item]]:pl-2.5"
                 >
                   <SelectItem value={MODEL_SELECT_DEFAULT}>
-                    {defaultModelLabel(modelOptions, modelDisplay)}
+                    {defaultModelLabel(modelOptions, modelDisplay).replace(
+                      /^Default/,
+                      t("reasoning.default"),
+                    )}
                   </SelectItem>
                   {modelOptions.map((m) => (
                     <SelectItem key={m.id} value={m.id}>
@@ -1529,11 +1538,13 @@ function HarnessConfigModal({
                     </SelectItem>
                   ))}
                   {modelsLoading && (
-                    <div className="px-2.5 py-1 text-xs text-muted-foreground">Loading models…</div>
+                    <div className="px-2.5 py-1 text-xs text-muted-foreground">
+                      {t("loadingModels")}
+                    </div>
                   )}
                   {!modelsLoading && modelOptions.length === 0 && (
                     <div className="px-2.5 py-1 text-xs text-muted-foreground">
-                      Models unavailable
+                      {t("modelsUnavailable")}
                     </div>
                   )}
                 </SelectContent>
@@ -1543,7 +1554,7 @@ function HarnessConfigModal({
 
           {hasApproval && (
             <>
-              <ConfigRow label="Approval" description="What the agent can do without asking">
+              <ConfigRow label={t("approval")} description={t("approvalDescription")}>
                 <DescribedSelect
                   // Codex adds the DANGEROUS full-bypass as a 4th option; when
                   // armed the select shows it (draftBypass wins over the preset).
@@ -1564,7 +1575,7 @@ function HarnessConfigModal({
                       : CODEX_NATIVE_APPROVAL_MODES
                   }
                   testId="new-chat-landing-config-approval"
-                  ariaLabel="Approval"
+                  ariaLabel={t("approval")}
                 />
               </ConfigRow>
               {/* Persistent danger banner while full-bypass is selected. */}
@@ -1575,34 +1586,31 @@ function HarnessConfigModal({
                   className="flex items-start gap-1.5 rounded-md border border-destructive bg-destructive/10 px-2 py-1.5 text-xs font-medium leading-relaxed text-destructive"
                 >
                   <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
-                  <span>
-                    Danger: this session runs Codex with approvals and the sandbox disabled. It can
-                    edit any file and run any command without asking.
-                  </span>
+                  <span>{t("dangerBypass")}</span>
                 </div>
               )}
             </>
           )}
 
           {hasCursor && (
-            <ConfigRow label="Mode" description="How Cursor runs commands">
+            <ConfigRow label={t("mode")} description={t("modeDescription")}>
               <DescribedSelect
                 value={draftCursor}
                 onValueChange={setDraftCursor}
                 options={CURSOR_NATIVE_EXEC_MODES}
                 testId="new-chat-landing-config-cursor-mode"
-                ariaLabel="Mode"
+                ariaLabel={t("mode")}
               />
             </ConfigRow>
           )}
 
           {!hasPermission && !hasApproval && !hasCursor && brainDefault && (
-            <ConfigRow label="Agent Harness" description="Underlying coding harness">
+            <ConfigRow label={t("harness")} description={t("harnessDescription")}>
               <Select value={draftHarness ?? brainDefault} onValueChange={setDraftHarness}>
                 <SelectTrigger
                   className="w-full"
                   data-testid="new-chat-landing-config-harness"
-                  aria-label="Agent Harness"
+                  aria-label={t("harness")}
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -1643,10 +1651,10 @@ function HarnessConfigModal({
             onClick={() => onOpenChange(false)}
             data-testid="new-chat-landing-config-cancel"
           >
-            Cancel
+            {t("cancel")}
           </Button>
           <Button type="button" onClick={save} data-testid="new-chat-landing-config-save">
-            Save
+            {t("save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1689,6 +1697,7 @@ export function resetLandingDraft(): void {
 }
 
 export function NewChatLandingScreen() {
+  const { t } = useTranslation("models");
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
@@ -2264,28 +2273,38 @@ export function NewChatLandingScreen() {
   const configSummary = useMemo((): { label: string; value: string }[] => {
     if (supportsPermissionMode) {
       const modelValue = routingOn
-        ? "Smart Routing"
-        : (claudeModelOptions.find((m) => m.id === pickedModel)?.displayName ?? "Default");
+        ? t("smartRouting")
+        : (claudeModelOptions.find((m) => m.id === pickedModel)?.displayName ??
+          t("reasoning.default"));
       // Smart Routing freezes effort to the default (the router picks per turn),
       // so mirror the modal: show "Default" whenever routing is on or effort is
       // unset, else the picked level.
       const effortValue =
         routingOn || !pickedEffort
-          ? "Default"
-          : (CLAUDE_NATIVE_EFFORTS.find((e) => e.value === pickedEffort)?.label ?? "Default");
-      const permissionValue =
+          ? t("reasoning.default")
+          : translateConfigOptionLabel(
+              t,
+              pickedEffort,
+              CLAUDE_NATIVE_EFFORTS.find((e) => e.value === pickedEffort)?.label ?? pickedEffort,
+            );
+      const permissionValue = translateConfigOptionLabel(
+        t,
+        permissionMode,
         CLAUDE_NATIVE_PERMISSION_MODES.find((m) => m.value === permissionMode)?.label ??
-        permissionMode;
+          permissionMode,
+      );
       return [
-        { label: "Model", value: modelValue },
-        { label: "Effort", value: effortValue },
-        { label: "Permissions", value: permissionValue },
+        { label: t("model"), value: modelValue },
+        { label: t("summaryEffort"), value: effortValue },
+        { label: t("permissions"), value: permissionValue },
       ];
     }
     // Non-Claude routable agents surface Smart Routing as a standalone toggle,
     // so reflect it here when on (Claude folds it into Model above).
     const routingRow: { label: string; value: string }[] =
-      smartRoutingEligible && routingOn ? [{ label: "Smart Routing", value: "On" }] : [];
+      smartRoutingEligible && routingOn
+        ? [{ label: t("smartRouting"), value: t("configOptions.labels.auto") }]
+        : [];
     if (supportsApprovalMode) {
       const isCodex = nativeCodingAgentForAvailableAgent(selectedAgent)?.harness === "codex-native";
       // Bypass is the most-permissive Approval choice, not a separate knob — so
@@ -2294,30 +2313,44 @@ export function NewChatLandingScreen() {
       // (which would misleadingly imply approvals are still at e.g. "Default").
       const approvalValue =
         isCodex && bypassSandbox
-          ? CODEX_NATIVE_BYPASS_APPROVAL_OPTION.label
-          : (CODEX_NATIVE_APPROVAL_MODES.find((m) => m.value === approvalMode)?.label ??
-            approvalMode);
+          ? translateConfigOptionLabel(
+              t,
+              CODEX_NATIVE_BYPASS_APPROVAL_OPTION.value,
+              CODEX_NATIVE_BYPASS_APPROVAL_OPTION.label,
+            )
+          : translateConfigOptionLabel(
+              t,
+              approvalMode,
+              CODEX_NATIVE_APPROVAL_MODES.find((m) => m.value === approvalMode)?.label ??
+                approvalMode,
+            );
       const modelRows = isCodex
         ? [
             {
-              label: "Model",
+              label: t("model"),
               value:
                 codexModelOptions.find((m) => m.id === pickedModel)?.id ??
-                defaultModelLabel(codexModelOptions, displayModelId),
+                defaultModelLabel(codexModelOptions, displayModelId).replace(
+                  /^Default/,
+                  t("reasoning.default"),
+                ),
             },
           ]
         : [];
-      return [...modelRows, { label: "Approval", value: approvalValue }, ...routingRow];
+      return [...modelRows, { label: t("approval"), value: approvalValue }, ...routingRow];
     }
     if (supportsCursorMode) {
-      const modeValue =
-        CURSOR_NATIVE_EXEC_MODES.find((m) => m.value === cursorExecMode)?.label ?? cursorExecMode;
-      return [{ label: "Mode", value: modeValue }, ...routingRow];
+      const modeValue = translateConfigOptionLabel(
+        t,
+        cursorExecMode,
+        CURSOR_NATIVE_EXEC_MODES.find((m) => m.value === cursorExecMode)?.label ?? cursorExecMode,
+      );
+      return [{ label: t("mode"), value: modeValue }, ...routingRow];
     }
     if (selectedAgent?.harness != null && selectedAgent.harness in brainHarnessLabels) {
       const active = pickedHarness ?? selectedAgent.harness;
       return [
-        { label: "Agent Harness", value: brainHarnessLabels[active] ?? active },
+        { label: t("summaryHarness"), value: brainHarnessLabels[active] ?? active },
         ...routingRow,
       ];
     }
@@ -2339,6 +2372,7 @@ export function NewChatLandingScreen() {
     bypassSandbox,
     cursorExecMode,
     pickedHarness,
+    t,
   ]);
   // Reset per-agent-instance run-config that must not carry across an agent
   // change. The DANGEROUS Codex bypass re-opts-in per context (matching the
@@ -2783,15 +2817,18 @@ export function NewChatLandingScreen() {
   // Chip display labels.
   const workspaceLabel = workspaceTrimmed
     ? (workspaceTrimmed.split("/").filter(Boolean).pop() ?? workspaceTrimmed)
-    : "Working directory";
+    : t("picker.workingDirectory", { ns: "agents" });
   const hostLabel = connectingThisMachine
-    ? "Connecting…"
+    ? t("picker.connecting", { ns: "agents" })
     : sandboxSelected
       ? sandboxLabel
-      : (selectedHost?.name ?? (onlineHosts.length === 0 ? "No hosts" : "Select host"));
+      : (selectedHost?.name ??
+        (onlineHosts.length === 0
+          ? t("picker.noHosts", { ns: "agents" })
+          : t("picker.selectHost", { ns: "agents" })));
   // The chip shows just the branch (the "(existing)" distinction lives in the
   // popover's warning; appending it here only gets clipped by the chip's cap).
-  const worktreeLabel = branchName.trim() || "No worktree";
+  const worktreeLabel = branchName.trim() || t("picker.noWorktree", { ns: "agents" });
   // Sandbox repository chip label: repo name (server's clone-dir rule)
   // plus the pinned branch, e.g. "repo#main"; placeholder when unset.
   const sandboxRepoName = deriveRepoName(sandboxRepoUrl);
@@ -2799,11 +2836,13 @@ export function NewChatLandingScreen() {
     ? sandboxRepoBranch.trim()
       ? `${sandboxRepoName}#${sandboxRepoBranch.trim()}`
       : sandboxRepoName
-    : "Repository";
+    : t("picker.repository", { ns: "agents" });
   // The trigger label is just the agent name; the run-config knobs live in
   // the picker's per-entry submenu, so duplicating their values here would be
   // redundant.
-  const agentLabel = selectedAgent ? selectedAgent.display_name : "Select agent";
+  const agentLabel = selectedAgent
+    ? selectedAgent.display_name
+    : t("picker.selectAgent", { ns: "agents" });
 
   // Wrap the harness setter so every explicit pick is persisted to
   // localStorage. The caller can pass an explicit `agentId` for the
@@ -3612,14 +3651,16 @@ export function NewChatLandingScreen() {
                         >
                           <span className="flex items-center gap-2">
                             <MonitorCloudIcon className="size-4 text-muted-foreground" />
-                            <span className="text-xs">New Sandbox</span>
+                            <span className="text-xs">
+                              {t("picker.newSandbox", { ns: "agents" })}
+                            </span>
                           </span>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <button
                                 type="button"
                                 className="inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground/80 hover:text-foreground"
-                                aria-label="Why New Sandbox is unavailable"
+                                aria-label={t("picker.newSandboxUnavailable", { ns: "agents" })}
                                 onClick={(e) => e.stopPropagation()}
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter" || e.key === " ") e.stopPropagation();

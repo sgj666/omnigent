@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElectronUpdateBridge, UpdateConfig, UpdateStatus } from "@/lib/nativeBridge";
+import { withTestLanguage } from "@/i18n/testHelpers";
 import { UpdateBanner } from "./UpdateBanner";
 
 const DEFAULT_CONFIG: UpdateConfig = {
@@ -47,6 +48,21 @@ afterEach(() => {
 });
 
 describe("UpdateBanner", () => {
+  it("localizes desktop update copy in Simplified Chinese", async () => {
+    await withTestLanguage("zh-CN", async () => {
+      installBridge({
+        state: "available",
+        info: { version: "0.4.0", releaseNotes: "修复和优化。" },
+      });
+      render(<UpdateBanner />);
+
+      expect(await screen.findByText("Omnigent 0.4.0 可用更新")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "立即更新" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "跳过此版本" })).toBeInTheDocument();
+      expect(screen.getByText("发行说明")).toBeInTheDocument();
+    });
+  });
+
   it("renders nothing outside the Electron shell", () => {
     render(<UpdateBanner />);
     expect(screen.queryByRole("region", { name: "Desktop update" })).toBeNull();

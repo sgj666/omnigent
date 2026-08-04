@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HostBadge, resolveHostBadge } from "./HostBadge";
 import type { Host } from "@/hooks/useHosts";
+import { setTestLanguage } from "@/i18n/testHelpers";
 
 function host(overrides: Partial<Host> = {}): Host {
   return {
@@ -110,6 +111,18 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("HostBadge", () => {
+  it("localizes host status and reconnect copy in Simplified Chinese", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      const { rerender } = render(<HostBadge sessionId="conv_1" />);
+      expect(screen.getByTestId("host-badge")).toHaveTextContent("mac-laptop, 在线");
+      rerender(<HostBadge sessionId="conv_1" onReconnect={vi.fn()} />);
+      expect(screen.getByTestId("host-badge")).toHaveTextContent("主机已离线 — 点击重新连接");
+    } finally {
+      await restore();
+    }
+  });
+
   it("renders the host name with an online status when reachable", () => {
     render(<HostBadge sessionId="conv_1" />);
     const badge = screen.getByTestId("host-badge");

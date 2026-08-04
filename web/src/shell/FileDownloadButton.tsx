@@ -8,6 +8,7 @@
 
 import { DownloadIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { downloadWorkspaceFile } from "@/hooks/useFileContent";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -33,6 +34,7 @@ interface FileDownloadButtonProps {
  * :param path: Workspace-relative path of the file to download.
  */
 export function FileDownloadButton({ conversationId, path }: FileDownloadButtonProps) {
+  const { t } = useTranslation("workspace");
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState(false);
   const errorTimerRef = useRef<number>(0);
@@ -67,7 +69,7 @@ export function FileDownloadButton({ conversationId, path }: FileDownloadButtonP
       <TooltipTrigger asChild>
         <button
           type="button"
-          aria-label={`Download ${filename}`}
+          aria-label={t("downloadFile", { filename })}
           className={cn(
             "shrink-0 cursor-pointer rounded p-0.5 transition-opacity",
             "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
@@ -82,7 +84,7 @@ export function FileDownloadButton({ conversationId, path }: FileDownloadButtonP
         </button>
       </TooltipTrigger>
       <TooltipContent side="bottom">
-        {downloadError ? "Download failed" : "Download"}
+        {downloadError ? t("downloadFailed") : t("download")}
       </TooltipContent>
     </Tooltip>
   );

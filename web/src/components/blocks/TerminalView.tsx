@@ -11,6 +11,7 @@
 import { Loader2Icon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { resolveWebSocketUrl } from "@/lib/host";
 import { subscribeCodeFont } from "@/lib/codeFontPreferences";
@@ -95,6 +96,7 @@ export function TerminalView({
   resumePending = false,
   transport,
 }: TerminalViewProps) {
+  const { t } = useTranslation("workspace");
   // Control mode: xterm owns the buffer + mouse, so plain drag selects and
   // the normal copy gesture works — no forced-selection modifier, no hint bar.
   const controlMode = transport === "control";
@@ -167,9 +169,13 @@ export function TerminalView({
       disposeActiveSession();
       setConnectAttempt((attempt) => attempt + 1);
     } catch (error) {
-      setResumeError(resumeErrorText(error));
+      setResumeError(
+        error instanceof Error && error.message
+          ? t("resumeErrorWithMessage", { message: error.message })
+          : t("resumeErrorGeneric"),
+      );
     }
-  }, [onResume, disposeActiveSession]);
+  }, [onResume, disposeActiveSession, t]);
 
   const attachSession = useCallback(
     (node: HTMLDivElement | null) => {
@@ -326,7 +332,7 @@ export function TerminalView({
           data-testid="terminal-selection-hint"
           className="shrink-0 select-none px-2 py-1 text-[10px] text-muted-foreground/70"
         >
-          {selectionHintText(isMacPlatform())}
+          {isMacPlatform() ? t("terminalSelectionMac") : t("terminalSelectionOther")}
         </div>
       )}
       {state.kind !== "connected" && (
@@ -400,6 +406,7 @@ function StatusOverlay({
   resumePending: boolean;
   resumeError: string | null;
 }) {
+  const { t } = useTranslation("workspace");
   // Render outside the xterm container so close/error messages don't
   // pollute the scrollback buffer the way ANSI-escape writes would.
   return (
@@ -407,7 +414,7 @@ function StatusOverlay({
       {state.kind === "connecting" && (
         <span className="flex items-center gap-2">
           <Loader2Icon className="size-4 animate-spin" />
-          Connecting…
+          {t("terminalConnecting")}
         </span>
       )}
       {state.kind === "closed" && reconnectPending && (
@@ -415,12 +422,14 @@ function StatusOverlay({
         // dead-end message, so a transient drop never reads as fatal.
         <span data-testid="terminal-reconnecting" className="flex items-center gap-2">
           <Loader2Icon className="size-4 animate-spin" />
-          Reconnecting…
+          {t("terminalReconnecting")}
         </span>
       )}
       {state.kind === "closed" && !reconnectPending && (
         <div className="flex flex-wrap items-center justify-center gap-2 px-3">
-          <span>Bridge closed: {state.reason}</span>
+          <span>
+            {t("bridgeClosed")}: {state.reason}
+          </span>
           {onResume && (
             <Button
               type="button"
@@ -430,7 +439,7 @@ function StatusOverlay({
               disabled={resumePending}
               className="border-zinc-500/50 bg-zinc-100 text-zinc-950 hover:bg-white"
             >
-              {resumePending ? "Resuming…" : "Resume session"}
+              {resumePending ? t("resuming") : t("resumeSession")}
             </Button>
           )}
           {resumeError && (
@@ -438,14 +447,9 @@ function StatusOverlay({
           )}
         </div>
       )}
-      {state.kind === "error" && <span>Bridge error</span>}
+      {state.kind === "error" && <span>{t("bridgeError")}</span>}
     </div>
   );
-}
-
-function resumeErrorText(error: unknown): string {
-  if (error instanceof Error && error.message) return `Couldn't resume session: ${error.message}`;
-  return "Couldn't resume session.";
 }
 
 /**

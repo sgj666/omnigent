@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { QueuedMessage } from "@/store/chatStore";
+import { withTestLanguage } from "@/i18n/testHelpers";
 import { QueuedMessagesStrip } from "./QueuedMessagesStrip";
 
 const msg = (queueId: string, text: string): QueuedMessage => ({
@@ -108,5 +109,25 @@ describe("QueuedMessagesStrip", () => {
       />,
     );
     expect(screen.getAllByRole("button", { name: "Reorder queued message" })).toHaveLength(2);
+  });
+
+  it("localizes queue controls without changing the queued message text", async () => {
+    await withTestLanguage("zh-CN", () => {
+      render(
+        <QueuedMessagesStrip
+          messages={[msg("q_1", "Keep this user-authored text")]}
+          onDelete={vi.fn()}
+          onEdit={vi.fn()}
+          onSteer={vi.fn()}
+          onReorder={vi.fn()}
+        />,
+      );
+      expect(screen.getByText("Keep this user-authored text")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "重新排序排队消息" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "立即发送排队消息" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "编辑排队消息" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "移除排队消息" })).toBeInTheDocument();
+      expect(screen.getByText("立即发送")).toBeInTheDocument();
+    });
   });
 });

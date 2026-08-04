@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "@/lib/routing";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -58,6 +59,7 @@ const SAME_AS_SOURCE = "__same__";
  * HostOption (which is private to that module).
  */
 function HostLabel({ host }: { host: Host }) {
+  const { t } = useTranslation("common");
   const isOnline = host.status === "online";
   return (
     <span className="flex items-center gap-2">
@@ -75,7 +77,7 @@ function HostLabel({ host }: { host: Host }) {
         <span
           className={`inline-block size-1.5 rounded-full ${isOnline ? "bg-green-500" : "bg-muted-foreground"}`}
         />
-        {host.status}
+        {t(`hostStatus.${host.status}`, { defaultValue: host.status })}
       </span>
     </span>
   );
@@ -183,6 +185,7 @@ export function ForkSessionForm({
   upToResponseId?: string | null;
   onClose: () => void;
 }) {
+  const { t } = useTranslation("common");
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   // Name is optional — left blank, the server derives "Fork of <source
@@ -508,7 +511,7 @@ export function ForkSessionForm({
       navigate(`/c/${fork.id}`);
     } catch (e) {
       // forkSession failed — nothing created, so inputs stay editable for a resubmit.
-      setError(e instanceof Error ? e.message : "Couldn't clone the session. Try again.");
+      setError(e instanceof Error ? e.message : t("forkDialog.cloneFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -516,7 +519,7 @@ export function ForkSessionForm({
 
   // Suggested name shown as the input placeholder; blank input → the server
   // applies this same "Fork of <source title>" default.
-  const namePlaceholder = defaultForkTitle(sourceTitle) || "Name the cloned session";
+  const namePlaceholder = defaultForkTitle(sourceTitle) || t("forkDialog.namePlaceholder");
 
   return (
     <>
@@ -528,10 +531,12 @@ export function ForkSessionForm({
               instructions directly when none are. */}
         {isCodingSource && (
           <div className="flex flex-col gap-2">
-            <span className="text-xs font-medium text-muted-foreground">Host</span>
+            <span className="text-xs font-medium text-muted-foreground">
+              {t("forkDialog.host")}
+            </span>
             {hosts === undefined ? (
               <p className="text-xs text-muted-foreground" data-testid="fork-session-no-hosts">
-                Loading hosts…
+                {t("forkDialog.loadingHosts")}
               </p>
             ) : onlineHosts.length === 0 ? (
               // Nothing usable (no hosts, or all offline) — show the connect
@@ -540,9 +545,7 @@ export function ForkSessionForm({
               <ConnectHostInstructions
                 serverUrl={serverUrl}
                 label={
-                  allHosts.length === 0
-                    ? "No hosts connected yet. Connect one from your terminal:"
-                    : "No hosts online. Reconnect from your terminal to start the clone:"
+                  allHosts.length === 0 ? t("forkDialog.noHosts") : t("forkDialog.noHostsOnline")
                 }
               />
             ) : (
@@ -562,7 +565,7 @@ export function ForkSessionForm({
                   }}
                 >
                   <SelectTrigger className="w-full text-xs" data-testid="fork-session-host-select">
-                    <SelectValue placeholder="Select a host" />
+                    <SelectValue placeholder={t("forkDialog.selectHost")} />
                   </SelectTrigger>
                   <SelectContent>
                     {onlineHosts.map((host) => (
@@ -597,7 +600,7 @@ export function ForkSessionForm({
                   ) : (
                     <ChevronDownIcon className="size-3.5" />
                   )}
-                  Connect another host from your terminal
+                  {t("forkDialog.connectAnotherHost")}
                 </button>
                 {showConnect && <ConnectHostInstructions serverUrl={serverUrl} />}
               </>
@@ -607,7 +610,7 @@ export function ForkSessionForm({
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor="fork-session-agent" className="text-xs font-medium text-muted-foreground">
-            Agent
+            {t("forkDialog.agent")}
           </label>
           <Select value={agentChoice} onValueChange={setAgentChoice}>
             <SelectTrigger
@@ -624,7 +627,7 @@ export function ForkSessionForm({
                 ) : (
                   <>
                     {sourceAgentDisplay}{" "}
-                    <span className="text-muted-foreground">(same as original session)</span>
+                    <span className="text-muted-foreground">{t("forkDialog.sameAsSource")}</span>
                   </>
                 )}
               </SelectValue>
@@ -636,7 +639,7 @@ export function ForkSessionForm({
                 className="text-xs"
               >
                 {sourceAgentDisplay}{" "}
-                <span className="text-muted-foreground">(same as original session)</span>
+                <span className="text-muted-foreground">{t("forkDialog.sameAsSource")}</span>
               </SelectItem>
               {builtinSwitchable.map((agent) => (
                 <SelectItem
@@ -677,12 +680,12 @@ export function ForkSessionForm({
                   className="cursor-pointer underline decoration-dotted underline-offset-2"
                   data-testid="fork-session-reuse-dir-path"
                 >
-                  working directory
+                  {t("forkDialog.workingDirectory")}
                 </button>
               </TooltipTrigger>
               <TooltipContent className="font-mono break-all">{effectiveWorkspace}</TooltipContent>
             </Tooltip>
-            . Open Advanced settings to change it.
+            . {t("forkDialog.openAdvancedToChange")}
           </p>
         )}
 
@@ -696,12 +699,12 @@ export function ForkSessionForm({
           >
             <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
             <span>
-              {conflictingSessions.length === 1
-                ? "1 other agent is"
-                : `${conflictingSessions.length} other agents are`}{" "}
-              working in this directory, so writes may conflict. Name a{" "}
-              {usingSourceWorktree ? "different git branch" : "git branch"} under Advanced settings
-              to work in an isolated copy.
+              {t("forkDialog.conflictHint", {
+                count: conflictingSessions.length,
+                branch: usingSourceWorktree
+                  ? t("forkDialog.differentGitBranch")
+                  : t("forkDialog.gitBranch"),
+              })}
             </span>
           </p>
         )}
@@ -724,7 +727,7 @@ export function ForkSessionForm({
             ) : (
               <ChevronDownIcon className="size-3.5" />
             )}
-            Advanced settings
+            {t("forkDialog.advancedSettings")}
           </button>
 
           {showAdvanced && (
@@ -738,7 +741,7 @@ export function ForkSessionForm({
                   htmlFor="fork-session-title"
                   className="text-xs font-medium text-muted-foreground"
                 >
-                  Name (optional)
+                  {t("forkDialog.nameOptional")}
                 </label>
                 <input
                   id="fork-session-title"
@@ -758,7 +761,7 @@ export function ForkSessionForm({
                 <>
                   <div className="flex flex-col gap-2">
                     <span className="text-xs font-medium text-muted-foreground">
-                      Working directory
+                      {t("forkDialog.workingDirectory")}
                     </span>
                     {selectedHostId ? (
                       <>
@@ -801,7 +804,7 @@ export function ForkSessionForm({
                       </>
                     ) : (
                       <p className="text-xs text-muted-foreground">
-                        Select a host to choose a directory.
+                        {t("forkDialog.selectHostForDirectory")}
                       </p>
                     )}
                   </div>
@@ -812,7 +815,7 @@ export function ForkSessionForm({
                       className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground"
                     >
                       <GitBranchIcon className="size-3.5" />
-                      Git worktree (optional)
+                      {t("forkDialog.gitWorktreeOptional")}
                     </label>
                     <input
                       id="fork-session-branch"
@@ -825,11 +828,8 @@ export function ForkSessionForm({
                     />
                     <p className="text-xs text-muted-foreground">
                       {usingSourceWorktree
-                        ? "The clone starts in the original session's existing worktree for this " +
-                          "branch. Name a different branch to work in an isolated copy."
-                        : "Creates a git worktree for a new branch in an isolated directory — " +
-                          "keeps the clone from fighting the original over the same files. Leave " +
-                          "blank to start in the picked directory."}
+                        ? t("forkDialog.existingWorktreeHint")
+                        : t("forkDialog.newWorktreeHint")}
                     </p>
                   </div>
                 </>
@@ -847,7 +847,7 @@ export function ForkSessionForm({
 
       <DialogFooter>
         <Button variant="ghost" onClick={onClose} disabled={submitting}>
-          Cancel
+          {t("forkDialog.cancel")}
         </Button>
         <Button
           data-testid="fork-session-submit"
@@ -856,11 +856,11 @@ export function ForkSessionForm({
         >
           {submitting
             ? isCodingSource
-              ? "Starting…"
-              : "Cloning…"
+              ? t("forkDialog.starting")
+              : t("forkDialog.cloning")
             : isCodingSource
-              ? "Clone & start"
-              : "Clone"}
+              ? t("forkDialog.cloneAndStart")
+              : t("forkDialog.clone")}
         </Button>
       </DialogFooter>
     </>
@@ -906,16 +906,15 @@ export function ForkSessionDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useTranslation("common");
   const truncated = upToResponseId != null;
   // Shown in the title's info tooltip (and a visually-hidden DialogDescription
   // for screen readers). Coding sources also start on a picked host/directory.
   const cloneDescription = `${
-    truncated
-      ? "Copies this session's history up to the selected response into a new session you own — messages after it aren't carried over"
-      : "Copies this session's history into a new session you own"
-  }${
-    sourceWorkspace ? ", then starts it on the host and directory you pick" : ""
-  }. Comments aren't copied, and changes in the clone won't affect the original.`;
+    truncated ? t("forkDialog.descriptionTruncated") : t("forkDialog.descriptionFull")
+  }${sourceWorkspace ? `, ${t("forkDialog.descriptionCodingSuffix")}` : ""}. ${t(
+    "forkDialog.descriptionSuffix",
+  )}`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -925,12 +924,12 @@ export function ForkSessionDialog({
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-1.5">
-            {truncated ? "Fork from this response" : "Clone session"}
+            {truncated ? t("forkDialog.forkFromResponse") : t("forkDialog.cloneSession")}
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  aria-label="What does cloning do?"
+                  aria-label={t("forkDialog.cloneInfo")}
                   data-testid="fork-session-info"
                   // tabIndex=-1 keeps the dialog's open-autofocus (and tabbing)
                   // off this icon, so the tooltip only opens on hover — not the

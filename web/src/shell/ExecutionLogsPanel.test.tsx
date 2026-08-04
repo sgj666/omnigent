@@ -49,6 +49,7 @@ vi.mock("@/store/chatStore", () => ({
 
 import { executionLogTabKey } from "@/hooks/useChildSessions";
 import { ExecutionLogsPanel } from "./ExecutionLogsPanel";
+import { withTestLanguage } from "@/i18n/testHelpers";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -127,7 +128,7 @@ describe("ExecutionLogsPanel open/close gating", () => {
   it("fires onClose when the header close button is clicked", () => {
     // WHY: the X button is the primary dismiss affordance.
     const { onClose } = renderPanel({ open: true });
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close panel" }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
@@ -156,6 +157,15 @@ describe("ExecutionLogsPanel entries", () => {
 });
 
 describe("ExecutionLogsPanel items-list states", () => {
+  it("localizes panel chrome and empty state in Simplified Chinese", async () => {
+    await withTestLanguage("zh-CN", () => {
+      renderPanel({ open: true });
+      expect(screen.getByRole("heading", { name: "执行日志" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "关闭面板" })).toBeInTheDocument();
+      expect(screen.getByText("暂无条目")).toBeInTheDocument();
+    });
+  });
+
   it("shows a loading indicator while items are loading", () => {
     // WHY: the isLoading branch must render the spinner text, not "No items".
     h.itemsResult = { ...h.itemsResult, isLoading: true };

@@ -85,7 +85,7 @@ describe("Composer structural read-only reasons", () => {
         { labels: { "omnigent.closed": "true" } },
         { labels: { "omnigent.wrapper": "claude-code-native-ui-subagent" } },
       ),
-    ).toBe("This sub-agent session is closed");
+    ).toBe("closedSubAgent");
   });
 
   it("falls back to the sidebar wrapper label for native read-only children", () => {
@@ -93,7 +93,7 @@ describe("Composer structural read-only reasons", () => {
       readOnlyReasonForSessionLabels(null, {
         labels: { "omnigent.wrapper": "claude-code-native-ui-subagent" },
       }),
-    ).toBe("Claude Code sub-agents are read-only");
+    ).toBe("readOnlySubAgent");
   });
 
   it("returns null for editable sessions without structural labels", () => {
@@ -830,6 +830,10 @@ describe("subAgentComposerLabel", () => {
   it("falls back to a generic label when every name field is null", () => {
     // Degenerate snapshot — the tray still needs something to render.
     expect(subAgentComposerLabel(mkSession())).toBe("sub-agent");
+  });
+
+  it("accepts the localized generic fallback used by the Chinese tray", () => {
+    expect(subAgentComposerLabel(mkSession(), "子智能体")).toBe("子智能体");
   });
 });
 

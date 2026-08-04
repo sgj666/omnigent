@@ -29,4 +29,11 @@ describe("mcpSettledNames", () => {
     const names = Array.from({ length: 12 }, (_, i) => `s${String(i).padStart(2, "0")}`);
     expect(mcpSettledNames(names)).toBe("s00, s01, s02, s03, s04, s05, s06, s07, +4 more");
   });
+
+  it("lets the chat locale translate the overflow suffix without changing server names", () => {
+    const names = Array.from({ length: 10 }, (_, i) => `mcp-${i}`);
+    expect(mcpSettledNames(names, (count) => `还有 ${count} 个`)).toBe(
+      "mcp-0, mcp-1, mcp-2, mcp-3, mcp-4, mcp-5, mcp-6, mcp-7, 还有 2 个",
+    );
+  });
 });

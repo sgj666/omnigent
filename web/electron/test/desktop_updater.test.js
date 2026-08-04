@@ -37,6 +37,7 @@ function makeUpdater({
   forceDevUpdateConfig = false,
   pinnedSender = true,
   dialogResponses = [{ response: 1 }],
+  locale = "en",
 } = {}) {
   let store = { ...settings };
   const calls = {
@@ -102,6 +103,7 @@ function makeUpdater({
     },
     isPinnedOriginSender: () => pinnedSender,
     pinnedOrigin: () => PINNED_ORIGIN,
+    getLocale: () => locale,
     iconPath: "/icons/icon.png",
     forceDevUpdateConfig,
   };
@@ -326,6 +328,21 @@ describe("desktop_updater — IPC trust + consent", () => {
 
     await assert.rejects(h.ipcHandlers.get("omnigent:update-download")(h.event), /approved/);
     assert.equal(h.calls.downloadUpdate, 0);
+  });
+
+  it("uses the effective locale only for native approval copy", async () => {
+    const h = makeUpdater({
+      forceDevUpdateConfig: true,
+      settings: { update_mode: "manual" },
+      locale: "zh-CN",
+    });
+    h.updater.init();
+    h.updater.registerIpc();
+    await h.ipcHandlers.get("omnigent:update-download")(h.event);
+    assert.equal(h.calls.showMessageBox[0].options.message, "下载 Omnigent 更新？");
+    assert.deepEqual(h.calls.showMessageBox[0].options.buttons, ["不允许", "仅允许一次"]);
+    assert.match(h.calls.showMessageBox[0].options.detail, /server\.example/);
+    assert.match(h.calls.showMessageBox[0].options.detail, /请仅允许你信任的服务器/);
   });
 });
 

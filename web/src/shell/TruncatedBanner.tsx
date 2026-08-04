@@ -1,4 +1,5 @@
 import { AlertTriangleIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 /**
  * Warning shown when the server returned only a prefix of a large file
@@ -9,13 +10,11 @@ import { AlertTriangleIcon } from "lucide-react";
  * @returns The truncation warning banner.
  */
 export function TruncatedBanner() {
+  const { t } = useTranslation("workspace");
   return (
     <div className="flex items-center gap-2 border-b border-border bg-warning/10 px-4 py-1.5 text-xs text-foreground shrink-0">
       <AlertTriangleIcon className="size-3.5 shrink-0 text-warning" />
-      <span>
-        This file is too large to load fully — showing a truncated preview. Editing is disabled to
-        avoid overwriting the rest of the file; download it to view or edit the full content.
-      </span>
+      <span>{t("truncatedPreview")}</span>
     </div>
   );
 }

@@ -30,6 +30,7 @@ import { useSearchParams } from "@/lib/routing";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getMe, login as loginRequest } from "@/lib/accountsApi";
+import { useTranslation } from "react-i18next";
 
 const DEFAULT_RETURN_TO = "/";
 const LAST_USERNAME_KEY = "omnigent.lastLoginUsername";
@@ -52,6 +53,7 @@ function rememberUsername(value: string): void {
 }
 
 export function LoginPage() {
+  const { t } = useTranslation("account");
   const [params] = useSearchParams();
   // `return_to` is set by both identity.ts (on 401 redirect) and the
   // server-side magic-redeem 302 fallback. Trust only same-origin
@@ -72,9 +74,9 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(
     magicError === "expired"
-      ? "That sign-in link has expired. Enter your password to sign in."
+      ? t("auth.signInLinkExpired")
       : magicError === "missing"
-        ? "That sign-in link is no longer valid. Enter your password to sign in."
+        ? t("auth.signInLinkInvalid")
         : null,
   );
 
@@ -142,14 +144,14 @@ export function LoginPage() {
     >
       <div className="w-full max-w-sm space-y-6">
         <div className="space-y-1 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">Sign in</h1>
-          <p className="text-sm text-muted-foreground">Welcome to Omnigent.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">{t("auth.signIn")}</h1>
+          <p className="text-sm text-muted-foreground">{t("auth.welcome")}</p>
         </div>
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-1.5">
             <label htmlFor="login-username" className="text-sm font-medium leading-none">
-              Username
+              {t("auth.username")}
             </label>
             <Input
               id="login-username"
@@ -161,14 +163,13 @@ export function LoginPage() {
               required
             />
             <p className="text-xs text-muted-foreground">
-              On a fresh install your username is your machine login (the output of{" "}
-              <code className="font-mono">whoami</code>), unless an admin set a different one.
+              {t("auth.machineUsernameHint", { command: "whoami" })}
             </p>
           </div>
 
           <div className="space-y-1.5">
             <label htmlFor="login-password" className="text-sm font-medium leading-none">
-              Password
+              {t("auth.password")}
             </label>
             <Input
               id="login-password"
@@ -191,18 +192,12 @@ export function LoginPage() {
           )}
 
           <Button type="submit" className="w-full" disabled={submitting || password.length === 0}>
-            {submitting ? "Signing in…" : "Sign in"}
+            {submitting ? t("auth.signingIn") : t("auth.signIn")}
           </Button>
         </form>
 
         <p className="text-center text-xs text-muted-foreground">
-          On a fresh install you set the first admin's password yourself — no credential is
-          auto-generated. A brand-new instance shows a Create-admin form instead of this one; the
-          password can also be pre-seeded with{" "}
-          <code className="rounded bg-muted px-1 py-0.5 font-mono">
-            OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD
-          </code>
-          .
+          {t("auth.firstAdminHint", { envVar: "OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD" })}
         </p>
       </div>
     </div>

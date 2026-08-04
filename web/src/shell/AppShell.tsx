@@ -1,4 +1,5 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, useParams, useSearchParams } from "@/lib/routing";
 import { useConversations } from "@/hooks/useConversations";
@@ -130,6 +131,7 @@ import type { RightRailTab } from "./railTabs";
  * more than one agent (the root has at least one child).
  */
 export function AppShell() {
+  const { t: translateAgent } = useTranslation("agents");
   // Lock the iOS shell to the visual viewport so the soft keyboard can't pan
   // the whole document (which would hide the header and break the layout).
   // No-op off the iOS shell. Scoped here so auth pages keep normal scrolling.
@@ -1626,9 +1628,9 @@ export function AppShell() {
             <Dialog open={agentInfoOpen} onOpenChange={setAgentInfoOpen}>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Agent</DialogTitle>
+                  <DialogTitle>{translateAgent("dialogs.switch.agent")}</DialogTitle>
                   <DialogDescription className="sr-only">
-                    Tools and policies configured for the active agent.
+                    {translateAgent("labels.agentInfoDescription")}
                   </DialogDescription>
                 </DialogHeader>
                 <AgentInfoContent agent={boundAgent} sessionId={conversationId} />

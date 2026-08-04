@@ -10,6 +10,7 @@
 // it without prop-drilling). Mount it once near the app shell.
 
 import { useEffect, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   Dialog,
@@ -54,6 +55,7 @@ interface Shortcut {
 }
 
 interface ShortcutGroup {
+  /** i18n key in the settings namespace. */
   title: string;
   /** Optional qualifier shown next to the group title. */
   note?: string;
@@ -64,45 +66,45 @@ interface ShortcutGroup {
 // composer's `handleKeyDown` and the global hotkey hooks.
 const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
-    title: "General",
+    title: "shortcuts.groups.general.title",
     items: [
-      { label: "Open command palette", keys: [MOD_KEY, "K"] },
-      { label: "Show keyboard shortcuts", keys: [MOD_KEY, "/"] },
+      { label: "shortcuts.groups.general.openCommandPalette", keys: [MOD_KEY, "K"] },
+      { label: "shortcuts.groups.general.showKeyboardShortcuts", keys: [MOD_KEY, "/"] },
     ],
   },
   {
-    title: "In chats",
+    title: "shortcuts.groups.chat.title",
     items: [
-      { label: "Send message", keys: [ENTER] },
-      { label: "New line in message", keys: [SHIFT, ENTER] },
-      { label: "Recall previous prompt", keys: [UP] },
-      { label: "Recall next prompt", keys: [DOWN] },
-      { label: "Accept approval prompt", keys: [MOD_KEY, ENTER] },
-      { label: "Toggle voice dictation", keys: [MOD_KEY, ALT, "V"] },
-      { label: "Stop response", keys: ["Esc"] },
+      { label: "shortcuts.groups.chat.sendMessage", keys: [ENTER] },
+      { label: "shortcuts.groups.chat.newLine", keys: [SHIFT, ENTER] },
+      { label: "shortcuts.groups.chat.recallPreviousPrompt", keys: [UP] },
+      { label: "shortcuts.groups.chat.recallNextPrompt", keys: [DOWN] },
+      { label: "shortcuts.groups.chat.acceptApprovalPrompt", keys: [MOD_KEY, ENTER] },
+      { label: "shortcuts.groups.chat.toggleVoiceDictation", keys: [MOD_KEY, ALT, "V"] },
+      { label: "shortcuts.groups.chat.stopResponse", keys: ["Esc"] },
     ],
   },
   {
-    title: "Navigation",
+    title: "shortcuts.groups.navigation.title",
     items: [
-      { label: "Previous session", keys: [MOD_KEY, UP] },
-      { label: "Next session", keys: [MOD_KEY, DOWN] },
+      { label: "shortcuts.groups.navigation.previousSession", keys: [MOD_KEY, UP] },
+      { label: "shortcuts.groups.navigation.nextSession", keys: [MOD_KEY, DOWN] },
     ],
   },
   {
-    title: "View",
+    title: "shortcuts.groups.view.title",
     items: [
-      { label: "Toggle conversations sidebar", keys: [MOD_KEY, ALT, "["] },
-      { label: "Toggle workspace sidebar", keys: [MOD_KEY, ALT, "]"] },
+      { label: "shortcuts.groups.view.toggleConversationsSidebar", keys: [MOD_KEY, ALT, "["] },
+      { label: "shortcuts.groups.view.toggleWorkspaceSidebar", keys: [MOD_KEY, ALT, "]"] },
     ],
   },
   {
-    title: "Slash commands",
-    note: "while the suggestions menu is open",
+    title: "shortcuts.groups.slash.title",
+    note: "shortcuts.groups.slash.suggestionsMenuOpen",
     items: [
-      { label: "Navigate suggestions", keys: [UP, DOWN] },
-      { label: "Apply highlighted command", keys: ["Tab"] },
-      { label: "Dismiss menu", keys: ["Esc"] },
+      { label: "shortcuts.groups.slash.navigateSuggestions", keys: [UP, DOWN] },
+      { label: "shortcuts.groups.slash.applyHighlightedCommand", keys: ["Tab"] },
+      { label: "shortcuts.groups.slash.dismissMenu", keys: ["Esc"] },
     ],
   },
 ];
@@ -113,7 +115,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
 // native tab-switching. Shown in both, with the matching glyphs.
 function pinnedSessionShortcut(native: boolean): Shortcut {
   return {
-    label: "Jump to pinned session (1–10)",
+    label: "shortcuts.groups.navigation.jumpToPinnedSession",
     keys: native ? [MOD_KEY, "1…0"] : [MOD_KEY, ALT, "1…0"],
   };
 }
@@ -121,7 +123,7 @@ function pinnedSessionShortcut(native: boolean): Shortcut {
 /** Shortcut groups for the current runtime — the pinned-jump chord differs by shell. */
 function shortcutGroupsFor(native: boolean): ShortcutGroup[] {
   return SHORTCUT_GROUPS.map((group) =>
-    group.title === "Navigation"
+    group.title === "shortcuts.groups.navigation.title"
       ? { ...group, items: [...group.items, pinnedSessionShortcut(native)] }
       : group,
   );
@@ -141,6 +143,7 @@ function Kbd({ children }: { children: ReactNode }) {
  * Settings page, which embeds it directly instead of behind a trigger.
  */
 export function KeyboardShortcutsList() {
+  const { t } = useTranslation("settings");
   // Feature-based, stable per session; computed at render so tests can vary it.
   const groups = shortcutGroupsFor(isNativeShell());
   return (
@@ -148,9 +151,9 @@ export function KeyboardShortcutsList() {
       {groups.map((group) => (
         <section key={group.title} className="mb-4 last:mb-0">
           <h3 className="mb-1 text-xs font-medium text-muted-foreground">
-            {group.title}
+            {t(group.title)}
             {group.note ? (
-              <span className="ml-1.5 font-normal text-muted-foreground/70">· {group.note}</span>
+              <span className="ml-1.5 font-normal text-muted-foreground/70">· {t(group.note)}</span>
             ) : null}
           </h3>
           <ul>
@@ -159,7 +162,7 @@ export function KeyboardShortcutsList() {
                 key={item.label}
                 className="flex items-center justify-between gap-4 border-b border-border/60 py-2.5 last:border-b-0"
               >
-                <span className="text-sm text-foreground">{item.label}</span>
+                <span className="text-sm text-foreground">{t(item.label)}</span>
                 <span className="flex shrink-0 items-center gap-1">
                   {item.keys.map((key) => (
                     <Kbd key={`${item.label}-${key}`}>{key}</Kbd>
@@ -175,6 +178,7 @@ export function KeyboardShortcutsList() {
 }
 
 export function KeyboardShortcutsDialog() {
+  const { t } = useTranslation("settings");
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -199,10 +203,8 @@ export function KeyboardShortcutsDialog() {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription className="sr-only">
-            The keyboard shortcuts available in the chat.
-          </DialogDescription>
+          <DialogTitle>{t("shortcuts.title")}</DialogTitle>
+          <DialogDescription className="sr-only">{t("shortcuts.description")}</DialogDescription>
         </DialogHeader>
         <div className="max-h-[70vh] overflow-y-auto pr-1">
           <KeyboardShortcutsList />

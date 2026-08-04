@@ -2,6 +2,7 @@ import type * as GoalApiModule from "@/lib/goalApi";
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setTestLanguage } from "@/i18n/testHelpers";
 import { GoalDialog, parseGoalBudget } from "./GoalDialog";
 import type { Goal } from "@/lib/goalApi";
 import { clearGoal, getGoal, setGoal, updateGoalStatus } from "@/lib/goalApi";
@@ -86,6 +87,21 @@ describe("GoalDialog", () => {
     await waitFor(() => expect(mockGetGoal).toHaveBeenCalledWith("conv_codex"));
     expect(screen.getByTestId("goal-current")).toHaveTextContent("Ship goal mode");
     expect(screen.getByTestId("goal-current")).toHaveTextContent("1,200 / 40,000 tokens / 2 min");
+  });
+
+  it("localizes the goal summary and editor in Chinese while keeping Token terminology", async () => {
+    const restore = await setTestLanguage("zh-CN");
+    try {
+      renderDialog();
+      await waitFor(() => expect(mockGetGoal).toHaveBeenCalledWith("conv_codex"));
+      expect(screen.getByText("目标")).toBeInTheDocument();
+      expect(screen.getByTestId("goal-current")).toHaveTextContent("1,200 / 40,000 Token / 2 分钟");
+      expect(screen.getByText("目标描述")).toBeInTheDocument();
+      expect(screen.getByText("Token 预算")).toBeInTheDocument();
+      expect(screen.getAllByText("执行中").length).toBeGreaterThan(0);
+    } finally {
+      await restore();
+    }
   });
 
   it("saves a trimmed objective, token budget, and selected status", async () => {

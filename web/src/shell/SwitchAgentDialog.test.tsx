@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { SwitchAgentDialog } from "./SwitchAgentDialog";
+import { withTestLanguage } from "@/i18n/testHelpers";
 import { switchSessionAgent } from "@/lib/sessionsApi";
 import { useAvailableAgents } from "@/hooks/useAvailableAgents";
 import { useSessionAgent } from "@/hooks/useAgents";
@@ -88,6 +89,15 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("SwitchAgentDialog", () => {
+  it("localizes switch-agent controls in Simplified Chinese", async () => {
+    await withTestLanguage("zh-CN", () => {
+      renderDialog();
+      expect(screen.getByRole("heading", { name: "切换智能体" })).toBeInTheDocument();
+      expect(screen.getByText(/将此会话切换到其他智能体/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "取消" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "切换" })).toBeInTheDocument();
+    });
+  });
   it("offers history-preserving targets including cross-family codex-native", () => {
     // Current harness is claude-sdk (anthropic): every classifiable target
     // carries history — SDK targets as replayed context, native targets via

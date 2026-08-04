@@ -23,6 +23,7 @@ import {
   WrenchIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { supportsBrowser } from "@/lib/nativeBridge";
 import { normalizeTypedUrl } from "@/lib/normalizeTypedUrl";
 import { cn } from "@/lib/utils";
@@ -104,6 +105,7 @@ export interface BrowserPaneProps {
  * view is attached, keeps that view positioned over a measuring placeholder.
  */
 export function BrowserPane({ conversationId, className }: BrowserPaneProps) {
+  const { t } = useTranslation("workspace");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const lastBoundsRef = useRef<Bounds | null>(null);
   const browserSupported = supportsBrowser();
@@ -390,8 +392,8 @@ export function BrowserPane({ conversationId, className }: BrowserPaneProps) {
           type="button"
           onClick={handleBack}
           disabled={!canGoBack}
-          aria-label="Go back"
-          title="Back"
+          aria-label={t("goBack")}
+          title={t("back")}
           className="flex size-6 items-center justify-center rounded text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
         >
           <ChevronLeftIcon className="size-4" />
@@ -400,8 +402,8 @@ export function BrowserPane({ conversationId, className }: BrowserPaneProps) {
           type="button"
           onClick={handleForward}
           disabled={!canGoForward}
-          aria-label="Go forward"
-          title="Forward"
+          aria-label={t("goForward")}
+          title={t("forward")}
           className="flex size-6 items-center justify-center rounded text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
         >
           <ChevronRightIcon className="size-4" />
@@ -410,8 +412,8 @@ export function BrowserPane({ conversationId, className }: BrowserPaneProps) {
           type="button"
           onClick={handleReload}
           disabled={!viewActive}
-          aria-label="Reload"
-          title="Reload"
+          aria-label={t("reload")}
+          title={t("reload")}
           className="flex size-6 items-center justify-center rounded text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
         >
           <RotateCwIcon className="size-4" />
@@ -422,8 +424,8 @@ export function BrowserPane({ conversationId, className }: BrowserPaneProps) {
           spellCheck={false}
           autoCorrect="off"
           autoCapitalize="off"
-          placeholder="Enter a URL"
-          aria-label="Address bar"
+          placeholder={t("enterUrl")}
+          aria-label={t("addressBar")}
           onChange={(e) => setCurrentUrl(e.target.value)}
           onFocus={() => {
             urlEditingRef.current = true;
@@ -444,8 +446,8 @@ export function BrowserPane({ conversationId, className }: BrowserPaneProps) {
           type="button"
           onClick={handleDevTools}
           disabled={!viewActive}
-          aria-label="Toggle DevTools"
-          title="Toggle DevTools"
+          aria-label={t("toggleDevtools")}
+          title={t("toggleDevtools")}
           className="flex size-6 items-center justify-center rounded text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-40"
         >
           <WrenchIcon className="size-4" />
@@ -455,12 +457,8 @@ export function BrowserPane({ conversationId, className }: BrowserPaneProps) {
           onClick={handleToggleDesignMode}
           disabled={!viewActive}
           aria-pressed={designMode}
-          aria-label={designMode ? "Exit design mode" : "Enter design mode"}
-          title={
-            designMode
-              ? "Click an element in the page, then describe what to change"
-              : "Design mode: point at an element to prompt about it"
-          }
+          aria-label={designMode ? t("exitDesignMode") : t("enterDesignMode")}
+          title={designMode ? t("designModeActiveHint") : t("designModeHint")}
           className={cn(
             "flex size-6 items-center justify-center rounded text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-40",
             designMode && "bg-primary/15 text-primary hover:bg-primary/20",
@@ -477,7 +475,7 @@ export function BrowserPane({ conversationId, className }: BrowserPaneProps) {
         <div ref={containerRef} className="min-h-0 min-w-0 flex-1" />
       ) : (
         <div className="flex min-h-0 flex-1 items-center justify-center bg-card px-6 py-8 text-center text-muted-foreground text-sm">
-          Enter a URL above to get started — the agent will open pages here too.
+          {t("browserEmptyHint")}
         </div>
       )}
     </div>

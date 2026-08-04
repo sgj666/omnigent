@@ -1,0 +1,19 @@
+{
+  "meta": { "languageName": "English" },
+  "title": "Updates",
+  "banner": {
+    "ariaLabel": "Desktop update",
+    "update": "update",
+    "available": "Omnigent {{version}} is available",
+    "downloading": "Downloading Omnigent update… {{progress}}%",
+    "downloadProgress": "Update download progress",
+    "ready": "Omnigent {{version}} is ready to install",
+    "autoInstallOnQuit": "Installs automatically on next quit.",
+    "checkFailed": "Update check failed",
+    "releaseNotes": "Release notes",
+    "updateNow": "Update now",
+    "skipVersion": "Skip this version",
+    "restartToUpdate": "Restart to update",
+    "dismiss": "Dismiss"
+  }
+}

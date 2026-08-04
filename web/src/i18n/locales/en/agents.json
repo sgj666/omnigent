@@ -1,0 +1,142 @@
+{
+  "meta": { "languageName": "English" },
+  "title": "Agents",
+  "remove": "Remove",
+  "dialogs": {
+    "cancel": "Cancel",
+    "create": {
+      "title": "Create custom agent",
+      "name": "Name",
+      "description": "Description",
+      "descriptionPlaceholder": "A short summary of what this agent does",
+      "harness": "Harness",
+      "model": "Model",
+      "systemInstructions": "System instructions",
+      "systemInstructionsPlaceholder": "You are a helpful assistant that...",
+      "mcpTools": "MCP tools",
+      "addServer": "Add server",
+      "submit": "Create",
+      "mcp": {
+        "commandPlaceholder": "Command (e.g. npx)",
+        "argsPlaceholder": "Arguments (e.g. -y @modelcontextprotocol/server-github)",
+        "envPlaceholder": "Environment variables (KEY=VALUE per line)\ne.g. GITHUB_TOKEN=ghp_...",
+        "headersPlaceholder": "HTTP headers (one per line)\ne.g. Authorization: Bearer tok_..."
+      }
+    },
+    "add": {
+      "title": "Add agent",
+      "pickAgent": "Pick an agent",
+      "noAgents": "No agents available on this server. Register one with <command>omnigent server --agent</command>.",
+      "name": "Name",
+      "namePlaceholder": "Name this agent",
+      "nameRequired": "Enter a name for the agent.",
+      "failed": "Couldn't add the agent. Try again.",
+      "adding": "Adding…",
+      "submit": "Add"
+    },
+    "switch": {
+      "title": "Switch agent",
+      "description": "Continue this session on a different agent. The conversation, comments, and files stay; the next message runs on the new agent.",
+      "agent": "Agent",
+      "currentAgent": "(current agent)",
+      "chooseAgent": "Choose an agent",
+      "resetWarning": "Model and reasoning effort will reset to {{agent}}'s defaults (different provider).",
+      "failed": "Couldn't switch the agent. Try again.",
+      "switching": "Switching…",
+      "submit": "Switch"
+    }
+  },
+  "mcpServersUpdated": "MCP servers updated. Restart the session to apply changes.",
+  "usage": {
+    "tokenUsage": "Token usage",
+    "input": "Input",
+    "output": "Output",
+    "cacheRead": "Cache read",
+    "cacheWrite": "Cache write",
+    "total": "Total",
+    "cost": "Cost",
+    "sessionCost": "Session cost"
+  },
+  "policy": {
+    "addTitle": "Add Policy",
+    "addButton": "Add policy",
+    "choose": "Choose a policy to apply to this session.",
+    "filter": "Filter policies...",
+    "adding": "Adding…",
+    "add": "Add",
+    "noPolicies": "No policies added",
+    "policies": "Policies",
+    "change": "Change"
+  },
+  "mcp": {
+    "manageTitle": "Manage MCP Servers",
+    "description": "Add, edit, or remove MCP servers for this session.",
+    "servers": "Servers",
+    "tools": "Tools",
+    "noServers": "No MCP servers",
+    "edit": "Edit Server",
+    "new": "New Server",
+    "save": "Save",
+    "saving": "Saving…",
+    "manage": "Manage MCP servers",
+    "restartToApply": "Restart to apply changes",
+    "url": "URL",
+    "headers": "Headers",
+    "descriptionLabel": "Description",
+    "nameRequired": "Name is required.",
+    "nameInvalid": "Name can use letters, numbers, dots, dashes, and underscores.",
+    "urlRequired": "URL is required.",
+    "urlInvalid": "URL must start with http:// or https://.",
+    "commandRequired": "Command is required.",
+    "addHeader": "Add header",
+    "removeHeader": "Remove header",
+    "optional": "Optional"
+  },
+  "labels": {
+    "owner": "Owner",
+    "sessionId": "Session ID",
+    "copySessionId": "Copy session ID",
+    "copiedSessionId": "Copied session ID",
+    "agentToolsPolicies": "Agent tools and policies",
+    "agentToolsPoliciesTooltip": "Agent tools & policies",
+    "agentInfoDescription": "Tools and policies configured for the active agent."
+  },
+  "picker": {
+    "createCustom": "Create custom agent",
+    "custom": "Custom",
+    "more": "More",
+    "customAgents": "Custom agents",
+    "harnesses": "Harnesses",
+    "agents": "Agents",
+    "noAgents": "No agents",
+    "connecting": "Connecting…",
+    "noHosts": "No hosts",
+    "selectHost": "Select host",
+    "selectAgent": "Select agent",
+    "workingDirectory": "Working directory",
+    "noWorktree": "No worktree",
+    "repository": "Repository",
+    "newSandbox": "New Sandbox",
+    "newSandboxUnavailable": "Why New Sandbox is unavailable"
+  },
+  "subagents": {
+    "loading": "Loading…",
+    "loadFailed": "Failed to load agents.",
+    "loadingGraph": "Loading graph…",
+    "add": "Add agent",
+    "listView": "List view",
+    "graphView": "Graph view",
+    "main": "main",
+    "expand": "Expand subagents",
+    "collapse": "Collapse subagents",
+    "status": {
+      "awaiting": "Needs response",
+      "failed": "Failed",
+      "launching": "Launching",
+      "working": "Working",
+      "disconnected": "Disconnected",
+      "done": "Done",
+      "idle": "Idle"
+    }
+  }
+}

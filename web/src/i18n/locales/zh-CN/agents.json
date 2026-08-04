@@ -1,0 +1,142 @@
+{
+  "meta": { "languageName": "简体中文" },
+  "title": "智能体",
+  "remove": "移除",
+  "dialogs": {
+    "cancel": "取消",
+    "create": {
+      "title": "创建自定义智能体",
+      "name": "名称",
+      "description": "描述",
+      "descriptionPlaceholder": "简要说明此智能体的职责",
+      "harness": "运行框架",
+      "model": "模型",
+      "systemInstructions": "系统指令",
+      "systemInstructionsPlaceholder": "你是一名乐于助人的助手，……",
+      "mcpTools": "MCP 工具",
+      "addServer": "添加服务器",
+      "submit": "创建",
+      "mcp": {
+        "commandPlaceholder": "命令（例如 npx）",
+        "argsPlaceholder": "参数（例如 -y @modelcontextprotocol/server-github）",
+        "envPlaceholder": "环境变量（每行一个 KEY=VALUE）\n例如 GITHUB_TOKEN=ghp_…",
+        "headersPlaceholder": "HTTP 请求头（每行一个）\n例如 Authorization: Bearer tok_…"
+      }
+    },
+    "add": {
+      "title": "添加智能体",
+      "pickAgent": "选择智能体",
+      "noAgents": "此服务器上没有可用的智能体。请使用 <command>omnigent server --agent</command> 注册智能体。",
+      "name": "名称",
+      "namePlaceholder": "为智能体命名",
+      "nameRequired": "请输入智能体名称。",
+      "failed": "无法添加智能体，请重试。",
+      "adding": "添加中…",
+      "submit": "添加"
+    },
+    "switch": {
+      "title": "切换智能体",
+      "description": "将此会话切换到其他智能体。会话记录、评论和文件都会保留；下一条消息将由新智能体处理。",
+      "agent": "智能体",
+      "currentAgent": "（当前智能体）",
+      "chooseAgent": "选择智能体",
+      "resetWarning": "切换到不同提供方后，模型和推理强度将重置为 {{agent}} 的默认值。",
+      "failed": "无法切换智能体，请重试。",
+      "switching": "切换中…",
+      "submit": "切换"
+    }
+  },
+  "mcpServersUpdated": "MCP 服务器已更新。重启会话后生效。",
+  "usage": {
+    "tokenUsage": "Token 用量",
+    "input": "输入",
+    "output": "输出",
+    "cacheRead": "缓存读取",
+    "cacheWrite": "缓存写入",
+    "total": "总计",
+    "cost": "费用",
+    "sessionCost": "会话费用"
+  },
+  "policy": {
+    "addTitle": "添加策略",
+    "addButton": "添加策略",
+    "choose": "选择要应用于此会话的策略。",
+    "filter": "筛选策略…",
+    "adding": "添加中…",
+    "add": "添加",
+    "noPolicies": "尚未添加策略",
+    "policies": "策略",
+    "change": "更改"
+  },
+  "mcp": {
+    "manageTitle": "管理 MCP 服务器",
+    "description": "为此会话添加、编辑或移除 MCP 服务器。",
+    "servers": "服务器",
+    "tools": "工具",
+    "noServers": "暂无 MCP 服务器",
+    "edit": "编辑服务器",
+    "new": "新建服务器",
+    "save": "保存",
+    "saving": "保存中…",
+    "manage": "管理 MCP 服务器",
+    "restartToApply": "重启后应用更改",
+    "url": "URL",
+    "headers": "请求头",
+    "descriptionLabel": "描述",
+    "nameRequired": "名称不能为空。",
+    "nameInvalid": "名称只能包含字母、数字、点、短横线和下划线。",
+    "urlRequired": "URL 不能为空。",
+    "urlInvalid": "URL 必须以 http:// 或 https:// 开头。",
+    "commandRequired": "命令不能为空。",
+    "addHeader": "添加请求头",
+    "removeHeader": "移除请求头",
+    "optional": "可选"
+  },
+  "labels": {
+    "owner": "所有者",
+    "sessionId": "会话 ID",
+    "copySessionId": "复制会话 ID",
+    "copiedSessionId": "已复制会话 ID",
+    "agentToolsPolicies": "智能体工具与策略",
+    "agentToolsPoliciesTooltip": "智能体工具与策略",
+    "agentInfoDescription": "当前智能体已配置的工具与策略。"
+  },
+  "picker": {
+    "createCustom": "创建自定义智能体",
+    "custom": "自定义",
+    "more": "更多",
+    "customAgents": "自定义智能体",
+    "harnesses": "运行框架",
+    "agents": "智能体",
+    "noAgents": "暂无智能体",
+    "connecting": "正在连接…",
+    "noHosts": "暂无主机",
+    "selectHost": "选择主机",
+    "selectAgent": "选择智能体",
+    "workingDirectory": "工作目录",
+    "noWorktree": "无工作树",
+    "repository": "仓库",
+    "newSandbox": "新建沙箱",
+    "newSandboxUnavailable": "为何新建沙箱不可用"
+  },
+  "subagents": {
+    "loading": "正在加载…",
+    "loadFailed": "加载智能体失败。",
+    "loadingGraph": "正在加载关系图…",
+    "add": "添加智能体",
+    "listView": "列表视图",
+    "graphView": "关系图视图",
+    "main": "主会话",
+    "expand": "展开子智能体",
+    "collapse": "收起子智能体",
+    "status": {
+      "awaiting": "需要响应",
+      "failed": "失败",
+      "launching": "启动中",
+      "working": "工作中",
+      "disconnected": "已断开连接",
+      "done": "已完成",
+      "idle": "空闲"
+    }
+  }
+}

@@ -17,6 +17,7 @@ import {
 } from "react";
 import { CheckIcon, LinkIcon, QrCodeIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -49,14 +50,6 @@ import { cn } from "@/lib/utils";
 
 const PUBLIC_USER = "__public__";
 
-/** Numeric permission level → display label for fixed (non-editable) rows. */
-const LEVEL_LABELS: Record<number, string> = {
-  1: "Read",
-  2: "Edit",
-  3: "Manage",
-  4: "Owner",
-};
-
 interface PermissionsModalProps {
   sessionId: string;
   open: boolean;
@@ -70,6 +63,7 @@ export function PermissionsModal({
   onOpenChange,
   canDelegateApprovals = false,
 }: PermissionsModalProps) {
+  const { t } = useTranslation("tools");
   // Server sharing policy. While the boot probe is in flight we treat the
   // server as "on" (fail open) so the modal renders its full controls; the
   // server-side gate is the real enforcement point regardless.
@@ -148,14 +142,18 @@ export function PermissionsModal({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">Sharing unavailable</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              {t("permissions.sharingUnavailable", { defaultValue: "Sharing unavailable" })}
+            </DialogTitle>
             <DialogDescription>
-              Sharing has been disabled for this Omnigent server.
+              {t("permissions.sharingDisabled", {
+                defaultValue: "Sharing has been disabled for this Omnigent server.",
+              })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Done
+              {t("permissions.done", { defaultValue: "Done" })}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -167,11 +165,18 @@ export function PermissionsModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">Share this session</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {t("permissions.shareSession", { defaultValue: "Share this session" })}
+          </DialogTitle>
           <DialogDescription>
             {sharingReadOnly
-              ? "This server allows read-only sharing — invite others to view this session."
-              : "Invite others to view or collaborate on this session."}
+              ? t("permissions.readOnlyInvite", {
+                  defaultValue:
+                    "This server allows read-only sharing — invite others to view this session.",
+                })
+              : t("permissions.invite", {
+                  defaultValue: "Invite others to view or collaborate on this session.",
+                })}
           </DialogDescription>
         </DialogHeader>
 
@@ -179,8 +184,12 @@ export function PermissionsModal({
         {publicSharingEnabled && (
           <div className="flex items-center justify-between rounded-lg border px-3 py-2">
             <div>
-              <p className="text-sm font-medium">Public access</p>
-              <p className="text-xs text-muted-foreground">Anyone can view this session</p>
+              <p className="text-sm font-medium">
+                {t("permissions.publicAccess", { defaultValue: "Public access" })}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t("permissions.anyoneView", { defaultValue: "Anyone can view this session" })}
+              </p>
             </div>
             <Switch
               checked={isPublic}
@@ -195,18 +204,22 @@ export function PermissionsModal({
             track's min-content and pushes every row past the dialog edge. */}
         <div className="min-w-0" data-testid="share-grants">
           {isLoading ? (
-            <p className="text-sm text-muted-foreground py-2">Loading…</p>
+            <p className="text-sm text-muted-foreground py-2">
+              {t("permissions.loading", { defaultValue: "Loading…" })}
+            </p>
           ) : userGrants.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-2">No grants yet.</p>
+            <p className="text-sm text-muted-foreground py-2">
+              {t("permissions.noGrants", { defaultValue: "No grants yet." })}
+            </p>
           ) : (
             <>
               {/* Column headers */}
               <div className="flex items-center gap-2 px-2 pb-0.5">
                 <span className="flex-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Name
+                  {t("permissions.name", { defaultValue: "Name" })}
                 </span>
                 <span className="w-28 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Permission
+                  {t("permissions.permission", { defaultValue: "Permission" })}
                 </span>
                 <span className="size-7 shrink-0" aria-hidden="true" />
               </div>
@@ -231,37 +244,45 @@ export function PermissionsModal({
         <form onSubmit={handleGrant} className="flex items-end gap-2">
           <div className="flex-1">
             <label htmlFor="perm-user" className="text-xs font-medium text-muted-foreground">
-              User ID
+              {t("permissions.userId", { defaultValue: "User ID" })}
             </label>
             <AddUserField value={newUserId} onChange={setNewUserId} />
           </div>
           <div>
             <label htmlFor="perm-level" className="text-xs font-medium text-muted-foreground">
-              Level
+              {t("permissions.level", { defaultValue: "Level" })}
             </label>
             <Select value={newLevel} onValueChange={setNewLevel}>
               <SelectTrigger className="mt-1 w-24">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="1">Read</SelectItem>
+                <SelectItem value="1">{t("permissions.read", { defaultValue: "Read" })}</SelectItem>
                 {/* Read-only sharing caps new grants at view; hide Edit. */}
-                {!sharingReadOnly && <SelectItem value="2">Edit</SelectItem>}
+                {!sharingReadOnly && (
+                  <SelectItem value="2">
+                    {t("permissions.edit", { defaultValue: "Edit" })}
+                  </SelectItem>
+                )}
                 {!sharingReadOnly && canDelegateApprovals && (
-                  <SelectItem value="2-approve">Edit + approve</SelectItem>
+                  <SelectItem value="2-approve">
+                    {t("permissions.editApprove", { defaultValue: "Edit + approve" })}
+                  </SelectItem>
                 )}
               </SelectContent>
             </Select>
           </div>
           <Button type="submit" size="sm" disabled={!newUserId.trim() || grant.isPending}>
             <UserPlusIcon className="mr-1 size-3.5" />
-            Grant
+            {t("permissions.grant", { defaultValue: "Grant" })}
           </Button>
         </form>
 
         {canDelegateApprovals && !sharingReadOnly && (
           <p className="text-xs text-muted-foreground">
-            Approvers can authorize actions that use your session credentials.
+            {t("permissions.approvers", {
+              defaultValue: "Approvers can authorize actions that use your session credentials.",
+            })}
           </p>
         )}
 
@@ -277,11 +298,11 @@ export function PermissionsModal({
               className="gap-1.5 text-primary"
             >
               <QrCodeIcon className="size-3.5" />
-              Open in mobile app
+              {t("permissions.openMobile", { defaultValue: "Open in mobile app" })}
             </Button>
           </div>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Done
+            {t("permissions.done", { defaultValue: "Done" })}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -335,6 +356,7 @@ function AddUserField({ value, onChange }: AddUserFieldProps) {
 // it inside the scroll-lock's allow-list (wheel works) and lets us own the
 // combobox a11y roles + keyboard handling directly.
 function AddUserCombobox({ value, onChange }: AddUserFieldProps) {
+  const { t } = useTranslation("tools");
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const { suggestions, isLoading } = useUserSearch(value);
@@ -424,9 +446,13 @@ function AddUserCombobox({ value, onChange }: AddUserFieldProps) {
         // Wider than the (narrow) field so suggested emails aren't truncated.
         <div className="absolute left-0 top-full z-50 mt-1 w-96 rounded-lg border bg-popover p-1 text-popover-foreground shadow-md">
           {isLoading ? (
-            <div className="py-6 text-center text-sm text-muted-foreground">Searching…</div>
+            <div className="py-6 text-center text-sm text-muted-foreground">
+              {t("permissions.searching", { defaultValue: "Searching…" })}
+            </div>
           ) : suggestions.length === 0 ? (
-            <div className="py-6 text-center text-sm text-muted-foreground">No matches</div>
+            <div className="py-6 text-center text-sm text-muted-foreground">
+              {t("permissions.noMatches", { defaultValue: "No matches" })}
+            </div>
           ) : (
             <div ref={listRef} id={listId} role="listbox" className="max-h-72 overflow-y-auto">
               {suggestions.map((s, index) => (
@@ -496,6 +522,7 @@ function getDeepLink(sessionId: string, rebasePath: (path: string) => string): s
 }
 
 function CopyLinkButton({ sessionId }: { sessionId: string }) {
+  const { t } = useTranslation("tools");
   const [copied, setCopied] = useState(false);
   const rebasePath = useRebasePath();
 
@@ -518,7 +545,9 @@ function CopyLinkButton({ sessionId }: { sessionId: string }) {
   return (
     <Button variant="ghost" size="sm" onClick={handleCopy} className="gap-1.5 text-primary">
       {copied ? <CheckIcon className="size-3.5" /> : <LinkIcon className="size-3.5" />}
-      {copied ? "Copied!" : "Copy link"}
+      {copied
+        ? t("permissions.copied", { defaultValue: "Copied!" })
+        : t("permissions.copyLink", { defaultValue: "Copy link" })}
     </Button>
   );
 }
@@ -540,6 +569,7 @@ function QrCodeDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useTranslation("tools");
   const rebasePath = useRebasePath();
   const deepLink = getDeepLink(sessionId, rebasePath);
 
@@ -549,10 +579,13 @@ function QrCodeDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <QrCodeIcon className="size-4" />
-            Open in mobile app
+            {t("permissions.openMobile", { defaultValue: "Open in mobile app" })}
           </DialogTitle>
           <DialogDescription>
-            Scan with your phone's camera to open this session in the Omnigent app.
+            {t("permissions.scanMobile", {
+              defaultValue:
+                "Scan with your phone's camera to open this session in the Omnigent app.",
+            })}
           </DialogDescription>
         </DialogHeader>
         <div className="flex justify-center">
@@ -565,13 +598,15 @@ function QrCodeDialog({
               // mode; the padding also serves as the QR quiet zone.
               bgColor="#ffffff"
               fgColor="#000000"
-              aria-label="QR code to open this session in the Omnigent app"
+              aria-label={t("permissions.qrLabel", {
+                defaultValue: "QR code to open this session in the Omnigent app",
+              })}
             />
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Close
+            {t("permissions.close", { defaultValue: "Close" })}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -594,6 +629,7 @@ function GrantRow({
   readOnly: boolean;
   canDelegateApprovals: boolean;
 }) {
+  const { t } = useTranslation("tools");
   const isOwner = permission.level === 4;
   // Manage is not grantable from the UI, so a pre-existing manage grant
   // renders as a fixed label rather than a dropdown choice. Unlike the
@@ -603,8 +639,22 @@ function GrantRow({
   // shows as a fixed label (like owner/manage) — but the row stays revocable.
   const fixedLevel =
     isOwner || isManage || readOnly || (permission.can_approve && !canDelegateApprovals);
-  const baseLevelLabel = LEVEL_LABELS[permission.level] ?? "Read";
-  const levelLabel = permission.can_approve ? `${baseLevelLabel} + approve` : baseLevelLabel;
+  const baseLevelLabel =
+    permission.level === 1
+      ? t("permissions.read", { defaultValue: "Read" })
+      : permission.level === 2
+        ? t("permissions.edit", { defaultValue: "Edit" })
+        : permission.level === 3
+          ? t("permissions.manage", { defaultValue: "Manage" })
+          : permission.level === 4
+            ? t("permissions.owner", { defaultValue: "Owner" })
+            : t("permissions.read", { defaultValue: "Read" });
+  const levelLabel = permission.can_approve
+    ? t("permissions.withApprove", {
+        level: baseLevelLabel,
+        defaultValue: `${baseLevelLabel} + approve`,
+      })
+    : baseLevelLabel;
 
   return (
     <div className="flex items-center gap-2 rounded-md px-2 py-0.5 hover:bg-muted/50">
@@ -629,14 +679,21 @@ function GrantRow({
         >
           <SelectTrigger
             className="h-8 w-28"
-            aria-label={`Permission level for ${permission.user_id}`}
+            aria-label={t("permissions.levelForUser", {
+              userId: permission.user_id,
+              defaultValue: `Permission level for ${permission.user_id}`,
+            })}
           >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="1">Read</SelectItem>
-            <SelectItem value="2">Edit</SelectItem>
-            {canDelegateApprovals && <SelectItem value="2-approve">Edit + approve</SelectItem>}
+            <SelectItem value="1">{t("permissions.read", { defaultValue: "Read" })}</SelectItem>
+            <SelectItem value="2">{t("permissions.edit", { defaultValue: "Edit" })}</SelectItem>
+            {canDelegateApprovals && (
+              <SelectItem value="2-approve">
+                {t("permissions.editApprove", { defaultValue: "Edit + approve" })}
+              </SelectItem>
+            )}
           </SelectContent>
         </Select>
       )}
@@ -651,7 +708,7 @@ function GrantRow({
           className="shrink-0 text-muted-foreground hover:text-destructive"
         >
           <Trash2Icon className="size-3.5" />
-          <span className="sr-only">Revoke</span>
+          <span className="sr-only">{t("permissions.revoke", { defaultValue: "Revoke" })}</span>
         </Button>
       )}
     </div>

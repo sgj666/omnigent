@@ -11,6 +11,8 @@ import {
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCreateProject } from "@/hooks/useConversations";
+import { useTranslation } from "react-i18next";
+import "@/i18n";
 
 /**
  * "New project" control in the Projects group header. Opens a dialog that
@@ -22,6 +24,7 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const createProject = useCreateProject();
+  const { t } = useTranslation("common");
 
   const submit = () => {
     const trimmed = name.trim();
@@ -43,7 +46,7 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label="New project"
+            aria-label={t("shell.newProject")}
             data-testid="new-project"
             onClick={(e) => {
               e.stopPropagation();
@@ -54,20 +57,18 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
             <PlusIcon className="size-3.5" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="bottom">New project</TooltipContent>
+        <TooltipContent side="bottom">{t("shell.newProjectTooltip")}</TooltipContent>
       </Tooltip>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent onClick={(e) => e.stopPropagation()}>
           <DialogHeader>
-            <DialogTitle>New project</DialogTitle>
-            <DialogDescription>
-              Create an empty project, then file sessions into it from a session's menu.
-            </DialogDescription>
+            <DialogTitle>{t("shell.newProject")}</DialogTitle>
+            <DialogDescription>{t("shell.newProjectDescription")}</DialogDescription>
           </DialogHeader>
           <input
             autoFocus
             className="w-full rounded-md border bg-transparent px-3 py-2 text-sm outline-none"
-            placeholder="Project name…"
+            placeholder={t("shell.projectNamePlaceholder")}
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
@@ -79,7 +80,9 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
           />
           {createProject.isError && (
             <p className="text-sm text-destructive" role="alert">
-              {(createProject.error as Error).message}
+              {t("shell.projectCreateFailed", {
+                message: (createProject.error as Error).message,
+              })}
             </p>
           )}
           <DialogFooter className="border-t-0 bg-transparent">
@@ -89,7 +92,7 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
               onClick={() => setOpen(false)}
               disabled={createProject.isPending}
             >
-              Cancel
+              {t("shell.cancel")}
             </Button>
             <Button
               type="button"
@@ -97,7 +100,7 @@ export function NewProjectButton({ onCreated }: { onCreated: (name: string) => v
               disabled={createProject.isPending || name.trim() === ""}
               onClick={submit}
             >
-              {createProject.isPending ? "Creating…" : "Create"}
+              {createProject.isPending ? t("shell.creating") : t("shell.create")}
             </Button>
           </DialogFooter>
         </DialogContent>

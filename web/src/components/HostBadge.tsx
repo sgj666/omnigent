@@ -1,4 +1,5 @@
 import { MonitorOff as MonitorOffIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { useHosts } from "@/hooks/useHosts";
 import type { Host } from "@/hooks/useHosts";
@@ -51,12 +52,6 @@ const STATUS_DOT_CLASS: Record<HostBadgeStatus, string> = {
   unknown: "bg-muted-foreground/50",
 };
 
-const STATUS_WORD: Record<HostBadgeStatus, string> = {
-  online: "online",
-  offline: "offline",
-  unknown: "status unknown",
-};
-
 /**
  * Host indicator for the open conversation, rendered in the composer's
  * status-line tray, immediately left of the worktree branch
@@ -78,6 +73,7 @@ export function HostBadge({
   sessionId: string;
   onReconnect?: () => void;
 }) {
+  const { t } = useTranslation("common");
   const { session } = useSession(sessionId);
   const hostId = session?.hostId ?? null;
   // Keep sandbox hosts so managed sessions resolve to a provider label.
@@ -106,11 +102,11 @@ export function HostBadge({
         data-testid="host-badge"
         onClick={onReconnect}
         className="flex min-w-0 items-center gap-1.5 text-xs text-destructive underline-offset-2 hover:underline"
-        title="Host is offline — click to reconnect"
+        title={t("host.offlineReconnect")}
       >
         <span aria-hidden className="size-2 shrink-0 rounded-full bg-destructive" />
         <MonitorOffIcon className="size-3.5 shrink-0" aria-hidden />
-        <span className="truncate">Host is offline — click to reconnect</span>
+        <span className="truncate">{t("host.offlineReconnect")}</span>
       </button>
     );
   }
@@ -119,7 +115,7 @@ export function HostBadge({
     <div
       data-testid="host-badge"
       className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground"
-      title={`Host ${badge.label}, ${STATUS_WORD[badge.status]}`}
+      title={t("host.title", { label: badge.label, status: t(`host.${badge.status}`) })}
     >
       <span
         aria-hidden
@@ -132,7 +128,7 @@ export function HostBadge({
           `title` carries the same text for mouse hover. No aria-label: on a
           non-interactive div it's announced unreliably and would only
           duplicate this text where it is honored. */}
-      <span className="sr-only">, {STATUS_WORD[badge.status]}</span>
+      <span className="sr-only">, {t(`host.${badge.status}`)}</span>
     </div>
   );
 }

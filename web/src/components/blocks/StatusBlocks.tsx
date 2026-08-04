@@ -16,6 +16,7 @@ import {
   ShrinkIcon,
 } from "lucide-react";
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { CodeBlock, CodeBlockHeader, CodeBlockTitle } from "@/components/ai-elements/code-block";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -35,7 +36,8 @@ interface ErrorBannerProps {
  * panel even when the LLM error payload omits the message).
  */
 export function ErrorBanner({ message, source, code }: ErrorBannerProps) {
-  const display = message || code || "Unknown error";
+  const { t } = useTranslation("chat");
+  const display = message || code || t("unknownError");
   return (
     <Alert
       variant="destructive"
@@ -43,7 +45,8 @@ export function ErrorBanner({ message, source, code }: ErrorBannerProps) {
     >
       <AlertCircleIcon />
       <AlertTitle className="min-w-0 break-words [overflow-wrap:anywhere]">
-        Error{source ? ` · ${source}` : ""}
+        {t("errorLabel")}
+        {source ? ` · ${source}` : ""}
         {code && message ? ` · ${code}` : ""}
       </AlertTitle>
       <AlertDescription className="min-w-0 max-w-full overflow-hidden">
@@ -65,10 +68,14 @@ interface PolicyDeniedBannerProps {
  * (amber/warning tone) to distinguish from hard errors (destructive red).
  */
 export function PolicyDeniedBanner({ reason, phase }: PolicyDeniedBannerProps) {
+  const { t } = useTranslation("tools");
   return (
     <Alert>
       <ShieldXIcon />
-      <AlertTitle>Blocked by policy{phase ? ` · ${phase}` : ""}</AlertTitle>
+      <AlertTitle>
+        {t("policy.blocked")}
+        {phase ? ` · ${phase}` : ""}
+      </AlertTitle>
       <AlertDescription>{reason}</AlertDescription>
     </Alert>
   );
@@ -91,12 +98,18 @@ export function RetryIndicator({
   maxAttempts,
   delaySeconds,
 }: RetryIndicatorProps) {
+  const { t } = useTranslation("tools");
   return (
     <div className="flex items-center gap-2 text-muted-foreground text-xs">
       <RotateCcwIcon className="size-3" />
       <span>
-        Retrying {source} · attempt {attempt}/{maxAttempts}
-        {delaySeconds > 0 ? ` · waiting ${delaySeconds.toFixed(1)}s` : ""}
+        {t("retrying", {
+          source,
+          attempt,
+          maxAttempts,
+          waiting:
+            delaySeconds > 0 ? ` · ${t("waiting", { seconds: delaySeconds.toFixed(1) })}` : "",
+        })}
       </span>
     </div>
   );
@@ -109,10 +122,11 @@ export function RetryIndicator({
  * indicator.
  */
 export function CompactionMarker() {
+  const { t } = useTranslation("chat");
   return (
     <div className="flex items-center gap-2 text-muted-foreground text-xs italic">
       <ShrinkIcon className="size-3" />
-      <span>Conversation compacted</span>
+      <span>{t("compacted")}</span>
     </div>
   );
 }
@@ -128,9 +142,10 @@ interface RoutingDecisionChipProps {
  * the start of a turn.
  */
 export function RoutingDecisionChip({ model, applied, rationale }: RoutingDecisionChipProps) {
+  const { t } = useTranslation("tools");
   const short = shortModelName(model);
-  const lead = applied ? short : `would have picked ${short}`;
-  const summary = `Intelligent model router · ${lead}`;
+  const lead = applied ? short : `${t("routing.wouldHavePicked")} ${short}`;
+  const summary = `${t("routing.router")} · ${lead}`;
   return (
     <div
       className="my-1 flex flex-col items-center gap-0.5 text-muted-foreground text-xs"
@@ -141,8 +156,8 @@ export function RoutingDecisionChip({ model, applied, rationale }: RoutingDecisi
       <span className="flex items-center gap-1.5">
         <BrainCircuitIcon className="size-3 shrink-0" />
         <span>
-          Intelligent model router{" · "}
-          {!applied && <span>would have picked </span>}
+          {t("routing.router")} {" · "}
+          {!applied && <span>{t("routing.wouldHavePicked")} </span>}
           <span className="font-medium text-foreground">{short}</span>
         </span>
       </span>
@@ -175,8 +190,9 @@ export function RoutingDecisionCard({
   rationale,
   agent,
 }: RoutingDecisionCardProps) {
+  const { t } = useTranslation("tools");
   const short = shortModelName(model);
-  const rowLabel = agent && agent.length > 0 ? agent : "Session";
+  const rowLabel = agent && agent.length > 0 ? agent : t("routing.session");
   const prettyOutput = useMemo(
     () => JSON.stringify({ model, applied, rationale, ...(agent ? { agent } : {}) }, null, 2),
     [model, applied, rationale, agent],
@@ -193,11 +209,13 @@ export function RoutingDecisionCard({
     >
       <div className="flex items-center gap-1.5 text-xs">
         <BrainCircuitIcon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="font-medium">Intelligent routing</span>
-        <span className="text-muted-foreground">{applied ? "· applied" : "· advisory"}</span>
+        <span className="font-medium">{t("routing.intelligent")}</span>
+        <span className="text-muted-foreground">
+          · {applied ? t("routing.applied") : t("routing.advisory")}
+        </span>
         <CollapsibleTrigger
           className="ml-auto cursor-pointer rounded p-0.5 text-muted-foreground hover:text-foreground"
-          aria-label="Show raw routing verdict"
+          aria-label={t("routing.showRawVerdict")}
           data-testid="routing-decision-raw-toggle"
         >
           <ChevronRightIcon className="size-3 transition-transform group-data-[state=open]:rotate-90" />
@@ -216,7 +234,9 @@ export function RoutingDecisionCard({
         <CodeBlock code={prettyOutput} language="json">
           <CodeBlockHeader>
             <CodeBlockTitle className="min-w-0">
-              <span className="truncate font-medium uppercase tracking-wide">Verdict</span>
+              <span className="truncate font-medium uppercase tracking-wide">
+                {t("routing.verdict")}
+              </span>
             </CodeBlockTitle>
           </CodeBlockHeader>
         </CodeBlock>

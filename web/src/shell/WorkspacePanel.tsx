@@ -13,6 +13,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { type ReactElement, useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { isOwnerLevel } from "@/lib/permissionsApi";
 import {
@@ -94,6 +95,7 @@ function NewTabMenu({
    *  region's gap so the "+" hugs the last tab. */
   triggerClassName?: string;
 }) {
+  const { t } = useTranslation("workspace");
   const { data: agent } = useSessionAgent(conversationId);
   const create = useCreateTerminal(conversationId);
   // Remembered shell type, persisted across remounts/reloads. Seeded from
@@ -135,11 +137,11 @@ function NewTabMenu({
 
   return (
     <DropdownMenu>
-      <WorkspaceTabTooltip label="Open new" className={triggerClassName}>
+      <WorkspaceTabTooltip label={t("openNew")} className={triggerClassName}>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            aria-label="Open new"
+            aria-label={t("openNew")}
             disabled={create.isPending}
             className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50"
           >
@@ -148,7 +150,7 @@ function NewTabMenu({
         </DropdownMenuTrigger>
       </WorkspaceTabTooltip>
       <DropdownMenuContent align="start">
-        <DropdownMenuLabel>Open new</DropdownMenuLabel>
+        <DropdownMenuLabel>{t("openNew")}</DropdownMenuLabel>
         {multipleShells ? (
           <DropdownMenuSub>
             {/* Clicking "Shell" launches the remembered default immediately —
@@ -164,7 +166,7 @@ function NewTabMenu({
               }}
             >
               <TerminalIcon className="size-4" />
-              Shell
+              {t("shell")}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
               {declaredTerminals.map((name) => (
@@ -187,7 +189,7 @@ function NewTabMenu({
             disabled={create.isPending}
           >
             <TerminalIcon className="size-4" />
-            Shell
+            {t("shell")}
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>
@@ -218,6 +220,7 @@ function FileTabsStrip({
   /** Close a tab by path. */
   onCloseFile: (path: string) => void;
 }) {
+  const { t } = useTranslation("workspace");
   // Scroll the active tab into view when it changes (e.g. a newly opened file
   // appended past the visible edge). `inline: "nearest"` scrolls whichever
   // ancestor is the scroller — the outer strip (<500px) or the file-tabs
@@ -283,7 +286,7 @@ function FileTabsStrip({
             <span className="absolute inset-y-0 right-[2px] flex items-center pl-[12px] pr-[4px] opacity-0 transition-opacity group-hover/tab:opacity-100 [background:linear-gradient(to_right,transparent,color-mix(in_srgb,var(--muted-foreground)_15%,var(--card))_40%)]">
               <button
                 type="button"
-                aria-label={`Close ${name}`}
+                aria-label={t("closeFile", { filename: name })}
                 className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -327,6 +330,7 @@ function TerminalTabsStrip({
   /** Close a terminal tab by key. */
   onClose: (key: string) => void;
 }) {
+  const { t } = useTranslation("workspace");
   const activeTabRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     activeTabRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -375,7 +379,7 @@ function TerminalTabsStrip({
             <span className="absolute inset-y-0 right-[2px] flex items-center pl-[12px] pr-[4px] opacity-0 transition-opacity group-hover/tab:opacity-100 [background:linear-gradient(to_right,transparent,color-mix(in_srgb,var(--muted-foreground)_15%,var(--card))_40%)]">
               <button
                 type="button"
-                aria-label={`Close ${name}`}
+                aria-label={t("closeTerminal", { name })}
                 className="flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -407,13 +411,14 @@ function RailTerminalView({
   terminalKey: string;
   readOnly: boolean;
 }) {
+  const { t: translate } = useTranslation("workspace");
   const { terminals } = useTerminals(conversationId);
   const { setTerminalConnectionState, markTerminalActive } = useTerminalStatuses(terminals);
   const terminal = terminals.find((t) => terminalTabKey(t) === terminalKey) ?? null;
   if (!terminal) {
     return (
       <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">
-        Shell not available.
+        {translate("shellUnavailable")}
       </div>
     );
   }
@@ -586,6 +591,7 @@ export function WorkspacePanel({
   filesPanelShowHidden,
   onShowHiddenChange,
 }: WorkspacePanelProps) {
+  const { t } = useTranslation("workspace");
   // Memoized so FileViewer's Escape-to-close effect doesn't re-subscribe its
   // window keydown listener on every render — an inline arrow would change
   // identity each render and thrash the effect's add/remove cycle.
@@ -597,15 +603,15 @@ export function WorkspacePanel({
   const { terminals } = useTerminals(conversationId);
   const terminalLabelFor = useCallback(
     (key: string) => {
-      const t = terminals.find((term) => terminalTabKey(term) === key);
-      if (!t) return key.replace(/^terminal:/, "");
-      return t.session ? `${t.name} · ${t.session}` : t.name;
+      const terminal = terminals.find((term) => terminalTabKey(term) === key);
+      if (!terminal) return key.replace(/^terminal:/, "");
+      return terminal.session ? `${terminal.name} · ${terminal.session}` : terminal.name;
     },
     [terminals],
   );
   return (
     <aside
-      aria-label="Workspace"
+      aria-label={t("workspace")}
       inert={inert}
       // Floating desktop surface: 8px from every edge. AppShell reserves the
       // panel width from ChatHeader, so the pane can extend to the top without
@@ -665,30 +671,38 @@ export function WorkspacePanel({
         >
           <TabsList variant="pill" className="gap-0">
             {showFilesPanel && (
-              <WorkspaceTabTooltip label="Files">
+              <WorkspaceTabTooltip label={t("files")}>
                 <TabsTrigger
                   value="files"
-                  aria-label={changedCount > 0 ? `Files ${changedCount} changed` : "Files"}
+                  aria-label={
+                    changedCount > 0 ? `${t("files")} ${changedCount} ${t("changed")}` : t("files")
+                  }
                   className="size-8 shrink-0 rounded-md p-0 hover:bg-muted"
                 >
                   <FilesIcon className="size-4" />
-                  <span className="sr-only">Files</span>
+                  <span className="sr-only">{t("files")}</span>
                   {changedCount > 0 && <span className="sr-only">{changedCount}</span>}
                 </TabsTrigger>
               </WorkspaceTabTooltip>
             )}
-            <WorkspaceTabTooltip label="Agents">
+            <WorkspaceTabTooltip
+              label={
+                subagentsWorking > 0
+                  ? t("agentsWorking", { working: subagentsWorking, count: agentCount })
+                  : t("agentsCount", { count: agentCount })
+              }
+            >
               <TabsTrigger
                 value="subagents"
                 aria-label={
                   subagentsWorking > 0
-                    ? `Agents ${subagentsWorking}/${agentCount}`
-                    : `Agents ${agentCount}`
+                    ? t("agentsWorking", { working: subagentsWorking, count: agentCount })
+                    : t("agentsCount", { count: agentCount })
                 }
                 className="size-8 shrink-0 rounded-md p-0 hover:bg-muted"
               >
                 <BotIcon className="size-4" />
-                <span className="sr-only">Agents</span>
+                <span className="sr-only">{t("agents")}</span>
                 <span
                   className={cn(
                     TAB_BADGE_BASE,
@@ -701,14 +715,16 @@ export function WorkspacePanel({
               </TabsTrigger>
             </WorkspaceTabTooltip>
             {showShellsTab && (
-              <WorkspaceTabTooltip label="Shells">
+              <WorkspaceTabTooltip label={t("shells")}>
                 <TabsTrigger
                   value="terminals"
-                  aria-label={terminalsLength > 0 ? `Shells ${terminalsLength}` : "Shells"}
+                  aria-label={
+                    terminalsLength > 0 ? `${t("shells")} ${terminalsLength}` : t("shells")
+                  }
                   className="size-8 shrink-0 rounded-md p-0 hover:bg-muted"
                 >
                   <SquareTerminalIcon className="size-4" />
-                  <span className="sr-only">Shells</span>
+                  <span className="sr-only">{t("shells")}</span>
                   {terminalsLength > 0 && (
                     <span className="sr-only text-muted-foreground">{terminalsLength}</span>
                   )}
@@ -716,14 +732,19 @@ export function WorkspacePanel({
               </WorkspaceTabTooltip>
             )}
             {todosSupported && todosTotal > 0 && (
-              <WorkspaceTabTooltip label="Tasks">
+              <WorkspaceTabTooltip
+                label={t("tasksProgress", { completed: todosCompleted, total: todosTotal })}
+              >
                 <TabsTrigger
                   value="todos"
-                  aria-label={`Tasks ${todosCompleted} of ${todosTotal} completed`}
+                  aria-label={t("tasksProgress", {
+                    completed: todosCompleted,
+                    total: todosTotal,
+                  })}
                   className="size-8 shrink-0 rounded-md p-0 hover:bg-muted"
                 >
                   <ListTodoIcon className="size-4" />
-                  <span className="sr-only">Tasks</span>
+                  <span className="sr-only">{t("tasks")}</span>
                   <span className="sr-only">
                     {todosCompleted}/{todosTotal}
                   </span>
@@ -731,14 +752,14 @@ export function WorkspacePanel({
               </WorkspaceTabTooltip>
             )}
             {showBrowserTab && (
-              <WorkspaceTabTooltip label="Browser">
+              <WorkspaceTabTooltip label={t("browser")}>
                 <TabsTrigger
                   value="browser"
-                  aria-label="Browser"
+                  aria-label={t("browser")}
                   className="size-8 shrink-0 rounded-md p-0 hover:bg-muted"
                 >
                   <GlobeIcon className="size-4" />
-                  <span className="sr-only">Browser</span>
+                  <span className="sr-only">{t("browser")}</span>
                 </TabsTrigger>
               </WorkspaceTabTooltip>
             )}
@@ -797,12 +818,12 @@ export function WorkspacePanel({
             ≥500px flex-1 region absorbs the space instead, so the button still
             hugs the right. */}
         <WorkspaceTabTooltip
-          label={maximized ? "Exit full screen" : "Full screen"}
+          label={maximized ? t("exitFullScreen") : t("fullScreen")}
           className="ml-auto"
         >
           <button
             type="button"
-            aria-label={maximized ? "Exit full screen" : "Full screen"}
+            aria-label={maximized ? t("exitFullScreen") : t("fullScreen")}
             aria-pressed={maximized}
             onClick={onToggleMaximized}
             className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

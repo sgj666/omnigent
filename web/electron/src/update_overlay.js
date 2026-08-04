@@ -26,6 +26,7 @@ const OVERLAY_INSET = 12;
  *   checkForUpdates: Function, downloadUpdate: Function, installUpdateNow: Function }} deps.updater
  * @param {string} deps.overlayPage Absolute path to the built overlay HTML.
  * @param {string} deps.preloadPath Absolute path to update_overlay_preload.js.
+ * @param {() => string} [deps.getLocale] Effective locale for initial render.
  */
 function createUpdateOverlay({
   BrowserWindow,
@@ -34,11 +35,22 @@ function createUpdateOverlay({
   updater,
   overlayPage,
   preloadPath,
+  getLocale = () => "en",
 }) {
   /** @type {Map<Electron.BrowserWindow, Electron.BrowserWindow>} parent -> overlay */
   const overlays = new Map();
   /** @type {WeakMap<Electron.BrowserWindow, number>} overlay -> last reported height */
   const heights = new WeakMap();
+  let locale = "en";
+
+  function resolveLocale() {
+    try {
+      locale = getLocale() === "zh-CN" ? "zh-CN" : "en";
+    } catch {
+      locale = "en";
+    }
+    return locale;
+  }
 
   function overlayForSender(event) {
     for (const ov of overlays.values()) {
@@ -98,7 +110,8 @@ function createUpdateOverlay({
     // pushed via setColorScheme since). did-finish-load fires on every load —
     // including Cmd+R reloads — so push the LIVE theme here to correct it.
     const theme = nativeTheme.shouldUseDarkColors ? "dark" : "light";
-    void overlay.loadFile(overlayPage, { search: `theme=${theme}` });
+    const search = new URLSearchParams({ theme, locale: resolveLocale() });
+    void overlay.loadFile(overlayPage, { search: search.toString() });
     overlay.webContents.on("did-finish-load", () => {
       if (overlay.isDestroyed()) return;
       overlay.webContents.send(
@@ -197,7 +210,17 @@ function createUpdateOverlay({
     });
   }
 
-  return { ensureOverlay, registerIpc };
+  function setLocale(nextLocale) {
+    locale = nextLocale === "zh-CN" ? "zh-CN" : "en";
+    for (const overlay of overlays.values()) {
+      if (overlay.isDestroyed()) continue;
+      const theme = nativeTheme.shouldUseDarkColors ? "dark" : "light";
+      const search = new URLSearchParams({ theme, locale });
+      void overlay.loadFile(overlayPage, { search: search.toString() });
+    }
+  }
+
+  return { ensureOverlay, registerIpc, setLocale };
 }
 
 module.exports = { createUpdateOverlay, OVERLAY_WIDTH, OVERLAY_INSET };

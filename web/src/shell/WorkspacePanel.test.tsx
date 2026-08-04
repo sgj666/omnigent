@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useSessionAgent } from "@/hooks/useAgents";
 import type * as UseTerminalsModule from "@/hooks/useTerminals";
 import { useCreateTerminal, useTerminals } from "@/hooks/useTerminals";
+import { setTestLanguage } from "@/i18n/testHelpers";
 import type { ChangedSort } from "./FlatFileList";
 import type { RightRailTab } from "./railTabs";
 import { WorkspacePanel } from "./WorkspacePanel";
@@ -82,9 +83,15 @@ function renderWorkspace(
     openFiles?: string[];
     showBrowserTab?: boolean;
     showShellsTab?: boolean;
+    terminalsLength?: number;
     openTerminals?: string[];
     selectedTerminalKey?: string | null;
     maximized?: boolean;
+    subagentsWorking?: number;
+    agentCount?: number;
+    todosSupported?: boolean;
+    todosCompleted?: number;
+    todosTotal?: number;
   } = {},
 ) {
   const openFileViewer = vi.fn();
@@ -105,12 +112,12 @@ function renderWorkspace(
         showBrowserTab={overrides.showBrowserTab ?? false}
         changedCount={0}
         showShellsTab={overrides.showShellsTab ?? false}
-        terminalsLength={0}
-        subagentsWorking={0}
-        agentCount={1}
-        todosSupported={false}
-        todosCompleted={0}
-        todosTotal={0}
+        terminalsLength={overrides.terminalsLength ?? 0}
+        subagentsWorking={overrides.subagentsWorking ?? 0}
+        agentCount={overrides.agentCount ?? 1}
+        todosSupported={overrides.todosSupported ?? false}
+        todosCompleted={overrides.todosCompleted ?? 0}
+        todosTotal={overrides.todosTotal ?? 0}
         rootSessionId={null}
         selectedFilePath={overrides.selectedFilePath ?? null}
         openFiles={overrides.openFiles ?? []}
@@ -173,6 +180,50 @@ describe("WorkspacePanel surface presentation", () => {
     const tab = screen.getByRole("tab", { name: tabName });
     fireEvent.pointerMove(tab.parentElement!, { pointerType: "mouse" });
     expect(await screen.findByRole("tooltip")).toHaveTextContent(tooltip);
+  });
+
+  it("interpolates English agent activity and task progress in tab labels", () => {
+    renderWorkspace({
+      subagentsWorking: 2,
+      agentCount: 4,
+      todosSupported: true,
+      todosCompleted: 3,
+      todosTotal: 5,
+    });
+
+    expect(screen.getByRole("tab", { name: "Agents 2/4" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Tasks 3 of 5 completed" })).toBeInTheDocument();
+  });
+
+  it("localizes tab progress and close controls while preserving file and executable names", async () => {
+    const restoreLanguage = await setTestLanguage("zh-CN");
+    try {
+      useTerminalsMock.mockReturnValue({
+        terminals: [{ id: "terminal_zsh_s1", name: "zsh", session: "u-1", running: true }],
+        isLoading: false,
+        error: null,
+      });
+      renderWorkspace({
+        openFiles: ["src/App.tsx"],
+        showShellsTab: true,
+        terminalsLength: 1,
+        openTerminals: ["terminal:terminal_zsh_s1"],
+        subagentsWorking: 1,
+        agentCount: 3,
+        todosSupported: true,
+        todosCompleted: 2,
+        todosTotal: 4,
+      });
+
+      expect(screen.getByRole("tab", { name: "智能体 1/3" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "任务已完成 2/4" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "终端 1" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "关闭 App.tsx" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "关闭 zsh · u-1" })).toBeInTheDocument();
+    } finally {
+      cleanup();
+      await restoreLanguage();
+    }
   });
 });
 
@@ -307,6 +358,23 @@ describe("WorkspacePanel shell tabs", () => {
     expect(screen.getByTestId("terminal-view-stub")).toHaveTextContent("terminal_zsh_s1");
     expect(screen.queryByTestId("files-panel-stub")).toBeNull();
     expect(screen.queryByTestId("file-viewer-stub")).toBeNull();
+  });
+
+  it("localizes the unavailable shell state", async () => {
+    const restoreLanguage = await setTestLanguage("zh-CN");
+    try {
+      useTerminalsMock.mockReturnValue({ terminals: [], isLoading: false, error: null });
+      renderWorkspace({
+        showShellsTab: true,
+        openTerminals: [termKey],
+        selectedTerminalKey: termKey,
+      });
+
+      expect(screen.getByText("终端不可用。")).toBeInTheDocument();
+    } finally {
+      cleanup();
+      await restoreLanguage();
+    }
   });
 
   it("activates a shell via openTerminalTab when its tab body is clicked", () => {

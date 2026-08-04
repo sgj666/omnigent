@@ -4,6 +4,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { SlashCommandCard } from "./SlashCommandCard";
+import { withTestLanguage } from "@/i18n/testHelpers";
 
 afterEach(cleanup);
 
@@ -70,5 +71,27 @@ describe("SlashCommandCard", () => {
       <SlashCommandCard kind="skill" name="dev-productivity:simplify" arguments="" output={null} />,
     );
     expect(container.querySelector('[data-slot="collapsible-trigger"]')).toBeNull();
+  });
+
+  it("uses professional Chinese labels while preserving command payload", async () => {
+    await withTestLanguage("zh-CN", () => {
+      render(
+        <SlashCommandCard
+          kind="skill"
+          name="dev-productivity:simplify"
+          arguments="file-bug"
+          output="原始命令输出"
+        />,
+      );
+      expect(screen.getByText("技能")).toBeDefined();
+      expect(screen.getByText("dev-productivity:simplify")).toBeDefined();
+      expect(screen.getByText("file-bug")).toBeDefined();
+      const trigger = screen.getByText("技能").closest('[data-slot="collapsible-trigger"]');
+      expect(trigger).not.toBeNull();
+      fireEvent.click(trigger!);
+      expect(screen.getAllByText("参数").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("输出").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("原始命令输出").length).toBeGreaterThan(0);
+    });
   });
 });

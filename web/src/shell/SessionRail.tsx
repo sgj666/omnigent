@@ -32,6 +32,8 @@ import {
 } from "@/hooks/useChildSessions";
 import { useDebugMode } from "@/hooks/useDebugMode";
 import { terminalTabKey, useTerminals, type TerminalInfo } from "@/hooks/useTerminals";
+import { useTranslation } from "react-i18next";
+import "@/i18n";
 
 interface SessionRailProps {
   conversationId: string;
@@ -82,15 +84,16 @@ interface TerminalsCardProps {
 }
 
 function TerminalsCard({ terminals, onExpand }: TerminalsCardProps) {
+  const { t } = useTranslation("common");
   const [collapsed, setCollapsed] = useState(false);
   return (
     <Card size="sm" data-testid="terminals-card">
       <CardHeader>
-        <CardTitle className="text-sm">Terminals</CardTitle>
+        <CardTitle className="text-sm">{t("shell.terminals")}</CardTitle>
         <CardAction>
           <button
             type="button"
-            aria-label={collapsed ? "Expand terminals" : "Collapse terminals"}
+            aria-label={collapsed ? t("shell.expandTerminals") : t("shell.collapseTerminals")}
             aria-expanded={!collapsed}
             className="cursor-pointer rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
             onClick={() => setCollapsed((v) => !v)}
@@ -107,11 +110,15 @@ function TerminalsCard({ terminals, onExpand }: TerminalsCardProps) {
       {!collapsed && (
         <CardContent>
           {terminals.length === 0 ? (
-            <p className="text-muted-foreground text-xs">No open terminals</p>
+            <p className="text-muted-foreground text-xs">{t("shell.noOpenTerminals")}</p>
           ) : (
             <ul className="flex flex-col gap-0.5">
-              {terminals.map((t) => (
-                <TerminalRow key={t.id} terminal={t} onOpen={() => onExpand(terminalTabKey(t))} />
+              {terminals.map((terminal) => (
+                <TerminalRow
+                  key={terminal.id}
+                  terminal={terminal}
+                  onOpen={() => onExpand(terminalTabKey(terminal))}
+                />
               ))}
             </ul>
           )}
@@ -146,15 +153,18 @@ interface ExecutionLogsCardProps {
 }
 
 function ExecutionLogsCard({ childSessions, onExpand }: ExecutionLogsCardProps) {
+  const { t } = useTranslation("common");
   const [collapsed, setCollapsed] = useState(false);
   return (
     <Card size="sm" data-testid="execution-logs-card">
       <CardHeader>
-        <CardTitle className="text-sm">Execution logs</CardTitle>
+        <CardTitle className="text-sm">{t("shell.executionLogs")}</CardTitle>
         <CardAction>
           <button
             type="button"
-            aria-label={collapsed ? "Expand execution logs" : "Collapse execution logs"}
+            aria-label={
+              collapsed ? t("shell.expandExecutionLogs") : t("shell.collapseExecutionLogs")
+            }
             aria-expanded={!collapsed}
             className="cursor-pointer rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
             onClick={() => setCollapsed((v) => !v)}

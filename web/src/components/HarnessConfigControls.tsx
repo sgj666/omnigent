@@ -1,4 +1,6 @@
 import { type ReactNode, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 import {
   Select,
@@ -17,6 +19,87 @@ export const MODEL_SELECT_DEFAULT = "__default__";
 export const MODEL_SELECT_SMART = "__smart__";
 // Sentinel for the "no explicit effort" (—) choice, same reasoning.
 export const EFFORT_SELECT_NONE = "__none__";
+
+// Translate by the persisted option value, not by mutable display copy. This
+// keeps configuration controls and summaries in sync while preserving custom
+// values (and model ids) that are not part of the built-in glossary.
+const OPTION_VALUE_LABEL_KEYS: Record<string, string> = {
+  low: "reasoning.low",
+  medium: "reasoning.medium",
+  high: "reasoning.high",
+  xhigh: "reasoning.xhigh",
+  max: "reasoning.max",
+  default: "reasoning.default",
+  none: "reasoning.none",
+  auto: "configOptions.labels.auto",
+  acceptedits: "configOptions.labels.acceptEdits",
+  plan: "configOptions.labels.plan",
+  dontask: "configOptions.labels.dontAsk",
+  bypasspermissions: "configOptions.labels.bypassPermissions",
+  "full-access": "configOptions.labels.fullAccess",
+  "read-only": "configOptions.labels.readOnly",
+  bypass: "configOptions.labels.bypassApprovalsSandbox",
+  "auto-review": "configOptions.labels.autoReview",
+  ask: "configOptions.labels.ask",
+  yolo: "configOptions.labels.yolo",
+};
+
+const OPTION_DESCRIPTION_KEYS: Record<string, string> = {
+  "Prompts before edits and commands": "configOptions.descriptions.claudeDefault",
+  "Auto-runs; a classifier blocks risky actions": "configOptions.descriptions.claudeAuto",
+  "Auto-applies file edits; commands still prompt": "configOptions.descriptions.claudeAcceptEdits",
+  "Plans only; makes no edits": "configOptions.descriptions.claudePlan",
+  "Auto-denies anything not pre-approved": "configOptions.descriptions.claudeDontAsk",
+  "Runs everything; no prompts or safety checks": "configOptions.descriptions.noSafetyChecks",
+  "Read/edit/run in workspace; approval for external edits or network":
+    "configOptions.descriptions.codexDefault",
+  "Edit any file and access the internet without approval":
+    "configOptions.descriptions.codexFullAccess",
+  "Read files only; approval required for edits, commands, or network":
+    "configOptions.descriptions.codexReadOnly",
+  "Runs Codex with no approval prompts and no command sandbox":
+    "configOptions.descriptions.codexBypass",
+  "Normal agent mode; prompts before running commands": "configOptions.descriptions.cursorDefault",
+  "Smart Auto: auto-runs safe tool calls and prompts for the rest":
+    "configOptions.descriptions.cursorAutoReview",
+  "Read-only planning; analyzes and proposes plans, no edits":
+    "configOptions.descriptions.cursorPlan",
+  "Q&A style; explains and answers questions (read-only)": "configOptions.descriptions.cursorAsk",
+  "Runs everything without prompts or safety checks": "configOptions.descriptions.cursorYolo",
+};
+
+const OPTION_VALUE_DESCRIPTION_KEYS: Record<string, string> = {
+  default: "configOptions.descriptions.claudeDefault",
+  auto: "configOptions.descriptions.claudeAuto",
+  acceptedits: "configOptions.descriptions.claudeAcceptEdits",
+  plan: "configOptions.descriptions.claudePlan",
+  dontask: "configOptions.descriptions.claudeDontAsk",
+  bypasspermissions: "configOptions.descriptions.noSafetyChecks",
+  "full-access": "configOptions.descriptions.codexFullAccess",
+  "read-only": "configOptions.descriptions.codexReadOnly",
+  bypass: "configOptions.descriptions.codexBypass",
+  "auto-review": "configOptions.descriptions.cursorAutoReview",
+  ask: "configOptions.descriptions.cursorAsk",
+  yolo: "configOptions.descriptions.cursorYolo",
+};
+
+export function translateConfigOptionLabel(t: TFunction, value: string, fallback = value): string {
+  const key = OPTION_VALUE_LABEL_KEYS[value.trim().toLowerCase()];
+  return key ? t(key, { defaultValue: fallback }) : fallback;
+}
+
+export function translateConfigOptionDescription(
+  t: TFunction,
+  value: string,
+  fallback: string,
+): string {
+  const normalized = value.trim().toLowerCase();
+  // Descriptions for the shared `default`/`auto`/`plan` values vary by
+  // harness, so prefer the canonical description text when present, then
+  // fall back to the value map for callers that only provide a value.
+  const key = OPTION_DESCRIPTION_KEYS[fallback] ?? OPTION_VALUE_DESCRIPTION_KEYS[normalized];
+  return key ? t(key, { defaultValue: fallback }) : fallback;
+}
 
 // Claude-native reasoning-effort options for the new-session / scheduled-task
 // model+effort pickers. There is deliberately no hardcoded effort default: an
@@ -87,6 +170,11 @@ export function DescribedSelect({
   testId: string;
   ariaLabel: string;
 }) {
+  const { t } = useTranslation("models");
+  const translatedLabel = (optionValue: string, label: string) =>
+    translateConfigOptionLabel(t, optionValue, label);
+  const translatedDescription = (optionValue: string, description: string) =>
+    translateConfigOptionDescription(t, optionValue, description);
   const [previewed, setPreviewed] = useState<string | null>(null);
   const detail = options.find((o) => o.value === (previewed ?? value))?.description;
   return (
@@ -116,7 +204,7 @@ export function DescribedSelect({
             onPointerEnter={() => setPreviewed(o.value)}
             onFocus={() => setPreviewed(o.value)}
           >
-            {o.label}
+            {translatedLabel(o.value, o.label)}
           </SelectItem>
         ))}
         {/* Footer blurb pinned inside the dropdown, tracking the hovered row.
@@ -126,7 +214,7 @@ export function DescribedSelect({
           data-testid={`${testId}-detail`}
           className="min-h-8 px-2.5 pt-0.5 pb-1 text-xs leading-snug text-muted-foreground"
         >
-          {detail}
+          {detail ? translatedDescription(previewed ?? value, detail) : detail}
         </p>
       </SelectContent>
     </Select>

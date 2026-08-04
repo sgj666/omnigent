@@ -4,6 +4,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { cn } from "@/lib/utils";
 import { ChevronRightIcon, SparklesIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Streamdown } from "streamdown";
 
@@ -102,36 +103,39 @@ export type ReasoningTriggerProps = ComponentProps<typeof CollapsibleTrigger> & 
   getThinkingMessage?: (isStreaming: boolean, duration?: number) => ReactNode;
 };
 
-const defaultGetThinkingMessage = (isStreaming: boolean, duration?: number) => {
+const defaultGetThinkingMessage = (
+  t: (key: string, options?: Record<string, unknown>) => string,
+  isStreaming: boolean,
+  duration?: number,
+) => {
   if (isStreaming) {
     // Glimmer the label while the thought is in flight, matching the
     // "Working…" status pill — the shimmer settles into static text once
     // the section stops streaming.
     return (
       <Shimmer as="span" duration={1.5}>
-        Thinking...
+        {t("reasoning.thinking")}
       </Shimmer>
     );
   }
   if (duration === undefined) {
-    return <span>Thought for a few seconds</span>;
+    return <span>{t("reasoning.thoughtForAFewSeconds")}</span>;
   }
-  return <span>Thought for {duration.toFixed(1)} seconds</span>;
+  return <span>{t("reasoning.thoughtForSeconds", { duration: duration.toFixed(1) })}</span>;
 };
 
 export const ReasoningTrigger = memo(
-  ({
-    className,
-    children,
-    getThinkingMessage = defaultGetThinkingMessage,
-    ...props
-  }: ReasoningTriggerProps) => {
+  ({ className, children, getThinkingMessage, ...props }: ReasoningTriggerProps) => {
+    const { t } = useTranslation("chat");
     const { isStreaming, isOpen, duration, expandable } = useReasoning();
+    const thinkingMessage =
+      getThinkingMessage ??
+      ((streaming, seconds) => defaultGetThinkingMessage(t, streaming, seconds));
 
     const label = (
       <>
         <SparklesIcon className="size-3.5 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">{getThinkingMessage(isStreaming, duration)}</span>
+        <span className="min-w-0 flex-1 truncate">{thinkingMessage(isStreaming, duration)}</span>
         {expandable && (
           <ChevronRightIcon
             className={cn(

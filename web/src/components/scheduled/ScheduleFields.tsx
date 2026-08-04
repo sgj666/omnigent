@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 import {
   DEFAULT_SCHEDULE_MODEL,
   WEEKDAY_CODES,
@@ -38,11 +39,11 @@ import {
 
 // Presets only: "custom" is deferred (see file header) and is
 // deliberately absent from this list, so it's unreachable from the dropdown.
-const PRESET_OPTIONS: { value: SchedulePreset; label: string }[] = [
-  { value: "hourly", label: "Hourly" },
-  { value: "daily", label: "Daily" },
-  { value: "weekdays", label: "Weekdays" },
-  { value: "weekly", label: "Weekly" },
+const PRESET_OPTIONS: { value: SchedulePreset; key: string }[] = [
+  { value: "hourly", key: "hourly" },
+  { value: "daily", key: "daily" },
+  { value: "weekdays", key: "weekdays" },
+  { value: "weekly", key: "weekly" },
 ];
 
 const HOURS_12 = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -51,13 +52,13 @@ const PERIODS = ["AM", "PM"] as const;
 type Period = (typeof PERIODS)[number];
 
 const WEEKDAY_LABELS: Record<WeekdayCode, string> = {
-  MO: "Mon",
-  TU: "Tue",
-  WE: "Wed",
-  TH: "Thu",
-  FR: "Fri",
-  SA: "Sat",
-  SU: "Sun",
+  MO: "mon",
+  TU: "tue",
+  WE: "wed",
+  TH: "thu",
+  FR: "fri",
+  SA: "sat",
+  SU: "sun",
 };
 
 export function ScheduleFields({
@@ -71,12 +72,14 @@ export function ScheduleFields({
    * keep an open Select from dismissing the whole modal. Optional. */
   onSelectOpenChange?: (open: boolean) => void;
 }) {
+  const { t } = useTranslation("tasks");
   // Time-of-day is meaningless for the hourly preset (fires every hour); it
   // shows a minute-only input instead.
   const isHourly = model.preset === "hourly";
   const showWeekdays = model.preset === "weekly";
 
   const error = validateSchedule(model);
+  const localizedError = error === null ? null : translateScheduleError(error, t);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const hourColumnRef = useRef<HTMLDivElement | null>(null);
   const minuteColumnRef = useRef<HTMLDivElement | null>(null);
@@ -192,7 +195,7 @@ export function ScheduleFields({
           className="flex w-full min-w-0 flex-col gap-1.5"
           data-testid="schedule-frequency-control"
         >
-          <Label htmlFor="schedule-preset">Frequency</Label>
+          <Label htmlFor="schedule-preset">{t("frequency")}</Label>
           <Select
             value={model.preset}
             onValueChange={(value) => onChange({ ...model, preset: value as SchedulePreset })}
@@ -213,7 +216,7 @@ export function ScheduleFields({
             <SelectContent position="popper" align="start">
               {PRESET_OPTIONS.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
+                  {t(opt.key)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -221,7 +224,7 @@ export function ScheduleFields({
         </div>
 
         <div className="flex w-full min-w-0 flex-col gap-1.5" data-testid="schedule-time-control">
-          <Label htmlFor="schedule-time">{isHourly ? "Minute" : "Time"}</Label>
+          <Label htmlFor="schedule-time">{isHourly ? t("minute") : t("time")}</Label>
           {isHourly ? (
             <Input
               ref={inputRef}
@@ -230,7 +233,7 @@ export function ScheduleFields({
               data-testid="schedule-minute"
               placeholder="0"
               className="text-sm"
-              aria-invalid={error ? true : undefined}
+              aria-invalid={localizedError ? true : undefined}
               onChange={(e) => handleTimeTextChange(e.target.value)}
               onBlur={canonicalizeTimeText}
             />
@@ -245,14 +248,14 @@ export function ScheduleFields({
                     data-testid="schedule-time"
                     placeholder="5:00 PM"
                     className="pr-8 text-sm"
-                    aria-invalid={error ? true : undefined}
+                    aria-invalid={localizedError ? true : undefined}
                     onFocus={() => handleTimePickerOpenChange(true)}
                     onChange={(e) => handleTimeTextChange(e.target.value)}
                     onBlur={canonicalizeTimeText}
                   />
                   <button
                     type="button"
-                    aria-label="Open time picker"
+                    aria-label={t("openTimePicker")}
                     data-testid="schedule-time-picker-trigger"
                     className="absolute top-1/2 right-2 flex size-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
                     onClick={() => handleTimePickerOpenChange(!timePickerOpen)}
@@ -324,8 +327,8 @@ export function ScheduleFields({
 
       {showWeekdays && (
         <div className="flex flex-col gap-1.5">
-          <Label>On days</Label>
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Weekdays">
+          <Label>{t("onDays")}</Label>
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("weekdays")}>
             {WEEKDAY_CODES.map((code) => {
               const selected = model.weekdays.includes(code);
               return (
@@ -342,7 +345,7 @@ export function ScheduleFields({
                       : "border-border bg-background text-muted-foreground hover:bg-muted",
                   )}
                 >
-                  {WEEKDAY_LABELS[code]}
+                  {t(`schedule.${WEEKDAY_LABELS[code]}`)}
                 </button>
               );
             })}
@@ -352,13 +355,30 @@ export function ScheduleFields({
 
       {/* describeSchedule/buildRRule stay in the lib for list rows and possible
           future previews; only the inline validation error renders here now. */}
-      {error && (
+      {localizedError && (
         <p className="text-xs text-destructive" data-testid="schedule-error">
-          {error}
+          {localizedError}
         </p>
       )}
     </div>
   );
+}
+
+/** Keep the schedule builder's detailed validation messages while translating
+ * their stable categories in the active UI language. Unknown messages are
+ * returned unchanged so future validation details are never discarded. */
+function translateScheduleError(error: string, t: (key: string) => string): string {
+  const keyByError: Record<string, string> = {
+    "Enter a valid minute from 0 to 59.": "scheduleValidation.validMinute",
+    "Enter a valid time.": "scheduleValidation.validTime",
+    "Pick at least one day of the week.": "scheduleValidation.weekdayRequired",
+    "Interval must be a whole number of at least 1.": "scheduleValidation.intervalMinimum",
+    "Hourly tasks must run at most once per hour (interval ≥ 1).":
+      "scheduleValidation.hourlyInterval",
+    "Pick at least one day of the month.": "scheduleValidation.monthDayRequired",
+  };
+  const key = keyByError[error];
+  return key === undefined ? error : t(key);
 }
 
 function pad(n: number): string {

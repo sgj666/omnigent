@@ -61,6 +61,8 @@ interface NativeShellApi {
   setBadgeCount: (count: number, activation?: BadgeActivation) => void;
   /** Tell the shell which theme source the user selected. */
   setColorScheme?: (scheme: "light" | "dark" | "system") => void;
+  /** Synchronize the web language preference with native shell settings. */
+  setLanguage?: (preference: "system" | "en" | "zh-CN", effectiveLanguage: "en" | "zh-CN") => void;
   /** Fire an OS notification; resolves true when it was shown. */
   notify: (params: NativeNotifyParams) => Promise<boolean>;
   // Optional: a shell older than this SPA may lack notification-click routing,
@@ -483,6 +485,25 @@ export function onNativeSidebarDrag(
  */
 export function setThemeSource(themeSource: ThemeSource): void {
   callSetColorScheme(themeSource);
+}
+
+/**
+ * Synchronize the selected language with the Electron shell when available.
+ * Older shells and browser/iOS/Android runtimes simply return false.
+ */
+export function setDesktopLanguage(
+  preference: "system" | "en" | "zh-CN",
+  effectiveLanguage: "en" | "zh-CN",
+): boolean {
+  const desktop = electronApi();
+  if (!desktop?.setLanguage) return false;
+  try {
+    desktop.setLanguage(preference, effectiveLanguage);
+  } catch (err) {
+    console.warn("[nativeBridge] setLanguage failed:", err);
+    return false;
+  }
+  return true;
 }
 
 export async function setBadgeCount(count: number, activation?: BadgeActivation): Promise<void> {

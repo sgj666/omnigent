@@ -9,6 +9,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setTestLanguage } from "@/i18n/testHelpers";
 import { NewTerminalButton } from "./NewTerminalButton";
 import type { TerminalFirstContextValue } from "./TerminalFirstContext";
 import { TerminalFirstContextProvider } from "./TerminalFirstContext";
@@ -215,6 +216,24 @@ describe("NewTerminalButton native shell picker", () => {
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith("terminal:terminal_fish_u-xx"));
     expect(launchedTerminal()).toBe("fish");
+  });
+
+  it("localizes terminal chrome and the default marker without translating executable names", async () => {
+    const restoreLanguage = await setTestLanguage("zh-CN");
+    try {
+      mockAgentAndCreate(["zsh", "bash"]);
+      renderButton(undefined, "icon", true);
+
+      const primary = await screen.findByRole("button", { name: "新建终端" });
+      expect(primary).toBeInTheDocument();
+      const caret = screen.getByRole("button", { name: "选择终端" });
+      fireEvent.pointerDown(caret, { button: 0 });
+      expect(await screen.findByRole("menuitem", { name: "zsh（默认）" })).toBeInTheDocument();
+      expect(screen.getByRole("menuitem", { name: "bash" })).toBeInTheDocument();
+    } finally {
+      cleanup();
+      await restoreLanguage();
+    }
   });
 
   it("SDK agent with multiple terminals keeps a plain dropdown (no default click)", async () => {

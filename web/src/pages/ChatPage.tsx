@@ -172,6 +172,7 @@ import {
   EFFORT_SELECT_NONE,
   MODEL_SELECT_DEFAULT,
   MODEL_SELECT_SMART,
+  translateConfigOptionLabel,
 } from "@/components/HarnessConfigControls";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { MainTerminalView } from "@/shell/MainTerminalView";
@@ -189,6 +190,7 @@ import { GoalControl, GoalStatusPill, useGoalState, type Goal } from "@/componen
 import { copyText } from "@/lib/clipboard";
 import { showToast } from "@/components/ui/toast";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
+import { useTranslation } from "react-i18next";
 
 // Matches both wordings the native executors emit: "[Attached: <path>]"
 // (claude/pi/cursor) and "[Attached file: <path>]" (codex). Capturing group
@@ -572,6 +574,7 @@ const sessionDrafts = loadDraftsFromStorage();
  * items fetch (no useConversationItems here).
  */
 export function ChatPage() {
+  const { t } = useTranslation("chat");
   const { conversationId: urlConvId } = useParams<{ conversationId: string }>();
   const navigate = useNavigate();
   // Optional first message handed off by the landing composer through the
@@ -875,7 +878,7 @@ export function ChatPage() {
   // Non-null only when the active session is a sub-agent (child): the
   // composer then peeks a "Chatting with sub-agent …" tray and the
   // scroll-pinned "Working…" tab is suppressed (the tray owns that slot).
-  const subAgentLabel = subAgentComposerLabel(activeSession);
+  const subAgentLabel = subAgentComposerLabel(activeSession, t("subAgentDefault"));
 
   // Hoisted above the early-return guards so the title-update effect can read them.
   const activeConv = urlConvId ? conversations?.find((c) => c.id === urlConvId) : null;
@@ -1078,7 +1081,8 @@ export function ChatPage() {
     conversationsData !== undefined,
   );
   const canApprove = activeSession?.canApprove ?? activeConv?.can_approve ?? true;
-  const readOnlyReason = readOnlyReasonForSessionLabels(activeSession, activeConv);
+  const readOnlyReasonCode = readOnlyReasonForSessionLabels(activeSession, activeConv);
+  const readOnlyReason = readOnlyReasonCode === null ? null : t(readOnlyReasonCode);
   // Once present, the live session snapshot is authoritative.
   const capabilitySource = {
     labels: activeSession ? (activeSession.labels ?? {}) : (activeConv?.labels ?? {}),
@@ -1216,13 +1220,14 @@ function SessionLayout({ mainAgent }: SessionLayoutProps) {
   );
 }
 
-function SelectionPopup({
+export function SelectionPopup({
   containerRef,
   onReply,
 }: {
   containerRef: React.RefObject<HTMLElement | null>;
   onReply: (text: string) => void;
 }) {
+  const { t } = useTranslation("chat");
   const [popupPos, setPopupPos] = useState<{ x: number; y: number } | null>(null);
   const selectedTextRef = useRef<string>("");
 
@@ -1309,7 +1314,7 @@ function SelectionPopup({
         }}
       >
         <CornerUpLeftIcon className="size-3.5" />
-        Reply ↵
+        {t("reply")} ↵
       </Button>
     </div>
   );
@@ -1454,6 +1459,7 @@ function MainAgentSurface({
   costRoutingEligible,
   subAgentLabel,
 }: MainAgentSurfaceProps) {
+  const { t } = useTranslation("chat");
   const terminalFirst = useTerminalFirst();
   // The turn rail is a hover minimap with no mobile affordance (CSS-hidden
   // under `md`). Gate its MOUNT — not just its visibility — on the viewport so
@@ -1736,12 +1742,17 @@ function MainAgentSurface({
                 <ConversationEmptyState>
                   <div className="space-y-1.5">
                     <h3 className="text-2xl font-medium tracking-[-0.02em]">
-                      What should we work on?
+                      {t("emptyTitle", { ns: "chat" })}
                     </h3>
                     <p className="text-muted-foreground text-base">
                       {agentsError
-                        ? `Failed to load agents: ${agentsError instanceof Error ? agentsError.message : String(agentsError)}`
-                        : "Send a message to get started."}
+                        ? t("agentsLoadFailed", {
+                            error:
+                              agentsError instanceof Error
+                                ? agentsError.message
+                                : String(agentsError),
+                          })
+                        : t("emptyDescription", { ns: "chat" })}
                     </p>
                   </div>
                 </ConversationEmptyState>
@@ -1898,10 +1909,11 @@ function MainAgentSurface({
 }
 
 function HydratingPlaceholder() {
+  const { t } = useTranslation("chat");
   return (
     <div className="flex flex-1 items-center justify-center gap-2 text-muted-foreground text-sm">
       <Loader2Icon className="size-4 animate-spin" />
-      Loading conversation…
+      {t("loadingConversation")}
     </div>
   );
 }
@@ -1921,19 +1933,20 @@ function ConversationLoadError({
   conversationId: string;
   error: Error;
 }) {
+  const { t } = useTranslation("chat");
   const navigate = useNavigate();
   return (
     <div className="flex flex-1 items-center justify-center px-6">
       <div className="flex max-w-md flex-col items-center gap-3 text-center">
-        <h1 className="font-medium text-foreground text-lg">Conversation not found</h1>
+        <h1 className="font-medium text-foreground text-lg">{t("conversationNotFound")}</h1>
         <p className="text-muted-foreground text-sm">
-          Couldn't load{" "}
+          {t("conversationLoadFailed")}{" "}
           <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{conversationId}</code>
           : {error.message}
         </p>
         {/* Route to the home composer ("/"), which owns session creation. */}
         <Button type="button" variant="outline" onClick={() => navigate("/")}>
-          Start a new chat
+          {t("startNewChat")}
         </Button>
       </div>
     </div>
@@ -1972,6 +1985,7 @@ function UserMessageNavConnected(props: React.ComponentProps<typeof UserMessageN
  *   the "Working…" tab would otherwise stack on top of it.
  */
 function WorkingStatusPin({ show, suppress = false }: { show: boolean; suppress?: boolean }) {
+  const { t } = useTranslation("chat");
   const { isAtBottom } = useStickToBottomContext();
   const bgCount = useChatStore((s) => s.backgroundTaskCount);
   const tick = useWorkingLabelTick();
@@ -1993,7 +2007,7 @@ function WorkingStatusPin({ show, suppress = false }: { show: boolean; suppress?
           the agent is working, so it announces whether the tab is painted
           (scrolled up) or collapsed (at the bottom, where the inline shimmer
           owns the visuals). */}
-      {show && <span className="sr-only">Working…</span>}
+      {show && <span className="sr-only">{t("working")}</span>}
       {/* Mirror the conversation content column (mx-auto + px-6 + width) so the
           tab's left edge lines up with the inline shimmer's. */}
       <div className={cn("mx-auto w-full px-6", CHAT_COLUMN_WIDTH)}>
@@ -2012,7 +2026,7 @@ function WorkingStatusPin({ show, suppress = false }: { show: boolean; suppress?
           >
             <OttoIcon className="otto-working h-4 w-auto shrink-0" />
             <Shimmer className="text-xs font-mono" duration={1.5}>
-              {workingIndicatorLabel(bgCount, tick)}
+              {localizedWorkingIndicatorLabel(t, bgCount, tick)}
             </Shimmer>
           </div>
         )}
@@ -2109,14 +2123,15 @@ function PreserveScrollDistanceOnResize() {
   return null;
 }
 
-function HistoryLoadingIndicator() {
+export function HistoryLoadingIndicator() {
+  const { t } = useTranslation("chat");
   return (
     <div
       role="status"
       className="flex items-center justify-center gap-2 py-2 text-muted-foreground text-sm"
     >
       <Loader2Icon className="size-4 animate-spin" aria-hidden />
-      Loading earlier messages…
+      {t("historyLoading")}
     </div>
   );
 }
@@ -2414,6 +2429,7 @@ export function JumpToTopButton({
   scroller: ConversationScroller | null;
   hasMoreHistory: boolean;
 }) {
+  const { t } = useTranslation("chat");
   const [atTop, setAtTop] = useState(true);
   const [hovering, setHovering] = useState(false);
   const [jumping, setJumping] = useState(false);
@@ -2552,7 +2568,7 @@ export function JumpToTopButton({
         size="sm"
         disabled={jumping}
         onClick={() => void jumpToTop()}
-        aria-label="Jump to the first message"
+        aria-label={t("jumpToFirstMessage")}
         // When hidden (opacity-0 / pointer-events-none) keep the button out of
         // the tab order and the accessibility tree so it can't take focus or be
         // announced while invisible.
@@ -2576,7 +2592,7 @@ export function JumpToTopButton({
         ) : (
           <ArrowUpIcon className="size-3.5" aria-hidden />
         )}
-        {jumping ? "Loading history…" : "Jump to top"}
+        {jumping ? t("loadingHistory") : t("jumpToTop")}
       </Button>
     </div>
   );
@@ -2610,6 +2626,16 @@ export const WORKING_MESSAGES = [
   "Brewing…",
 ] as const;
 
+function localizedWorkingIndicatorLabel(
+  t: ReturnType<typeof useTranslation>["t"],
+  bgCount: number,
+  tick = 0,
+): string {
+  if (bgCount > 0) return t("backgroundTask", { count: bgCount });
+  const labels = t("workingLabels", { returnObjects: true }) as string[];
+  return labels[tick % labels.length] ?? t("working");
+}
+
 /**
  * The label shown next to the working spinner. When background shells outlive
  * the turn (`bgCount > 0`) it names how many are still running (the tick is
@@ -2626,9 +2652,10 @@ export function workingIndicatorLabel(bgCount: number, tick = 0): string {
 }
 
 function WorkingIndicator() {
+  const { t } = useTranslation("chat");
   const bgCount = useChatStore((s) => s.backgroundTaskCount);
   const tick = useWorkingLabelTick();
-  const label = workingIndicatorLabel(bgCount, tick);
+  const label = localizedWorkingIndicatorLabel(t, bgCount, tick);
   return (
     <Message from="assistant" data-testid="working-indicator" aria-hidden="true">
       <MessageContent>
@@ -2691,6 +2718,7 @@ const SANDBOX_STAGE_LABELS: Record<string, string | undefined> = {
  * one consistent line.
  */
 export function SandboxFailedIndicator({ status }: { status: SandboxStatus }) {
+  const { t } = useTranslation("chat");
   return (
     <div
       data-testid="sandbox-failed-indicator"
@@ -2701,7 +2729,10 @@ export function SandboxFailedIndicator({ status }: { status: SandboxStatus }) {
       )}
     >
       <AlertTriangleIcon className="size-3.5 shrink-0" aria-hidden />
-      <span>Sandbox launch failed{status.error ? `: ${status.error}` : ""}</span>
+      <span>
+        {t("sandboxLaunchFailed")}
+        {status.error ? `: ${status.error}` : ""}
+      </span>
     </div>
   );
 }
@@ -2717,6 +2748,7 @@ export function ConnectionIndicator({
   // the native iOS bar so it doesn't float over an opened sidebar/panel.
   surfaceFrontmost?: boolean;
 }) {
+  const { t } = useTranslation("chat");
   const terminalFirst = useTerminalFirst();
   const keyboardVisible = useIOSNativeKeyboardVisible(
     terminalFirst?.isTerminalFirst === true,
@@ -2781,8 +2813,8 @@ export function ConnectionIndicator({
         <WifiOffIcon className="size-3.5 shrink-0" />
         <span>
           {liveness.kind === "host_offline"
-            ? "Host is offline — click to reconnect"
-            : "Agent disconnected — click to reconnect"}
+            ? t("hostOfflineReconnect")
+            : t("agentDisconnectedReconnect")}
         </span>
       </button>
     );
@@ -2836,7 +2868,7 @@ export function ConnectionIndicator({
         )}
       >
         <Loader2Icon className="size-3.5 shrink-0 animate-spin" aria-hidden />
-        <span>Connecting…</span>
+        <span>{t("connecting")}</span>
       </div>
     );
   }
@@ -2866,6 +2898,7 @@ export function ConnectionIndicator({
  * there).
  */
 export function RunnerStartingIndicator({ variant }: { variant: "hero" | "row" }) {
+  const { t } = useTranslation("chat");
   const terminalFirst = useTerminalFirst();
   const sandboxStatus = useChatStore((s) => s.sandboxStatus);
   // `ready` never reaches the store (cleared) and `failed` renders the
@@ -2885,7 +2918,9 @@ export function RunnerStartingIndicator({ variant }: { variant: "hero" | "row" }
   if (sandboxLabel === undefined && !terminalSpinUp) {
     return null;
   }
-  const line = sandboxLabel !== undefined ? `${sandboxLabel}…` : "Starting up…";
+  const localizedSandboxLabel =
+    sandboxLabel !== undefined ? t(`sandboxStages.${sandboxStatus?.stage}`) : undefined;
+  const line = localizedSandboxLabel !== undefined ? `${localizedSandboxLabel}…` : t("startingUp");
   // role=status + aria-live so assistive tech announces the transient wait;
   // the spinner glyph itself is decorative (aria-hidden).
   if (variant === "hero") {
@@ -2895,11 +2930,9 @@ export function RunnerStartingIndicator({ variant }: { variant: "hero" | "row" }
         role="status"
         aria-live="polite"
         icon={<Loader2Icon className="size-7 animate-spin" aria-hidden />}
-        title={sandboxLabel !== undefined ? `${sandboxLabel}…` : "Starting up…"}
+        title={localizedSandboxLabel !== undefined ? `${localizedSandboxLabel}…` : t("startingUp")}
         description={
-          sandboxLabel !== undefined
-            ? "Setting up your sandbox — this can take a minute."
-            : "This can take a few seconds."
+          sandboxLabel !== undefined ? t("sandboxStartingDescription") : t("startingDescription")
         }
       />
     );
@@ -2952,10 +2985,13 @@ export function mcpStartingLine(starting: string[], total: number): string {
  * @param names Failed or cancelled server names, sorted.
  * @returns e.g. `"a, b, c, d, e, f, g, h, +12 more"`.
  */
-export function mcpSettledNames(names: string[]): string {
+export function mcpSettledNames(
+  names: string[],
+  formatMore: (count: number) => string = (count) => `+${count} more`,
+): string {
   if (names.length <= MCP_SETTLED_NAMES_SHOWN) return names.join(", ");
   const shown = names.slice(0, MCP_SETTLED_NAMES_SHOWN);
-  return `${shown.join(", ")}, +${names.length - MCP_SETTLED_NAMES_SHOWN} more`;
+  return `${shown.join(", ")}, ${formatMore(names.length - MCP_SETTLED_NAMES_SHOWN)}`;
 }
 
 /**
@@ -2968,11 +3004,13 @@ export function mcpSettledNames(names: string[]): string {
  * startup state (an all-ready map is cleared by the store handler).
  */
 export function McpStartupIndicator() {
+  const { t } = useTranslation("chat");
   const mcpStartup = useChatStore((s) => s.mcpStartup);
   if (mcpStartup === null) return null;
   const names = Object.keys(mcpStartup).sort();
   const starting = names.filter((name) => mcpStartup[name].status === "starting");
   if (starting.length > 0) {
+    const formatMore = (count: number) => t("mcpMoreNames", { count });
     return (
       <Message
         from="assistant"
@@ -2983,7 +3021,13 @@ export function McpStartupIndicator() {
         <MessageContent>
           <span className="flex items-center gap-2 text-muted-foreground text-sm">
             <Loader2Icon className="size-4 shrink-0 animate-spin" aria-hidden />
-            {mcpStartingLine(starting, names.length)}
+            {names.length === 1 && starting.length === 1
+              ? t("mcpStartingServer", { name: starting[0] })
+              : t("mcpStartingServers", {
+                  ready: names.length - starting.length,
+                  total: names.length,
+                  names: mcpSettledNames(starting, formatMore),
+                })}
           </span>
         </MessageContent>
       </Message>
@@ -2993,14 +3037,19 @@ export function McpStartupIndicator() {
   const cancelled = names.filter((name) => mcpStartup[name].status === "cancelled");
   if (failed.length === 0 && cancelled.length === 0) return null;
   const parts: string[] = [];
-  if (failed.length > 0) parts.push(`failed: ${mcpSettledNames(failed)}`);
-  if (cancelled.length > 0) parts.push(`cancelled: ${mcpSettledNames(cancelled)}`);
+  const formatMore = (count: number) => t("mcpMoreNames", { count });
+  if (failed.length > 0) {
+    parts.push(t("mcpFailed", { names: mcpSettledNames(failed, formatMore) }));
+  }
+  if (cancelled.length > 0) {
+    parts.push(t("mcpCancelled", { names: mcpSettledNames(cancelled, formatMore) }));
+  }
   return (
     <Message from="assistant" data-testid="mcp-startup-indicator" role="status">
       <MessageContent>
         <span className="flex items-center gap-2 text-muted-foreground text-sm">
           <AlertTriangleIcon className="size-4 shrink-0" aria-hidden />
-          {`MCP startup incomplete (${parts.join("; ")})`}
+          {t("mcpStartupIncomplete", { details: parts.join("; ") })}
         </span>
       </MessageContent>
     </Message>
@@ -3071,6 +3120,7 @@ function ConnectedTerminalFirstPill({
 }: {
   ctx: NonNullable<ReturnType<typeof useTerminalFirst>>;
 }) {
+  const { t } = useTranslation("chat");
   // `terminalStartingUp` is the single loading signal — AppShell folds the
   // launch (liveness `starting`) and PTY-creation (`terminalPending`)
   // sources into it. The button is disabled whenever no terminal is
@@ -3087,14 +3137,14 @@ function ConnectedTerminalFirstPill({
     >
       <div
         role="group"
-        aria-label="View mode"
+        aria-label={t("viewMode")}
         className="terminal-first-switcher flex items-center gap-1 rounded-full border border-border bg-card/90 p-1 text-xs shadow-sm"
       >
         <div className="flex items-center gap-0.5">
           <button
             type="button"
             aria-pressed={view === "chat"}
-            aria-label="Chat"
+            aria-label={t("chatTab")}
             onClick={() => setView("chat")}
             className={cn(
               "terminal-first-switcher-option flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 transition-colors",
@@ -3104,14 +3154,14 @@ function ConnectedTerminalFirstPill({
             )}
           >
             <MessageSquareIcon className="size-3.5 shrink-0" />
-            <span>Chat</span>
+            <span>{t("chatTab")}</span>
           </button>
           <button
             type="button"
             aria-pressed={view === "terminal"}
-            aria-label="Terminal"
+            aria-label={t("terminalTab")}
             disabled={!terminalsAvailable}
-            title={terminalStartingUp ? "Terminal is starting up…" : undefined}
+            title={terminalStartingUp ? t("terminalStarting") : undefined}
             onClick={() => setView("terminal")}
             className={cn(
               "terminal-first-switcher-option flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50",
@@ -3125,7 +3175,7 @@ function ConnectedTerminalFirstPill({
             ) : (
               <TerminalIcon className="size-3.5 shrink-0" />
             )}
-            <span>Terminal</span>
+            <span>{t("terminalTab")}</span>
           </button>
         </div>
       </div>
@@ -3145,6 +3195,7 @@ function isSystemBubble(bubble: Bubble): boolean {
 }
 
 function CompactionLoadingIndicator() {
+  const { t } = useTranslation("chat");
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(performance.now());
 
@@ -3160,7 +3211,7 @@ function CompactionLoadingIndicator() {
       <MessageContent>
         <div className="flex items-center gap-2 text-xs font-mono">
           <Shimmer as="span" duration={1.5}>
-            Compacting conversation…
+            {t("compacting")}
           </Shimmer>
           {elapsed > 0 && <span className="text-muted-foreground">({elapsed}s)</span>}
         </div>
@@ -3219,6 +3270,7 @@ function useCopyMessage(getText: () => string): {
   isCopied: boolean;
   handleCopy: () => void;
 } {
+  const { t } = useTranslation("chat");
   const [isCopied, setIsCopied] = useState(false);
   const timeoutRef = useRef<number>(0);
   const isMobile = useIsMobileViewport();
@@ -3235,19 +3287,20 @@ function useCopyMessage(getText: () => string): {
         window.clearTimeout(timeoutRef.current);
         timeoutRef.current = window.setTimeout(() => setIsCopied(false), 2000);
         if (isMobile) {
-          showToast(<span className="text-sm">Copied to clipboard</span>, { duration: 1500 });
+          showToast(<span className="text-sm">{t("copied")}</span>, { duration: 1500 });
         }
       },
       (error) => {
         console.warn("Failed to copy message", error);
       },
     );
-  }, [getText, isCopied, isMobile]);
+  }, [getText, isCopied, isMobile, t]);
 
   return { isCopied, handleCopy };
 }
 
 function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
+  const { t } = useTranslation("chat");
   const sessionId = useChatStore((s) => s.conversationId);
   // Author labels only matter once the session is shared with someone else.
   const isSessionShared = useContext(SessionSharedContext);
@@ -3405,7 +3458,7 @@ function UserBubble({ bubble }: { bubble: Extract<Bubble, { kind: "user" }> }) {
       </div>
       {text && (
         <MessageActions className="mt-1 ml-auto opacity-40 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
-          <MessageAction tooltip="Copy" onClick={handleCopy}>
+          <MessageAction tooltip={t("copy")} onClick={handleCopy}>
             {isCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
           </MessageAction>
         </MessageActions>
@@ -3421,6 +3474,7 @@ function AssistantBubble({
   bubble: Extract<Bubble, { kind: "assistant" }>;
   canApprove: boolean;
 }) {
+  const { t } = useTranslation("chat");
   // The walker only emits an assistant bubble when at least one
   // assistant-side block exists, so `items` is non-empty here in the
   // common case. The "Working…" shimmer for the empty-items / streaming
@@ -3463,12 +3517,12 @@ function AssistantBubble({
             data-testid="assistant-interrupted-indicator"
           >
             <XIcon className="size-3" aria-hidden="true" />
-            <span>Interrupted</span>
+            <span>{t("interrupted")}</span>
           </p>
         )}
         {markdownText && (
           <MessageActions className="mt-1 opacity-40 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-            <MessageAction tooltip="Copy" onClick={handleCopy}>
+            <MessageAction tooltip={t("copy")} onClick={handleCopy}>
               {isCopied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
             </MessageAction>
             {/* Fork from this response: clone the session with history
@@ -3477,7 +3531,7 @@ function AssistantBubble({
                 the session can't be forked (sub-agent / isolated mount). */}
             {forkDialog?.canFork && bubble.lifecycle !== "streaming" && (
               <MessageAction
-                tooltip="Fork from here"
+                tooltip={t("forkFromHere")}
                 data-testid="fork-from-response"
                 onClick={() => forkDialog.openForkDialog({ upToResponseId: bubble.responseId })}
               >
@@ -3489,7 +3543,7 @@ function AssistantBubble({
       </Message>
 
       {bubble.lifecycle === "failed" && (
-        <p className="text-destructive text-xs">Error: {bubble.error}</p>
+        <p className="text-destructive text-xs">{t("errorPrefix", { error: bubble.error })}</p>
       )}
     </>
   );
@@ -3674,6 +3728,7 @@ const RING_CIRCUMFERENCE = 2 * Math.PI * 5.5;
 
 /** Circular progress ring showing how much context window is used, with the used percentage beside it. */
 function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tokensUsed: number }) {
+  const { t } = useTranslation("chat");
   const pct = Math.min(tokensUsed / contextWindow, 1);
   // Arc, %, label, and tooltip all encode context USED: a fresh session
   // shows an empty ring at 0% and the ring fills as context is consumed.
@@ -3688,7 +3743,7 @@ function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tok
       <TooltipTrigger asChild>
         <span
           className={cn("flex items-center gap-1.5", color)}
-          aria-label={`${usedPct}% of context used`}
+          aria-label={t("contextUsed", { percent: usedPct })}
         >
           <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
             {/* Track */}
@@ -3713,7 +3768,7 @@ function ContextRing({ contextWindow, tokensUsed }: { contextWindow: number; tok
         </span>
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-44 text-center text-xs">
-        <p className="tabular-nums">{usedPct}% of context used.</p>
+        <p className="tabular-nums">{t("contextUsedTooltip", { percent: usedPct })}</p>
       </TooltipContent>
     </Tooltip>
   );
@@ -3824,6 +3879,7 @@ function ComposerStatusLine({
    */
   onHostReconnect?: () => void;
 }) {
+  const { t } = useTranslation("chat");
   const conversationId = useChatStore((s) => s.conversationId);
   const contextWindow = useChatStore((s) => s.contextWindow);
   const tokensUsed = useChatStore((s) => s.tokensUsed);
@@ -3904,7 +3960,7 @@ function ComposerStatusLine({
             className="inline-flex items-center gap-1 text-xs font-medium text-foreground"
           >
             <FileTextIcon className="size-3.5 shrink-0" />
-            <span>Plan mode</span>
+            <span>{t("planMode")}</span>
           </span>
         )}
         {showGoal && goal && <GoalStatusPill goal={goal} />}
@@ -3934,6 +3990,7 @@ function ComposerStatusLine({
  */
 export function subAgentComposerLabel(
   session: Pick<Session, "parentSessionId" | "title" | "subAgentName" | "agentName"> | null,
+  fallbackLabel = "sub-agent",
 ): string | null {
   if (!session || session.parentSessionId == null) return null;
   // Strip the user-added "ui:" sentinel so its "agent:name" suffix reads
@@ -3947,7 +4004,7 @@ export function subAgentComposerLabel(
   // Last-resort display string: a sub-agent session always has a seeded
   // title in practice, so the final "sub-agent" only guards a degenerate
   // all-null snapshot (the tray still needs something to render).
-  return title ?? session.subAgentName ?? session.agentName ?? "sub-agent";
+  return title ?? session.subAgentName ?? session.agentName ?? fallbackLabel;
 }
 
 /**
@@ -3967,6 +4024,8 @@ export function subAgentComposerLabel(
  *   ``"check-account-eligibility"`` (from ``subAgentComposerLabel``).
  */
 function SubagentComposerTray({ label }: { label: string }) {
+  const { t } = useTranslation("chat");
+
   return (
     <div
       data-testid="composer-subagent-tray"
@@ -3978,7 +4037,7 @@ function SubagentComposerTray({ label }: { label: string }) {
       <BotIcon className="size-3.5 shrink-0" aria-hidden="true" />
       {/* truncate so a long sub-agent name never wraps the tray to two rows */}
       <span className="min-w-0 truncate">
-        Chatting with sub-agent <strong className="font-semibold">{label}</strong>
+        {t("chattingWithSubAgent")} <strong className="font-semibold">{label}</strong>
       </span>
     </div>
   );
@@ -4022,6 +4081,7 @@ export function Composer({
   costRoutingEligible = false,
   subAgentLabel = null,
 }: ComposerProps) {
+  const { t } = useTranslation("chat");
   const [value, setValue] = useState("");
   const dictation = useDictationInsert(setValue);
   const [files, setFiles] = useState<File[]>([]);
@@ -4251,7 +4311,9 @@ export function Composer({
       await useChatStore.getState().setCodexPlanMode(!codexPlanMode);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      setCommandError(`Could not ${codexPlanMode ? "exit" : "enter"} Plan mode: ${message}`);
+      setCommandError(
+        t(codexPlanMode ? "planModeExitFailed" : "planModeEnterFailed", { error: message }),
+      );
     } finally {
       setPlanModeBusy(false);
     }
@@ -4378,7 +4440,7 @@ export function Composer({
     switch (cmd) {
       case "/compact":
         if (!showCompact) {
-          setCommandError("/compact is not supported for this agent type");
+          setCommandError(t("commandCompactUnsupported"));
           return true;
         }
         dirtyRef.current = true;
@@ -4388,14 +4450,18 @@ export function Composer({
           .getState()
           .compact()
           .catch((err: unknown) => {
-            setCommandError(err instanceof Error ? err.message : "Compact failed");
+            setCommandError(
+              t("commandCompactFailed", {
+                error: err instanceof Error ? err.message : t("unknownError"),
+              }),
+            );
           });
         return true;
       case "/effort": {
         if (!showEffort) return false;
         const valid = [...effortLevels, "default"];
         if (!arg || !valid.includes(arg.toLowerCase())) {
-          setCommandError(`Usage: /effort ${valid.join(" | ")}`);
+          setCommandError(t("commandEffortUsage", { levels: valid.join(" | ") }));
           return true;
         }
         const level = arg.toLowerCase() === "default" ? null : arg.toLowerCase();
@@ -4406,7 +4472,11 @@ export function Composer({
           .getState()
           .setEffort(level)
           .catch((err: unknown) => {
-            setCommandError(err instanceof Error ? err.message : "Failed to set effort");
+            setCommandError(
+              t("commandEffortFailed", {
+                error: err instanceof Error ? err.message : t("unknownError"),
+              }),
+            );
           });
         return true;
       }
@@ -4420,8 +4490,8 @@ export function Composer({
           const { sessionModelOverride, llmModel } = useChatStore.getState();
           const current = sessionModelOverride
             ? `${sessionModelOverride} (override)`
-            : (llmModel ?? "agent default");
-          setCommandError(`Model: ${current}\nUsage: /model <name> · /model default to reset`);
+            : (llmModel ?? t("commandModelDefault"));
+          setCommandError(t("commandModelInfo", { model: current }));
           return true;
         }
         // ``default | off | reset`` clear the override (REPL clear aliases);
@@ -4437,7 +4507,11 @@ export function Composer({
           .getState()
           .setModel(clear ? null : target)
           .catch((err: unknown) => {
-            setCommandError(err instanceof Error ? err.message : "Failed to set model");
+            setCommandError(
+              t("commandModelFailed", {
+                error: err instanceof Error ? err.message : t("unknownError"),
+              }),
+            );
           });
         return true;
       }
@@ -4445,8 +4519,11 @@ export function Composer({
         const state = useChatStore.getState();
         const { contextWindow, llmModel, sessionModelOverride, tokensUsed, blocks } = state;
         const lines: string[] = [];
-        if (sessionModelOverride) lines.push(`Model: ${sessionModelOverride} (override)`);
-        else if (llmModel) lines.push(`Model: ${llmModel}`);
+        if (sessionModelOverride) {
+          lines.push(t("contextModelOverride", { model: sessionModelOverride }));
+        } else if (llmModel) {
+          lines.push(t("contextModel", { model: llmModel }));
+        }
         // contextWindow > 0 keeps a zero window out of the division (0/0 → "NaN%").
         if (tokensUsed != null && contextWindow != null && contextWindow > 0) {
           const pct = Math.min(tokensUsed / contextWindow, 1);
@@ -4454,16 +4531,20 @@ export function Composer({
           const bar = "█".repeat(filled) + "░".repeat(20 - filled);
           const pctStr = (pct * 100).toFixed(1);
           lines.push(
-            `${tokensUsed.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${pctStr}%)`,
+            t("contextUsage", {
+              used: tokensUsed.toLocaleString(),
+              limit: contextWindow.toLocaleString(),
+              percent: pctStr,
+            }),
           );
           lines.push(bar);
         } else if (tokensUsed != null) {
-          lines.push(`${tokensUsed.toLocaleString()} tokens`);
-          lines.push("(Context window size unknown)");
+          lines.push(t("contextUsageOnly", { used: tokensUsed.toLocaleString() }));
+          lines.push(t("contextWindowUnknown"));
         } else {
-          lines.push("No usage data yet — send a message first.");
+          lines.push(t("contextUsageUnavailable"));
         }
-        lines.push(`Items in context: ${blocks.length}`);
+        lines.push(t("contextItems", { count: blocks.length }));
         setCommandError(lines.join("\n"));
         return true;
       }
@@ -4474,7 +4555,10 @@ export function Composer({
       }
       default:
         setCommandError(
-          `Unknown command: ${cmd}. Available: ${Object.keys(slashCommands).join(", ")}`,
+          t("unknownCommand", {
+            command: cmd,
+            available: Object.keys(slashCommands).join(", "),
+          }),
         );
         return false;
     }
@@ -4863,7 +4947,7 @@ export function Composer({
       >
         {isDragActive && (
           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-card/80">
-            <span className="text-sm font-medium text-ring">Drop files here</span>
+            <span className="text-sm font-medium text-ring">{t("dropFiles")}</span>
           </div>
         )}
         {/* Slash-command suggestions — floats above the composer box */}
@@ -4902,7 +4986,7 @@ export function Composer({
                   type="button"
                   onClick={() => onRemoveQuote(i)}
                   className="mt-0.5 shrink-0 rounded-full text-muted-foreground hover:text-foreground"
-                  aria-label="Remove quote"
+                  aria-label={t("removeQuote")}
                 >
                   <XIcon className="size-3.5" />
                 </button>
@@ -4979,25 +5063,25 @@ export function Composer({
               // Keep the overlay's scroll position locked to the textarea's.
               if (backdropRef.current) backdropRef.current.scrollTop = e.currentTarget.scrollTop;
             }}
-            aria-label="Message the agent"
+            aria-label={t("messageAgent")}
             placeholder={
               readOnlyReason !== null
                 ? readOnlyReason
                 : isReadOnly
-                  ? "You have read-only access to this session"
+                  ? t("readOnlyAccess")
                   : unreachable
-                    ? "Session offline — reconnect below to continue"
+                    ? t("sessionOffline")
                     : hasPendingElicitation
-                      ? "Respond to the pending request above to continue"
+                      ? t("respondPending")
                       : disabled
-                        ? "Waiting for agents…"
+                        ? t("waitingForAgents")
                         : isStreaming
-                          ? "Send a follow-up (queued) — Esc to stop"
+                          ? t("followUpQueued")
                           : sandboxAsleepHint
-                            ? "Current session's host is offline. Next message will resume the sandbox host which can take minutes"
+                            ? t("sandboxAsleep")
                             : reconnectHint
-                              ? "Send a message to reconnect this session"
-                              : "Ask the agent anything…"
+                              ? t("reconnectSession")
+                              : t("askAgent")
             }
             rows={1}
             disabled={disabled || isReadOnly || unreachable || hasPendingElicitation}
@@ -5028,7 +5112,7 @@ export function Composer({
                   type="button"
                   onClick={() => removeFile(i)}
                   className="ml-0.5 rounded-full hover:text-foreground"
-                  aria-label={`Remove ${file.name || "image.png"}`}
+                  aria-label={t("removeAttachment", { name: file.name || "image.png" })}
                 >
                   <XIcon className="size-3" />
                 </button>
@@ -5069,7 +5153,7 @@ export function Composer({
                   type="button"
                   onClick={() => removeMentionedItem(i)}
                   className="ml-0.5 rounded-full hover:text-foreground"
-                  aria-label={`Remove ${item.path}`}
+                  aria-label={t("removeAttachment", { name: item.path })}
                 >
                   <XIcon className="size-3" />
                 </button>
@@ -5093,10 +5177,10 @@ export function Composer({
               className="size-9 md:size-8"
               disabled={disabled || isReadOnly || hasPendingElicitation}
               onClick={() => fileInputRef.current?.click()}
-              title="Attach files"
+              title={t("attachFiles")}
             >
               <PaperclipIcon className="size-4" />
-              <span className="sr-only">Attach files</span>
+              <span className="sr-only">{t("attachFiles")}</span>
             </Button>
             <ComposerMicButton
               enableHotkey
@@ -5140,7 +5224,7 @@ export function Composer({
                     )}
                     disabled={isReadOnly || planModeBusy}
                     aria-pressed={codexPlanMode}
-                    aria-label={codexPlanMode ? "Exit Plan mode" : "Enter Plan mode"}
+                    aria-label={codexPlanMode ? t("exitPlanMode") : t("enterPlanMode")}
                     data-testid="codex-plan-mode-toggle"
                     data-active={codexPlanMode ? "true" : undefined}
                     onClick={() => void toggleCodexPlanMode()}
@@ -5150,11 +5234,11 @@ export function Composer({
                     ) : (
                       <FileTextIcon className="size-3.5" />
                     )}
-                    <span>Plan</span>
+                    <span>{t("plan")}</span>
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {codexPlanMode ? "Exit Plan mode" : "Enter Plan mode"}
+                  {codexPlanMode ? t("exitPlanMode") : t("enterPlanMode")}
                 </TooltipContent>
               </Tooltip>
             )}
@@ -5227,15 +5311,15 @@ export function Composer({
                   ? isReadOnly
                   : !hasDraft || disabled || isReadOnly || hasPendingElicitation
               }
-              title={showInterruptButton ? "Interrupt" : "Send"}
-              aria-label={showInterruptButton ? "Interrupt" : "Send"}
+              title={showInterruptButton ? t("interrupt") : t("send")}
+              aria-label={showInterruptButton ? t("interrupt") : t("send")}
             >
               {showInterruptButton ? (
                 <SquareIcon className="size-4 fill-current" />
               ) : (
                 <ArrowUpIcon className="size-4" />
               )}
-              <span className="sr-only">{showInterruptButton ? "Interrupt" : "Send"}</span>
+              <span className="sr-only">{showInterruptButton ? t("interrupt") : t("send")}</span>
             </Button>
           </div>
         </div>
@@ -5445,17 +5529,19 @@ type LabelSource = { labels?: Record<string, string | null> | null } | null | un
  * @returns Placeholder text for the composer when the session is
  *   structurally read-only, or ``null`` when normal permissions apply.
  */
+export type ReadOnlyReasonCode = "closedSubAgent" | "readOnlySubAgent";
+
 export function readOnlyReasonForSessionLabels(
   activeSession: LabelSource,
   activeConv: LabelSource,
-): string | null {
+): ReadOnlyReasonCode | null {
   const closed =
     activeSession?.labels?.["omnigent.closed"] ?? activeConv?.labels?.["omnigent.closed"];
-  if (closed === "true") return "This sub-agent session is closed";
+  if (closed === "true") return "closedSubAgent";
   const wrapper =
     activeSession?.labels?.["omnigent.wrapper"] ?? activeConv?.labels?.["omnigent.wrapper"];
   if (wrapper === "claude-code-native-ui-subagent") {
-    return "Claude Code sub-agents are read-only";
+    return "readOnlySubAgent";
   }
   return null;
 }
@@ -5631,6 +5717,7 @@ function SessionConfigModal({
   codexModelOptions: readonly NativeModelOption[];
   costRoutingEligible: boolean;
 }) {
+  const { t } = useTranslation("models");
   const selectedEffort = useChatStore((s) => s.selectedEffort);
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
   const { llmModel, usesServerModelOptions, modelOptions, pickerSelectedModel } =
@@ -5738,10 +5825,8 @@ function SessionConfigModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md" data-testid="composer-config-modal">
         <DialogHeader>
-          <DialogTitle>Configure {harnessLabel ?? "session"}</DialogTitle>
-          <DialogDescription className="sr-only">
-            Change how this session runs. Model, effort, and smart routing apply to the next turn.
-          </DialogDescription>
+          <DialogTitle>{t("sessionConfigure", { name: harnessLabel ?? t("title") })}</DialogTitle>
+          <DialogDescription className="sr-only">{t("sessionDescription")}</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-5 py-1">
@@ -5749,13 +5834,13 @@ function SessionConfigModal({
           no Model dropdown to fold it into (e.g. Polly). Agents that render a
           Model dropdown (Claude, Codex, …) offer it as a Model option below. */}
           {costRoutingEligible && !showModels && (
-            <ConfigRow label="Smart Routing" description="Auto-pick the model per turn by task">
+            <ConfigRow label={t("smartRouting")} description={t("autoPick")}>
               <div className="flex h-8 items-center justify-end">
                 <Switch
                   size="sm"
                   checked={draftRoutingOn}
                   data-testid="composer-config-smart-routing"
-                  aria-label="Smart Routing"
+                  aria-label={t("smartRoutingAria")}
                   onCheckedChange={(next) => {
                     setDraftRoutingOn(next);
                     // Routing picks the model + effort per turn, so an explicit
@@ -5767,20 +5852,20 @@ function SessionConfigModal({
             </ConfigRow>
           )}
           {showModels && (
-            <ConfigRow label="Model" description="Underlying LLM">
+            <ConfigRow label={t("model")} description={t("underlyingLlm")}>
               <Select value={modelValue} onValueChange={onModelChange}>
                 <SelectTrigger
                   className="w-full"
                   data-testid="composer-config-model"
-                  aria-label="Model"
+                  aria-label={t("model")}
                 >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent position="popper" align="start">
                   {costRoutingEligible && (
-                    <SelectItem value={MODEL_SELECT_SMART}>Smart Routing</SelectItem>
+                    <SelectItem value={MODEL_SELECT_SMART}>{t("smartRouting")}</SelectItem>
                   )}
-                  <SelectItem value={MODEL_SELECT_DEFAULT}>Default</SelectItem>
+                  <SelectItem value={MODEL_SELECT_DEFAULT}>{t("reasoning.default")}</SelectItem>
                   {modelSelectOptions.map((m) => (
                     <SelectItem
                       key={m.id}
@@ -5796,7 +5881,7 @@ function SessionConfigModal({
             </ConfigRow>
           )}
           {showEffort && (
-            <ConfigRow label="Effort" description="Reasoning depth vs. speed">
+            <ConfigRow label={t("effort")} description={t("reasoningDepth")}>
               <Select
                 value={draftEffort ?? EFFORT_SELECT_NONE}
                 onValueChange={(v) => setDraftEffort(v === EFFORT_SELECT_NONE ? null : v)}
@@ -5807,12 +5892,12 @@ function SessionConfigModal({
                 <SelectTrigger
                   className="w-full"
                   data-testid="composer-config-effort"
-                  aria-label="Effort"
+                  aria-label={t("effort")}
                 >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent position="popper" align="start">
-                  <SelectItem value={EFFORT_SELECT_NONE}>Default</SelectItem>
+                  <SelectItem value={EFFORT_SELECT_NONE}>{t("reasoning.default")}</SelectItem>
                   {effortLevels.map((level) => (
                     <SelectItem
                       key={level}
@@ -5822,7 +5907,11 @@ function SessionConfigModal({
                       // other harnesses title-case for display.
                       className={modelPickerKind === "codex" ? undefined : "capitalize"}
                     >
-                      {formatStatusEffortLabel(level, modelPickerKind === "codex") ?? level}
+                      {translateConfigOptionLabel(
+                        t,
+                        level,
+                        formatStatusEffortLabel(level, modelPickerKind === "codex") ?? level,
+                      )}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -5838,10 +5927,10 @@ function SessionConfigModal({
             onClick={() => onOpenChange(false)}
             data-testid="composer-config-cancel"
           >
-            Cancel
+            {t("cancel")}
           </Button>
           <Button type="button" onClick={save} data-testid="composer-config-save">
-            Save
+            {t("save")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -5880,6 +5969,7 @@ function ComposerConfigGear({
   disabled: boolean;
   openNonce?: number;
 }) {
+  const { t } = useTranslation("models");
   const [open, setOpen] = useState(false);
   const appliedOpenNonce = useRef(0);
   useEffect(() => {
@@ -5925,7 +6015,7 @@ function ComposerConfigGear({
                 setOpen(true);
               }}
               data-testid="composer-config-gear"
-              aria-label="Configure session"
+              aria-label={t("configureSessionAria")}
             >
               <SettingsIcon className="size-4" />
             </Button>
@@ -5980,26 +6070,36 @@ function useSessionConfigSummary({
   codexModelOptions: readonly NativeModelOption[];
   costRoutingEligible: boolean;
 }): { label: string; value: string }[] {
+  const { t } = useTranslation("models");
   const selectedEffort = useChatStore((s) => s.selectedEffort);
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
   const { modelLabel } = useResolvedComposerModel(modelPickerKind, codexModelOptions);
   const routingOn = costRoutingEligible && costControlModeOverride === "on";
 
   const rows: { label: string; value: string }[] = [];
-  if (harnessLabel) rows.push({ label: "Harness", value: harnessLabel });
+  if (harnessLabel) rows.push({ label: t("summaryHarness"), value: harnessLabel });
   if (showModels) {
-    rows.push({ label: "Model", value: routingOn ? "Smart Routing" : (modelLabel ?? "Default") });
+    rows.push({
+      label: t("model"),
+      value: routingOn ? t("smartRouting") : (modelLabel ?? t("reasoning.default")),
+    });
   }
   // Suppress Effort while Smart Routing is on: the router picks the model and
   // its effort per turn, so a pinned effort doesn't apply and would mislead.
   if (showEffort && !routingOn) {
-    const effortValue = formatStatusEffortLabel(selectedEffort, modelPickerKind === "codex");
-    rows.push({ label: "Effort", value: effortValue ?? "Default" });
+    const effortValue = selectedEffort
+      ? translateConfigOptionLabel(
+          t,
+          selectedEffort,
+          formatStatusEffortLabel(selectedEffort, modelPickerKind === "codex") ?? selectedEffort,
+        )
+      : null;
+    rows.push({ label: t("summaryEffort"), value: effortValue ?? t("reasoning.default") });
   }
   // Routable agents with no Model row surface Smart Routing as a standalone row;
   // those with a Model dropdown fold it into Model above (shown as the value).
   if (costRoutingEligible && !showModels && routingOn) {
-    rows.push({ label: "Smart Routing", value: "On" });
+    rows.push({ label: t("smartRouting"), value: t("configOptions.labels.auto") });
   }
   return rows;
 }
@@ -6130,6 +6230,7 @@ function ComposerModelEffortLabel({
   costRoutingEligible: boolean;
   harnessLabel: string | null;
 }) {
+  const { t } = useTranslation("models");
   const selectedEffort = useChatStore((s) => s.selectedEffort);
   const costControlModeOverride = useChatStore((s) => s.costControlModeOverride);
   const { modelLabel } = useResolvedComposerModel(modelPickerKind, codexModelOptions);
@@ -6142,13 +6243,20 @@ function ComposerModelEffortLabel({
         data-testid="composer-model-effort-label"
         className="min-w-0 shrink truncate px-1 text-xs tabular-nums text-muted-foreground"
       >
-        <span className="text-foreground">Smart Routing</span>
+        <span className="text-foreground">{t("smartRouting")}</span>
       </span>
     );
   }
   const effortLabel =
     showEffort && selectedEffort
-      ? formatStatusEffortLabel(selectedEffort, modelPickerKind === "codex")
+      ? (() => {
+          const key = selectedEffort.toLowerCase();
+          return translateConfigOptionLabel(
+            t,
+            key,
+            formatStatusEffortLabel(selectedEffort, modelPickerKind === "codex") ?? selectedEffort,
+          );
+        })()
       : null;
   // SDK/bundle sessions (no native picker) still surface their resolved model
   // in the label even though the gear modal has no Model dropdown for them —
