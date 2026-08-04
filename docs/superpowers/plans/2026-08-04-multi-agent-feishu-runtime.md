@@ -1,5 +1,12 @@
 # Multi-Agent Feishu Runtime Implementation Plan
 
+> **Architecture amendment:** Provider-specific Feishu code is implemented by the
+> standalone `integrations/feishu` package, parallel to `integrations/slack`.
+> [2026-08-04-standalone-feishu-integration.md](2026-08-04-standalone-feishu-integration.md)
+> supersedes this plan's Feishu-specific file map, persistence design, Task 8,
+> Feishu portions of Tasks 3/6/9/11/12, and final Feishu acceptance gates. Core
+> Agent/Run/Session/Workspace work in this document remains authoritative.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the legacy Team/AgentProfile execution path with Agent Bundle-pinned root Sessions and an idempotent Run/Task/Attempt projection of the real Session tree, including Agent-scoped Feishu routing, durable multi-repository worktree leases, and a Session-backed Run Inspector.
