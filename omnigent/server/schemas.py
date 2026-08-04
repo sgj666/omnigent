@@ -4480,3 +4480,16 @@ class SelectWorkspaceRequest(BaseModel):
 
     thread_id: str = Field(min_length=1, max_length=256)
     run_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class CreateRunRequest(BaseModel):
+    """Authenticated external request to create one Session-backed Run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(min_length=1, max_length=128)
+    workspace_id: str = Field(min_length=1, max_length=128)
+    source: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,63}$")
+    source_event_id: str = Field(min_length=1, max_length=256)
+    prompt: str = Field(min_length=1)
+    title: str | None = Field(default=None, min_length=1, max_length=512)

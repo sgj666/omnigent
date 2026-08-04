@@ -302,6 +302,14 @@ def get_attempt_worktree_lease_manager() -> WorktreeLeaseManager:
     return _attempt_worktree_lease_manager
 
 
+def configure_attempt_worktree_lease_store(store: object) -> None:
+    """Attach the durable Run store to the process-wide lease manager."""
+    global _attempt_worktree_lease_manager
+    from omnigent.workspaces.worktree_lease import WorktreeLeaseManager
+
+    _attempt_worktree_lease_manager = WorktreeLeaseManager(durable_store=store)
+
+
 async def acquire_attempt_worktree_leases(
     *,
     host_id: str,
@@ -311,6 +319,8 @@ async def acquire_attempt_worktree_leases(
     repositories: Iterable[WorkspaceRepository],
     attempt_id: str,
     owner_id: str,
+    run_id: str | None = None,
+    child_session_id: str | None = None,
     branch_names: Mapping[str, str] | None = None,
 ) -> tuple[WorktreeLease, ...]:
     """Production lifecycle seam for scheduler/session attempt startup."""
@@ -322,6 +332,8 @@ async def acquire_attempt_worktree_leases(
         repositories=repositories,
         attempt_id=attempt_id,
         owner_id=owner_id,
+        run_id=run_id,
+        child_session_id=child_session_id,
         branch_names=branch_names,
     )
 

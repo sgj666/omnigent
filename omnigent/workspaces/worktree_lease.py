@@ -10,6 +10,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from omnigent.server.host_registry import HostConnection, HostRegistry
 from omnigent.server.routes._host_worktree import (
@@ -53,6 +54,9 @@ class WorktreeLease:
     owner: str
     status: LeaseStatus
     heartbeat_at: float
+    durable_lease_id: str | None = None
+    run_id: str | None = None
+    child_session_id: str | None = None
 
     @property
     def owner_id(self) -> str:
@@ -70,12 +74,17 @@ class WorktreeLeaseManager:
     """
 
     def __init__(
-        self, *, ttl_s: float = 300.0, clock: Callable[[], float] = time.monotonic
+        self,
+        *,
+        ttl_s: float = 300.0,
+        clock: Callable[[], float] = time.monotonic,
+        durable_store: Any | None = None,
     ) -> None:
         if ttl_s <= 0:
             raise ValueError("ttl_s must be positive")
         self._ttl_s = ttl_s
         self._clock = clock
+        self._durable_store = durable_store
         self._records: list[WorktreeLease] = []
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
         self._heartbeat_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
@@ -95,6 +104,8 @@ class WorktreeLeaseManager:
         repositories: Iterable[WorkspaceRepository],
         attempt_id: str,
         owner_id: str,
+        run_id: str | None = None,
+        child_session_id: str | None = None,
         branch_names: Mapping[str, str] | None = None,
     ) -> tuple[WorktreeLease, ...]:
         """Atomically acquire one isolated worktree lease per repository.
@@ -104,6 +115,9 @@ class WorktreeLeaseManager:
         during this call before surfacing the original host error.
         """
         self._require_host(host_id, host_conn)
+        durable_context = (
+            self._durable_store is not None and run_id is not None and child_session_id is not None
+        )
         repo_entries = self._repository_entries(workspace_root, repositories)
         keys = [(host_id, repo_path) for _, repo_path, _ in repo_entries]
         locks = [self._locks.setdefault(key, asyncio.Lock()) for key in sorted(keys)]
@@ -139,19 +153,32 @@ class WorktreeLeaseManager:
                         ),
                         base_branch=base_branch,
                     )
-                    created.append(
-                        WorktreeLease(
+                    lease = WorktreeLease(
+                        host_id=host_id,
+                        repository_id=repository.id,
+                        repo_path=repo_path,
+                        attempt_id=attempt_id,
+                        worktree_path=result.worktree_path,
+                        branch=result.branch,
+                        owner=owner_id,
+                        status=LeaseStatus.ACTIVE,
+                        heartbeat_at=self._clock(),
+                        run_id=run_id,
+                        child_session_id=child_session_id,
+                    )
+                    created.append(lease)
+                    if durable_context:
+                        durable = self._durable_store.acquire_worktree_lease(
+                            run_id=run_id,
+                            attempt_id=attempt_id,
+                            child_session_id=child_session_id,
                             host_id=host_id,
                             repository_id=repository.id,
-                            repo_path=repo_path,
-                            attempt_id=attempt_id,
                             worktree_path=result.worktree_path,
                             branch=result.branch,
-                            owner=owner_id,
-                            status=LeaseStatus.ACTIVE,
-                            heartbeat_at=self._clock(),
+                            owner_id=owner_id,
                         )
-                    )
+                        lease.durable_lease_id = durable.id
             except Exception:
                 failed_cleanup = await self._remove_created(host_registry, host_conn, created)
                 for lease in failed_cleanup:
@@ -174,6 +201,11 @@ class WorktreeLeaseManager:
         now = self._clock()
         for lease in records:
             lease.heartbeat_at = now
+            if self._durable_store is not None and lease.durable_lease_id is not None:
+                self._durable_store.heartbeat_worktree_lease(
+                    lease.durable_lease_id,
+                    owner_id=owner_id,
+                )
 
     def heartbeat_active(self, *, host_id: str | None = None) -> tuple[WorktreeLease, ...]:
         """Refresh active leases for a trusted process maintenance loop."""
@@ -341,6 +373,11 @@ class WorktreeLeaseManager:
                 delete_branch=True,
             )
             lease.status = LeaseStatus.RELEASED
+            if self._durable_store is not None and lease.durable_lease_id is not None:
+                self._durable_store.release_worktree_lease(
+                    lease.durable_lease_id,
+                    owner_id=lease.owner,
+                )
 
     async def _remove_created(
         self,
@@ -360,6 +397,11 @@ class WorktreeLeaseManager:
                     branch=lease.branch,
                     delete_branch=True,
                 )
+                if self._durable_store is not None and lease.durable_lease_id is not None:
+                    self._durable_store.release_worktree_lease(
+                        lease.durable_lease_id,
+                        owner_id=lease.owner,
+                    )
             except Exception:  # noqa: BLE001 - rollback must preserve orphaned leases
                 failed.append(lease)
         return failed

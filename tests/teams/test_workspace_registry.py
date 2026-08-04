@@ -140,3 +140,16 @@ def test_load_rejects_repository_path_resolving_to_workspace_root(tmp_path: Path
 
     with pytest.raises(WorkspaceManifestError, match="child"):
         WorkspaceRegistry().load(root)
+
+
+def test_workspace_root_allowlist_uses_canonical_paths(tmp_path: Path) -> None:
+    allowed = tmp_path / "workbench-projects" / "projects"
+    workspace = allowed / "二奢寄卖-清分后不支持判商家责任"
+    outside = tmp_path / "outside"
+    workspace.mkdir(parents=True)
+    outside.mkdir()
+    registry = WorkspaceRegistry(allowed_roots=(allowed,))
+
+    assert registry.resolve(workspace).root == workspace.resolve()
+    with pytest.raises(WorkspaceManifestError, match="allowlist"):
+        registry.resolve(outside)

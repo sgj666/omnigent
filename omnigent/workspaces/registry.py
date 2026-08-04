@@ -16,6 +16,13 @@ from omnigent.workspaces.manifest import (
 class WorkspaceRegistry:
     """Resolve a workspace manifest or first-level Git repositories."""
 
+    def __init__(self, *, allowed_roots: tuple[Path | str, ...] | None = None) -> None:
+        self._allowed_roots = (
+            tuple(Path(root).resolve() for root in allowed_roots)
+            if allowed_roots is not None
+            else None
+        )
+
     def load(self, root: Path | str) -> WorkspaceManifest:
         """Load a manifest-backed workspace and validate each repository root."""
         manifest = load_workspace_manifest(root)
@@ -64,11 +71,17 @@ class WorkspaceRegistry:
             repositories=tuple(sorted(validated, key=lambda repository: repository.id)),
         )
 
-    @staticmethod
-    def _workspace_root(root: Path | str) -> Path:
+    def _workspace_root(self, root: Path | str) -> Path:
         workspace_root = Path(root).resolve()
         if not workspace_root.is_dir():
             raise WorkspaceManifestError(f"workspace root is not a directory: {workspace_root}")
+        if self._allowed_roots is not None and not any(
+            workspace_root == allowed or allowed in workspace_root.parents
+            for allowed in self._allowed_roots
+        ):
+            raise WorkspaceManifestError(
+                f"workspace root is outside the configured allowlist: {workspace_root}"
+            )
         return workspace_root
 
     def _validate_repository_paths(

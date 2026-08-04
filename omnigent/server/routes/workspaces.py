@@ -35,7 +35,7 @@ def create_workspaces_router(
             for repository in body.repositories
         )
         try:
-            workspace_registry.validate(body.root_path, repositories)
+            validated = workspace_registry.validate(body.root_path, repositories)
         except WorkspaceManifestError as exc:
             # Reject before allocating an id or touching the store.  This
             # keeps invalid paths from becoming durable workspace records.
@@ -44,8 +44,11 @@ def create_workspaces_router(
         workspace = {
             "id": workspace_id,
             "object": "workspace",
-            "root_path": body.root_path,
-            "repositories": [repository.model_dump() for repository in body.repositories],
+            "root_path": str(validated.root),
+            "repositories": [
+                {"name": repository.id, "path": repository.path}
+                for repository in validated.repositories
+            ],
         }
         store.workspaces[workspace_id] = workspace
         persist_workspace = getattr(store, "persist_workspace", None)

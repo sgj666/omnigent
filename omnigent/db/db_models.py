@@ -1761,12 +1761,15 @@ class SqlRun(OmnigentBase):
     agent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     bundle_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     bundle_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bundle_location: Mapped[str | None] = mapped_column(String(512), nullable=True)
     root_session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     legacy_state: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default="legacy_unbound", default="legacy_unbound"
     )
     workspace_bundle_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_event_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    auth_scope: Mapped[str | None] = mapped_column(String(256), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -1776,6 +1779,14 @@ class SqlRun(OmnigentBase):
         Index("ix_runs_team_status", "workspace_id", "team_id", "status", "id"),
         Index("ix_runs_agent_status", "workspace_id", "agent_id", "status", "id"),
         Index("uq_runs_root_session", "workspace_id", "root_session_id", unique=True),
+        Index(
+            "uq_runs_external_event",
+            "workspace_id",
+            "auth_scope",
+            "source",
+            "source_event_id",
+            unique=True,
+        ),
     )
 
 
@@ -1861,6 +1872,7 @@ class SqlAttempt(OmnigentBase):
     started_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     completed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_of_attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     source_event_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -1910,6 +1922,47 @@ class SqlHarnessEvent(OmnigentBase):
             "source_kind",
             "source_event_id",
             unique=True,
+        ),
+    )
+
+
+class SqlRunProjectionEvent(OmnigentBase):
+    """An idempotently consumed real Session lifecycle event."""
+
+    __tablename__ = "run_projection_events"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    run_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    conversation_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_event_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "source",
+            "source_event_id",
+            name="uq_run_projection_events_source",
+        ),
+        Index(
+            "ix_run_projection_events_run",
+            "workspace_id",
+            "run_id",
+            "created_at",
+            "id",
         ),
     )
 
@@ -2037,6 +2090,7 @@ class SqlWorktreeLease(OmnigentBase):
         default=current_workspace_id,
     )
     id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     attempt_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     child_session_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     host_id: Mapped[str] = mapped_column(String(128), nullable=False)

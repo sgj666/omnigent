@@ -26,6 +26,7 @@ from starlette.routing import Mount, Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from omnigent._platform import resolve_repo_symlink
+from omnigent.agent_bundles.service import AgentBundleService
 from omnigent.db.db_models import InvalidUuidError
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.harness_plugins import (
@@ -33,6 +34,7 @@ from omnigent.harness_plugins import (
     native_provider_for_key,
 )
 from omnigent.resources import examples as _examples_resources
+from omnigent.runs.service import RunService
 from omnigent.runtime import (
     get_terminal_registry,
     pending_elicitations,
@@ -59,6 +61,7 @@ from omnigent.server.performance_metrics import (
     set_request_session_id_for_access_log,
     set_request_user_agent_for_access_log,
 )
+from omnigent.server.routes.agent_bundles import create_agent_bundles_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
@@ -69,6 +72,7 @@ from omnigent.server.routes.imports import create_imports_router
 from omnigent.server.routes.policy_registry import create_policy_registry_router
 from omnigent.server.routes.projects import create_projects_router
 from omnigent.server.routes.runner_tunnel import create_runner_tunnel_router
+from omnigent.server.routes.runs import create_runs_router
 from omnigent.server.routes.scheduled_tasks import create_scheduled_tasks_router
 from omnigent.server.routes.session_mcp_servers import create_session_mcp_servers_router
 from omnigent.server.routes.session_policies import create_session_policies_router
@@ -103,7 +107,9 @@ from omnigent.stores.host_store import HostStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.project_store import ProjectStore
+from omnigent.stores.run_store.sqlalchemy_store import SqlAlchemyRunStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
+from omnigent.workspaces.registry import WorkspaceRegistry
 
 _logger = logging.getLogger(__name__)
 
@@ -929,6 +935,30 @@ def create_app(
     # deployments can provide their durable store while API-only installs keep
     # a small local state boundary.
     team_store = team_store or SqlAlchemyTeamWorkspaceStore(agent_store.storage_location)
+    run_store = SqlAlchemyRunStore(agent_store.storage_location)
+
+    async def _submit_run_session_event(
+        session_id: str,
+        event: Any,
+        actor_id: str,
+    ) -> None:
+        # Reuse the Session create path's history-seed behavior. The Run
+        # projection never launches or selects an executor; a bound Root
+        # Coordinator runner consumes this real Session input normally.
+        from omnigent.server.routes.sessions import _build_new_item
+
+        item = _build_new_item(event, "run_create", created_by=actor_id)
+        await asyncio.to_thread(conversation_store.append, session_id, [item])
+
+    run_service = RunService(
+        run_store=run_store,
+        conversation_store=conversation_store,
+        agent_store=agent_store,
+        submit_session_event=_submit_run_session_event,
+    )
+    from omnigent.server.routes._host_worktree import configure_attempt_worktree_lease_store
+
+    configure_attempt_worktree_lease_store(run_store)
     # Shared between the host tunnel (which records ``host.runner_exited``
     # reports from daemons) and the runner status endpoint (which surfaces
     # them to clients waiting for a launched runner to connect).
@@ -1186,6 +1216,8 @@ def create_app(
             await _mcp_pool.shutdown_all()
 
     app = FastAPI(title="Omnigent Server", lifespan=_lifespan)
+    app.state.run_store = run_store
+    app.state.run_service = run_service
     from omnigent.runtime import telemetry
 
     telemetry.instrument_fastapi_app(app)
@@ -1987,9 +2019,22 @@ def create_app(
         tags=["agents"],
     )
     app.include_router(
+        create_agent_bundles_router(
+            AgentBundleService(agent_store, artifact_store),
+            auth_provider=auth_provider,
+        ),
+        prefix="/v1",
+        tags=["agent_bundles"],
+    )
+    app.include_router(
         create_harnesses_router(auth_provider=auth_provider),
         prefix="/v1",
         tags=["harnesses"],
+    )
+    app.include_router(
+        create_runs_router(run_store, run_service, auth_provider=auth_provider),
+        prefix="/v1",
+        tags=["runs"],
     )
     app.include_router(
         create_teams_router(team_store, auth_provider=auth_provider),
@@ -2028,8 +2073,21 @@ def create_app(
         prefix="/v1",
         tags=["feishu"],
     )
+    _allowed_workspace_roots = (server_config or {}).get("allowed_workspace_roots")
+    if not isinstance(_allowed_workspace_roots, list):
+        _allowed_workspace_roots = None
     app.include_router(
-        create_workspaces_router(team_store, auth_provider=auth_provider),
+        create_workspaces_router(
+            team_store,
+            auth_provider=auth_provider,
+            registry=WorkspaceRegistry(
+                allowed_roots=(
+                    tuple(str(root) for root in _allowed_workspace_roots)
+                    if _allowed_workspace_roots is not None
+                    else None
+                )
+            ),
+        ),
         prefix="/v1",
         tags=["workspaces"],
     )
