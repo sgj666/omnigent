@@ -1991,6 +1991,46 @@ class SqlArtifact(OmnigentBase):
     __table_args__ = (Index("ix_artifacts_run_id", "workspace_id", "run_id", "id"),)
 
 
+class SqlRunEvaluation(OmnigentBase):
+    """A versioned deterministic collaboration evaluation for one Run."""
+
+    __tablename__ = "run_evaluations"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    run_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    evaluator: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    metrics: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_refs: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "run_id",
+            "evaluator",
+            "version",
+            name="uq_run_evaluations_evaluator_version",
+        ),
+        Index(
+            "ix_run_evaluations_owner_run",
+            "workspace_id",
+            "owner_user_id",
+            "run_id",
+        ),
+    )
+
+
 class SqlFeishuInstallation(OmnigentBase):
     """A Feishu app installation with encrypted credential material only."""
 
