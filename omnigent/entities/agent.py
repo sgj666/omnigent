@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from omnigent.spec import AgentSpec
+
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass
@@ -36,6 +39,62 @@ class Agent:
     description: str | None = None
     updated_at: int | None = None
     session_id: str | None = None  # owning conversation id; None for template agents
+
+
+@dataclass(frozen=True)
+class AgentBundleSnapshot:
+    """Immutable identity of the Agent Bundle used by one Session tree."""
+
+    agent_id: str
+    bundle_version: int
+    bundle_digest: str
+    bundle_location: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.agent_id, str) or not self.agent_id:
+            raise ValueError("agent_id must be a non-empty string")
+        if (
+            isinstance(self.bundle_version, bool)
+            or not isinstance(self.bundle_version, int)
+            or self.bundle_version < 1
+        ):
+            raise ValueError("agent bundle version must be a positive integer")
+        location_digest = (
+            self.bundle_location.rsplit("/", 1)[-1]
+            if isinstance(self.bundle_location, str)
+            else ""
+        )
+        if _SHA256_RE.fullmatch(location_digest) is None:
+            raise ValueError("bundle_location is not content-addressed by SHA-256")
+        if (
+            not isinstance(self.bundle_digest, str)
+            or _SHA256_RE.fullmatch(self.bundle_digest) is None
+        ):
+            raise ValueError("bundle_digest must be a SHA-256 hexadecimal digest")
+        if location_digest != self.bundle_digest:
+            raise ValueError("bundle_location digest does not match bundle_digest")
+
+    @classmethod
+    def from_agent(cls, agent: Agent) -> AgentBundleSnapshot:
+        """Capture a content-addressed Bundle identity from *agent*."""
+        if not isinstance(agent, Agent):
+            raise ValueError("agent must be an Agent")
+        attributes = agent.__dict__.copy()
+        if not all(name in attributes for name in ("id", "version", "bundle_location")):
+            raise ValueError("agent is missing required snapshot attributes")
+
+        agent_id = attributes["id"]
+        bundle_version = attributes["version"]
+        bundle_location = attributes["bundle_location"]
+        if not isinstance(bundle_location, str):
+            raise ValueError("bundle_location is not content-addressed by SHA-256")
+        digest = bundle_location.rsplit("/", 1)[-1]
+        return cls(
+            agent_id=agent_id,
+            bundle_version=bundle_version,
+            bundle_digest=digest,
+            bundle_location=bundle_location,
+        )
 
 
 @dataclass

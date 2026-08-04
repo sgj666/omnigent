@@ -1,7 +1,7 @@
 """Core domain entities shared across runtime, server, and store layers."""
 
 from omnigent.entities.account import Account, AccountToken
-from omnigent.entities.agent import Agent, LoadedAgent
+from omnigent.entities.agent import Agent, AgentBundleSnapshot, LoadedAgent
 from omnigent.entities.comment import Comment, CommentsFingerprint
 from omnigent.entities.conversation import (
     NON_CONTENT_ITEM_TYPES,
@@ -59,6 +59,7 @@ __all__ = [
     "Account",
     "AccountToken",
     "Agent",
+    "AgentBundleSnapshot",
     "AgentProfile",
     "AgentRole",
     "Attempt",
