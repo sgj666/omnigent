@@ -132,6 +132,14 @@ function App({ basename }: AppProps = {}) {
           <Route path={`${prefix}/multi-agents/new`} element={<MultiAgentDetailPage />} />
           <Route path={`${prefix}/multi-agents/:agentId`} element={<MultiAgentDetailPage />} />
           <Route path={`${prefix}/runs/:runId`} element={<RunInspectorPage />} />
+          <Route
+            path={`${prefix}/teams`}
+            element={<Navigate to={`${prefix}/multi-agents`} replace />}
+          />
+          <Route
+            path={`${prefix}/teams/*`}
+            element={<Navigate to={`${prefix}/multi-agents`} replace />}
+          />
           {/* Settings renders into the chat outlet so the conversations
               sidebar stays put — entering settings only swaps the card's
               content (the section nav) and the main area. The active section

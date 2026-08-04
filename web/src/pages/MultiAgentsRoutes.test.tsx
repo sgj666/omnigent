@@ -80,11 +80,6 @@ vi.mock("@/pages/NotFoundPage", () => ({ NotFoundPage: () => <h1>Not found</h1> 
 vi.mock("@/pages/RunInspectorPage", () => ({
   RunInspectorPage: () => <h1>Run inspector</h1>,
 }));
-vi.mock("@/pages/TeamsPage", () => ({ TeamsPage: () => <h1>Legacy teams</h1> }));
-vi.mock("@/pages/TeamDetailPage", () => ({
-  TeamDetailPage: () => <h1>Legacy team detail</h1>,
-}));
-
 function renderRoute(path: string, basename?: string) {
   const app = <App basename={basename} />;
   return render(
@@ -149,10 +144,16 @@ describe("Multi-Agent routes", () => {
     expect(multiAgentModuleLoads.catalog).toHaveBeenCalledOnce();
   });
 
-  it("does not register the legacy /teams route", () => {
-    renderRoute("/teams");
+  it.each([
+    ["/teams", undefined],
+    ["/teams/new", undefined],
+    ["/teams/team-1", undefined],
+    ["/ml/omnigent-embed/teams/team-1", "/ml/omnigent-embed"],
+  ])("redirects legacy %s to Multi-Agent", async (path, basename) => {
+    renderRoute(path, basename);
 
-    expect(screen.getByRole("heading", { name: "Not found" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Multi-Agent" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Not found" })).toBeNull();
   });
 
   it("preserves the run inspector route", () => {

@@ -1,5 +1,5 @@
 import { authenticatedFetch } from "./identity";
-import { throwApiError } from "./teamsApi";
+import { throwApiError } from "./apiError";
 
 export interface WorkspaceRepository {
   name: string;
@@ -43,12 +43,14 @@ export async function selectWorkspace(
   workspaceId: string,
   input: SelectWorkspaceInput,
 ): Promise<{ thread_id: string; workspace: WorkspaceBundle }> {
-  const response = await authenticatedFetch(`/v1/workspaces/${encodeURIComponent(workspaceId)}/select`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
+  const response = await authenticatedFetch(
+    `/v1/workspaces/${encodeURIComponent(workspaceId)}/select`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
   if (!response.ok) await throwApiError(response);
   return (await response.json()) as { thread_id: string; workspace: WorkspaceBundle };
 }
-

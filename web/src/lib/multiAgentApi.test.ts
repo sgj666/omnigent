@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { authenticatedFetch } from "./identity";
+import * as multiAgentApi from "./multiAgentApi";
 import {
   AgentVersionConflict,
   cloneAgentBundle,
@@ -108,6 +109,23 @@ describe("multi-agent bundle API", () => {
         host_id: "host_1",
       }),
     });
+  });
+
+  it("loads a complete run from the provider-neutral run resource", async () => {
+    const getRun = (
+      multiAgentApi as typeof multiAgentApi & {
+        getMultiAgentRun?: (runId: string) => Promise<unknown>;
+      }
+    ).getMultiAgentRun;
+    expect(getRun).toBeTypeOf("function");
+    if (!getRun) return;
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ id: "run_1", status: "running", workspace_id: "ws_1" }),
+    );
+
+    await getRun("run 1");
+
+    expect(fetchMock).toHaveBeenCalledWith("/v1/runs/run%201");
   });
 
   it("keeps catalog summaries separate from full bundle drafts", async () => {

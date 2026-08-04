@@ -1,5 +1,5 @@
 import { authenticatedFetch } from "./identity";
-import { throwApiError } from "./teamsApi";
+import { throwApiError } from "./apiError";
 
 export interface FeishuInstallSession {
   object?: "feishu.installation_session";
@@ -18,7 +18,9 @@ export async function beginFeishuInstall(): Promise<FeishuInstallSession> {
 }
 
 export async function pollFeishuInstall(session: string): Promise<FeishuInstallSession> {
-  const response = await authenticatedFetch(`/v1/feishu/installations/${encodeURIComponent(session)}`);
+  const response = await authenticatedFetch(
+    `/v1/feishu/installations/${encodeURIComponent(session)}`,
+  );
   if (!response.ok) await throwApiError(response);
   return (await response.json()) as FeishuInstallSession;
 }
@@ -27,4 +29,3 @@ export async function pollFeishuInstall(session: string): Promise<FeishuInstallS
 // an installation context.
 export const beginInstallation = beginFeishuInstall;
 export const pollInstallation = pollFeishuInstall;
-

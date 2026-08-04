@@ -2,7 +2,7 @@ import { ExternalLink, GitCommitHorizontal, Inbox, TriangleAlert } from "lucide-
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { TeamRunRecord } from "@/hooks/useTeamRuns";
+import type { MultiAgentRunRecord } from "@/lib/multiAgentApi";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -82,7 +82,7 @@ function LogBlock({ label, value }: { label: string; value: unknown }) {
 }
 
 export interface RunInspectorProps {
-  run: TeamRunRecord;
+  run: MultiAgentRunRecord;
 }
 
 export function RunInspector({ run }: RunInspectorProps) {

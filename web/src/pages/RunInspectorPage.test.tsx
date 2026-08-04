@@ -8,8 +8,8 @@ const ROUTER_FUTURE_FLAGS = {
   v7_relativeSplatPath: true,
 } as const;
 
-vi.mock("@/hooks/useTeamRuns", () => ({
-  useTeamRun: () => ({
+vi.mock("@/hooks/useRuns", () => ({
+  useRun: () => ({
     isLoading: false,
     isError: false,
     data: {

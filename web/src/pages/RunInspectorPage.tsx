@@ -2,12 +2,12 @@ import { Link, useParams } from "@/lib/routing";
 import { useTranslation } from "react-i18next";
 import { PageScroll } from "@/components/PageScroll";
 import { RunInspector } from "@/components/runs/RunInspector";
-import { useTeamRun } from "@/hooks/useTeamRuns";
+import { useRun } from "@/hooks/useRuns";
 
 export function RunInspectorPage() {
   const { t } = useTranslation("agents", { keyPrefix: "multiAgent.runInspector" });
   const { runId } = useParams<{ runId: string }>();
-  const run = useTeamRun(runId ?? null);
+  const run = useRun(runId ?? null);
 
   if (!runId)
     return (

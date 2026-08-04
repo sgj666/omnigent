@@ -52,6 +52,16 @@ export interface MultiAgentRun {
   bundle_digest?: string | null;
 }
 
+/** The ledger-backed shape is intentionally open so the inspector can render
+ * newer server fields without requiring a Web release first. */
+export interface MultiAgentRunRecord {
+  id: string;
+  status: string;
+  workspace_id?: string | null;
+  agent_id?: string | null;
+  [key: string]: unknown;
+}
+
 export interface AgentBundleFile {
   path: string;
   content: string | null;
@@ -400,4 +410,9 @@ export async function startMultiAgentRun(input: StartMultiAgentRunInput): Promis
     body: JSON.stringify(input),
   });
   return readJson<MultiAgentRun>(response);
+}
+
+export async function getMultiAgentRun(runId: string): Promise<MultiAgentRunRecord> {
+  const response = await authenticatedFetch(`/v1/runs/${encodeURIComponent(runId)}`);
+  return readJson<MultiAgentRunRecord>(response);
 }
