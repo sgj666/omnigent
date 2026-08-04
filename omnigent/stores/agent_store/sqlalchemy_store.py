@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field
+from threading import RLock
+from typing import ClassVar, cast
 
-from sqlalchemy import and_, asc, desc, or_, select
+from sqlalchemy import and_, asc, desc, or_, select, text
+from sqlalchemy import update as sql_update
+from sqlalchemy.engine import Connection, CursorResult, Dialect
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from omnigent.db.converters import sql_agent_to_entity
 from omnigent.db.db_models import (
@@ -21,7 +30,24 @@ from omnigent.db.utils import (
     now_epoch,
 )
 from omnigent.entities import Agent, PagedList
-from omnigent.stores.agent_store import AgentStore
+from omnigent.stores.agent_store import AgentStore, AgentVersionConflict
+
+
+@dataclass(eq=False)
+class _TemplateCleanupTarget:
+    driver_connection: object
+    reset_failures: list[BaseException]
+    termination_failures: list[BaseException]
+
+
+@dataclass
+class _TemplateCleanupDispatcher:
+    dialect: Dialect
+    original_rollback: Callable[[object], None]
+    original_terminate: Callable[[object], None]
+    previous_rollback: object | None
+    previous_terminate: object | None
+    targets: list[_TemplateCleanupTarget] = field(default_factory=list)
 
 
 class SqlAlchemyAgentStore(AgentStore):
@@ -30,6 +56,9 @@ class SqlAlchemyAgentStore(AgentStore):
 
     Persists agents in a relational database via SQLAlchemy ORM.
     """
+
+    _template_termination_lock = RLock()
+    _template_cleanup_dispatchers: ClassVar[dict[int, _TemplateCleanupDispatcher]] = {}
 
     def __init__(
         self, storage_location: str, conversation_storage_location: str | None = None
@@ -53,6 +82,7 @@ class SqlAlchemyAgentStore(AgentStore):
         self.conversation_storage_location = conversation_storage_location
         self._engine = get_or_create_engine(storage_location)
         self._session = make_managed_session_maker(self._engine)
+        self._template_update_session = make_managed_session_maker(self._engine, immediate=True)
         conv_uri = conversation_storage_location or storage_location
         self._conv_engine = (
             self._engine
@@ -60,6 +90,378 @@ class SqlAlchemyAgentStore(AgentStore):
             else get_or_create_conversation_engine(conv_uri)
         )
         self._conv_session = make_managed_session_maker(self._conv_engine)
+
+    @staticmethod
+    def _template_write_digest(workspace_id: int) -> bytes:
+        value = f"omnigent:template-write:v1\0{workspace_id}".encode()
+        return hashlib.sha256(value).digest()
+
+    @classmethod
+    def _template_write_lock_id(cls, workspace_id: int) -> int:
+        return int.from_bytes(
+            cls._template_write_digest(workspace_id)[:8],
+            byteorder="big",
+            signed=True,
+        )
+
+    @classmethod
+    def _template_write_lock_name(cls, workspace_id: int) -> str:
+        digest = cls._template_write_digest(workspace_id).hex()
+        return f"omnigent:template-write:{digest[:40]}"
+
+    @classmethod
+    def _discard_failed_template_lock_connection(
+        cls,
+        connection: Connection,
+        primary_error: BaseException,
+        *,
+        invalidate_first: bool = True,
+    ) -> None:
+        pool_connection = None
+        driver_connection = None
+        driver_access_error = None
+        try:
+            pool_connection = connection.connection
+            driver_connection = pool_connection.driver_connection
+        except BaseException as exc:  # noqa: BLE001
+            driver_access_error = exc
+
+        if invalidate_first:
+            try:
+                if driver_connection is None:
+                    connection.invalidate()
+                else:
+                    cls._invalidate_template_lock_connection(
+                        connection,
+                        driver_connection,
+                        primary_error,
+                    )
+                return
+            except BaseException as exc:  # noqa: BLE001
+                primary_error.add_note(f"Template lock connection invalidation failed: {exc!r}")
+
+        if driver_access_error is not None:
+            primary_error.add_note(
+                f"Template lock driver connection access failed: {driver_access_error!r}"
+            )
+
+        try:
+            connection.detach()
+        except BaseException as exc:  # noqa: BLE001
+            primary_error.add_note(f"Template lock connection detach failed: {exc!r}")
+
+        if driver_connection is not None:
+            try:
+                driver_connection.close()
+            except BaseException as exc:  # noqa: BLE001
+                primary_error.add_note(f"Template lock driver close failed: {exc!r}")
+            else:
+                pool_connection.dbapi_connection = None
+
+    @classmethod
+    def _invalidate_template_lock_connection(
+        cls,
+        connection: Connection,
+        driver_connection: object,
+        primary_error: BaseException,
+    ) -> None:
+        reset_failures: list[BaseException] = []
+        termination_failures: list[BaseException] = []
+        try:
+            with cls._observe_template_lock_driver_cleanup(
+                connection,
+                driver_connection,
+                reset_failures,
+                termination_failures,
+            ):
+                connection.invalidate()
+        finally:
+            cls._add_template_lock_driver_cleanup_notes(
+                primary_error,
+                reset_failures,
+                termination_failures,
+            )
+
+    @staticmethod
+    def _is_template_lock_driver(candidate: object, driver_connection: object) -> bool:
+        if candidate is driver_connection:
+            return True
+        try:
+            return candidate.driver_connection is driver_connection  # type: ignore[attr-defined]
+        except BaseException:  # noqa: BLE001
+            return False
+
+    @classmethod
+    @contextmanager
+    def _observe_template_lock_driver_cleanup(
+        cls,
+        connection: Connection,
+        driver_connection: object,
+        reset_failures: list[BaseException],
+        termination_failures: list[BaseException],
+    ) -> Iterator[None]:
+        dialect = connection.dialect
+        target = _TemplateCleanupTarget(
+            driver_connection,
+            reset_failures,
+            termination_failures,
+        )
+        with cls._template_termination_lock:
+            dispatcher_key = id(dialect)
+            dispatcher = cls._template_cleanup_dispatchers.get(dispatcher_key)
+            if dispatcher is None:
+                dispatcher = _TemplateCleanupDispatcher(
+                    dialect=dialect,
+                    original_rollback=dialect.do_rollback,
+                    original_terminate=dialect.do_terminate,
+                    previous_rollback=dialect.__dict__.get("do_rollback"),
+                    previous_terminate=dialect.__dict__.get("do_terminate"),
+                )
+
+                def observable_rollback(candidate: object) -> None:
+                    cls._dispatch_template_cleanup_rollback(dispatcher, candidate)
+
+                def observable_terminate(candidate: object) -> None:
+                    cls._dispatch_template_cleanup_terminate(dispatcher, candidate)
+
+                dialect.do_rollback = observable_rollback
+                dialect.do_terminate = observable_terminate
+                cls._template_cleanup_dispatchers[dispatcher_key] = dispatcher
+            else:
+                assert dispatcher.dialect is dialect
+            dispatcher.targets.append(target)
+
+        try:
+            yield
+        finally:
+            try:
+                with cls._template_termination_lock:
+                    dispatcher.targets.remove(target)
+                    if not dispatcher.targets:
+                        if dispatcher.previous_rollback is None:
+                            del dialect.do_rollback
+                        else:
+                            dialect.do_rollback = dispatcher.previous_rollback
+                        if dispatcher.previous_terminate is None:
+                            del dialect.do_terminate
+                        else:
+                            dialect.do_terminate = dispatcher.previous_terminate
+                        del cls._template_cleanup_dispatchers[dispatcher_key]
+            finally:
+                if len(termination_failures) >= 2:
+                    try:
+                        dispatcher.original_terminate(driver_connection)
+                    except BaseException as exc:  # noqa: BLE001
+                        termination_failures.append(exc)
+
+    @classmethod
+    def _template_cleanup_target(
+        cls,
+        dispatcher: _TemplateCleanupDispatcher,
+        candidate: object,
+    ) -> _TemplateCleanupTarget | None:
+        with cls._template_termination_lock:
+            return next(
+                (
+                    target
+                    for target in reversed(dispatcher.targets)
+                    if cls._is_template_lock_driver(candidate, target.driver_connection)
+                ),
+                None,
+            )
+
+    @classmethod
+    def _dispatch_template_cleanup_rollback(
+        cls,
+        dispatcher: _TemplateCleanupDispatcher,
+        candidate: object,
+    ) -> None:
+        target = cls._template_cleanup_target(dispatcher, candidate)
+        if target is None:
+            dispatcher.original_rollback(candidate)
+            return
+        try:
+            dispatcher.original_rollback(candidate)
+        except BaseException as exc:
+            target.reset_failures.append(exc)
+            raise
+
+    @classmethod
+    def _dispatch_template_cleanup_terminate(
+        cls,
+        dispatcher: _TemplateCleanupDispatcher,
+        candidate: object,
+    ) -> None:
+        target = cls._template_cleanup_target(dispatcher, candidate)
+        if target is None:
+            dispatcher.original_terminate(candidate)
+            return
+        try:
+            dispatcher.original_terminate(candidate)
+        except BaseException as exc:  # noqa: BLE001
+            target.termination_failures.append(exc)
+            try:
+                dispatcher.original_terminate(candidate)
+            except BaseException as retry_exc:
+                target.termination_failures.append(retry_exc)
+                raise
+
+    @staticmethod
+    def _add_template_lock_driver_cleanup_notes(
+        primary_error: BaseException,
+        reset_failures: list[BaseException],
+        termination_failures: list[BaseException],
+    ) -> None:
+        for failure in reset_failures:
+            primary_error.add_note(f"Template lock driver reset failed: {failure!r}")
+        for index, failure in enumerate(termination_failures):
+            phase = "" if index == 0 else " retry" if index == 1 else " fallback"
+            primary_error.add_note(f"Template lock driver termination{phase} failed: {failure!r}")
+
+    @contextmanager
+    def _template_lock_connection(self) -> Iterator[Connection]:
+        connection_context = self._engine.connect()
+        connection = connection_context.__enter__()
+        try:
+            driver_connection = connection.connection.driver_connection
+        except BaseException:  # noqa: BLE001
+            driver_connection = None
+        primary_error: BaseException | None = None
+        reset_failures: list[BaseException] = []
+        termination_failures: list[BaseException] = []
+        cleanup_error = None
+        try:
+            observation = (
+                nullcontext()
+                if driver_connection is None
+                else self._observe_template_lock_driver_cleanup(
+                    connection,
+                    driver_connection,
+                    reset_failures,
+                    termination_failures,
+                )
+            )
+            with observation:
+                try:
+                    yield connection
+                except BaseException as exc:  # noqa: BLE001
+                    primary_error = exc
+
+                exit_arguments = (
+                    type(primary_error) if primary_error is not None else None,
+                    primary_error,
+                    primary_error.__traceback__ if primary_error is not None else None,
+                )
+                suppressed = connection_context.__exit__(*exit_arguments)
+                if primary_error is not None and suppressed:
+                    primary_error = None
+        except BaseException as exc:  # noqa: BLE001
+            cleanup_error = exc
+            if primary_error is None:
+                primary_error = RuntimeError("Could not clean up the template lock connection")
+            primary_error.add_note(f"Template lock connection cleanup failed: {exc!r}")
+            self._discard_failed_template_lock_connection(
+                connection,
+                primary_error,
+                invalidate_first=False,
+            )
+
+        if reset_failures or termination_failures:
+            if primary_error is None:
+                primary_error = RuntimeError("Could not clean up the template lock connection")
+            self._add_template_lock_driver_cleanup_notes(
+                primary_error,
+                reset_failures,
+                termination_failures,
+            )
+
+        if primary_error is not None:
+            if cleanup_error is not None and primary_error is not cleanup_error:
+                raise primary_error.with_traceback(primary_error.__traceback__) from cleanup_error
+            raise primary_error.with_traceback(primary_error.__traceback__)
+
+    @contextmanager
+    def _template_write_session(self, workspace_id: int) -> Iterator[Session]:
+        dialect = self._engine.dialect.name
+        if dialect == "sqlite":
+            with self._template_update_session() as session:
+                yield session
+            return
+
+        if dialect == "postgresql":
+            with self._session() as session:
+                session.execute(
+                    text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                    {"lock_id": self._template_write_lock_id(workspace_id)},
+                )
+                yield session
+            return
+
+        if dialect not in {"mysql", "mariadb"}:
+            raise RuntimeError(
+                f"Template name locking is unsupported for database dialect {dialect!r}"
+            )
+
+        lock_name = self._template_write_lock_name(workspace_id)
+        with self._template_lock_connection() as connection:
+            try:
+                acquired = connection.execute(
+                    text("SELECT GET_LOCK(:lock_name, :timeout)"),
+                    {"lock_name": lock_name, "timeout": 20},
+                ).scalar_one()
+            except BaseException as exc:
+                self._discard_failed_template_lock_connection(connection, exc)
+                raise
+            if acquired != 1:
+                connection.rollback()
+                raise RuntimeError("Could not acquire the template name lock")
+
+            transaction = None
+            primary_error: BaseException | None = None
+            try:
+                connection.commit()
+                transaction = connection.begin()
+                with Session(bind=connection, expire_on_commit=False) as session:
+                    yield session
+                    session.flush()
+                transaction.commit()
+            except BaseException as exc:  # noqa: BLE001
+                primary_error = exc
+
+            if transaction is not None and transaction.is_active:
+                try:
+                    transaction.rollback()
+                except BaseException as exc:  # noqa: BLE001
+                    if primary_error is None:
+                        primary_error = exc
+                    else:
+                        primary_error.add_note(f"Template transaction rollback failed: {exc!r}")
+
+            release_error: BaseException | None = None
+            cleanup_error: BaseException | None = None
+            try:
+                if connection.in_transaction():
+                    connection.rollback()
+                released = connection.execute(
+                    text("SELECT RELEASE_LOCK(:lock_name)"),
+                    {"lock_name": lock_name},
+                ).scalar_one()
+                if released != 1:
+                    raise RuntimeError("Could not release the template name lock")
+                connection.commit()
+            except BaseException as exc:  # noqa: BLE001
+                release_error = exc
+                cleanup_error = primary_error or RuntimeError(
+                    "Could not release the template name lock"
+                )
+                cleanup_error.add_note(f"Template lock cleanup failed: {release_error!r}")
+                self._discard_failed_template_lock_connection(connection, cleanup_error)
+
+            if primary_error is not None:
+                raise primary_error.with_traceback(primary_error.__traceback__)
+            if release_error is not None:
+                assert cleanup_error is not None
+                raise cleanup_error from release_error
 
     def _session_id_for_agent(self, agent_id: str) -> str | None:
         """
@@ -103,7 +505,9 @@ class SqlAlchemyAgentStore(AgentStore):
         :param description: Optional free-text description.
         :returns: The newly created :class:`Agent`.
         """
+        workspace_id = current_workspace_id()
         row = SqlAgent(
+            workspace_id=workspace_id,
             id=agent_id,
             created_at=now_epoch(),
             name=name,
@@ -112,12 +516,12 @@ class SqlAlchemyAgentStore(AgentStore):
             kind=encode_agent_kind("template"),
             description=description,
         )
-        with self._session() as session:
+        with self._template_write_session(workspace_id) as session:
             # Template names are unique within a workspace. This can't be a
             # partial unique index (MySQL has none), so enforce it here.
             conflict = session.execute(
                 select(SqlAgent.id).where(
-                    SqlAgent.workspace_id == current_workspace_id(),
+                    SqlAgent.workspace_id == workspace_id,
                     SqlAgent.name == name,
                     SqlAgent.kind == encode_agent_kind("template"),
                 )
@@ -272,18 +676,112 @@ class SqlAlchemyAgentStore(AgentStore):
         :returns: The updated :class:`Agent`, or ``None`` if not
             found.
         """
+        workspace_id = current_workspace_id()
         with self._session() as session:
-            row = session.get(SqlAgent, (current_workspace_id(), agent_id))
-            if not row:
+            result = cast(
+                CursorResult[tuple[object]],
+                session.execute(
+                    sql_update(SqlAgent)
+                    .where(
+                        SqlAgent.workspace_id == workspace_id,
+                        SqlAgent.id == agent_id,
+                    )
+                    .values(
+                        bundle_location=bundle_location,
+                        version=SqlAgent.version + 1,
+                        updated_at=now_epoch(),
+                    )
+                ),
+            )
+            if result.rowcount != 1:
                 return None
-            row.bundle_location = bundle_location
-            row.version = row.version + 1
-            row.updated_at = now_epoch()
+            row = session.get(SqlAgent, (workspace_id, agent_id))
+            assert row is not None
         # Reverse lookup targets the AP DB — see _session_id_for_agent.
         session_id: str | None = None
         if row.kind == encode_agent_kind("session"):
             session_id = self._session_id_for_agent(agent_id)
         return sql_agent_to_entity(row, session_id=session_id)
+
+    def update_template(
+        self,
+        agent_id: str,
+        bundle_location: str,
+        name: str,
+        description: str | None,
+        expected_version: int,
+    ) -> Agent | None:
+        """Atomically update a template if its version is unchanged."""
+        workspace_id = current_workspace_id()
+        template_kind = encode_agent_kind("template")
+        with self._template_write_session(workspace_id) as session:
+            current = session.execute(
+                select(SqlAgent.kind, SqlAgent.version)
+                .where(
+                    SqlAgent.workspace_id == workspace_id,
+                    SqlAgent.id == agent_id,
+                )
+                .with_for_update()
+            ).one_or_none()
+            if current is None:
+                return None
+            if current.kind != template_kind:
+                raise ValueError(f"Agent {agent_id!r} is not a template agent")
+            if current.version != expected_version:
+                raise AgentVersionConflict(agent_id, expected_version, current.version)
+
+            conflict = session.execute(
+                select(SqlAgent.id).where(
+                    SqlAgent.workspace_id == workspace_id,
+                    SqlAgent.name == name,
+                    SqlAgent.kind == template_kind,
+                    SqlAgent.id != agent_id,
+                )
+            ).first()
+            if conflict is not None:
+                raise IntegrityError(
+                    "Duplicate template agent name",
+                    params={"name": name},
+                    orig=Exception(f"UNIQUE constraint: name={name!r}"),
+                )
+
+            result = cast(
+                CursorResult[tuple[object]],
+                session.execute(
+                    sql_update(SqlAgent)
+                    .where(
+                        SqlAgent.workspace_id == workspace_id,
+                        SqlAgent.id == agent_id,
+                        SqlAgent.kind == template_kind,
+                        SqlAgent.version == expected_version,
+                    )
+                    .values(
+                        name=name,
+                        description=description,
+                        bundle_location=bundle_location,
+                        version=SqlAgent.version + 1,
+                        updated_at=now_epoch(),
+                    )
+                ),
+            )
+            if result.rowcount != 1:
+                actual = session.execute(
+                    select(SqlAgent.kind, SqlAgent.version)
+                    .where(
+                        SqlAgent.workspace_id == workspace_id,
+                        SqlAgent.id == agent_id,
+                    )
+                    .with_for_update()
+                ).one_or_none()
+                if actual is None:
+                    return None
+                if actual.kind != template_kind:
+                    raise ValueError(f"Agent {agent_id!r} is not a template agent")
+                raise AgentVersionConflict(agent_id, expected_version, actual.version)
+
+            row = session.get(SqlAgent, (workspace_id, agent_id))
+            assert row is not None
+            return sql_agent_to_entity(row)
 
     def delete(self, agent_id: str) -> bool:
         """

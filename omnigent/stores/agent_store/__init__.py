@@ -8,6 +8,18 @@ from abc import ABC, abstractmethod
 from omnigent.entities import Agent, PagedList
 
 
+class AgentVersionConflict(RuntimeError):
+    """An agent template changed since the caller last read it."""
+
+    def __init__(self, agent_id: str, expected: int, actual: int) -> None:
+        self.agent_id = agent_id
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"Agent {agent_id!r} version conflict: expected {expected}, actual {actual}"
+        )
+
+
 class AgentStore(ABC):
     """
     Abstract base for agent persistence.
@@ -132,6 +144,28 @@ class AgentStore(ABC):
             bundle, e.g. ``"ag_abc123/a1b2c3d4e5f6..."``.
         :returns: The updated :class:`Agent`, or ``None`` if not
             found.
+        """
+        ...
+
+    @abstractmethod
+    def update_template(
+        self,
+        agent_id: str,
+        bundle_location: str,
+        name: str,
+        description: str | None,
+        expected_version: int,
+    ) -> Agent | None:
+        """Atomically update a template when its version matches.
+
+        :param agent_id: Unique template agent identifier.
+        :param bundle_location: New artifact store key for the bundle.
+        :param name: New template name, unique in the current workspace.
+        :param description: New description, or ``None`` to clear it.
+        :param expected_version: Version last observed by the caller.
+        :returns: The updated agent, or ``None`` if it does not exist.
+        :raises AgentVersionConflict: If the template has a newer version.
+        :raises ValueError: If the ID belongs to a session-scoped agent.
         """
         ...
 
