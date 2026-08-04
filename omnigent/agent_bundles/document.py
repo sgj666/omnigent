@@ -241,6 +241,10 @@ class BundleDocument:
         """Return whether *path* is a regular file in the bundle."""
         return _normalize_posix_path(path) in self._files
 
+    def paths(self) -> tuple[str, ...]:
+        """Return the bundle's normalized regular-file paths in sorted order."""
+        return tuple(sorted(self._files))
+
     def read_text(self, path: str) -> str:
         """Read one UTF-8 bundle file without changing its bytes."""
         return self._files[_normalize_posix_path(path)].decode("utf-8")
@@ -343,6 +347,15 @@ class BundleDocument:
             raise KeyError(normalized)
         self._files[normalized] = data
         self._yaml_documents.pop(normalized, None)
+
+    def add_file_bytes(self, path: str, data: bytes) -> None:
+        """Add a new regular file without exposing the mutable file mapping."""
+        normalized = _normalize_posix_path(path)
+        if normalized in self._files:
+            raise ValueError(f"bundle file already exists: {normalized!r}")
+        candidate = dict(self._files)
+        candidate[normalized] = data
+        self._files = _normalize_files(candidate)
 
     def delete_file(self, path: str) -> None:
         """Delete an existing file from the bundle."""
