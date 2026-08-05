@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MultiAgentsPage } from "./MultiAgentsPage";
@@ -61,11 +61,29 @@ describe("MultiAgentsPage", () => {
     expect(screen.getByText("Version 4")).toBeVisible();
     expect(screen.getByText("0123456789ab")).toBeVisible();
     expect(screen.getByRole("button", { name: "Use this template" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Connect Feishu" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Create" })).toHaveAttribute(
       "href",
       "/multi-agents/new",
     );
     expect(screen.getByRole("button", { name: "Import" })).toBeVisible();
+  });
+
+  it("clones a template with an AgentSpec-safe name", async () => {
+    hooks.clone.mutateAsync.mockResolvedValue({ card: { id: "ag_copy" } });
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use this template" }));
+
+    await waitFor(() =>
+      expect(hooks.clone.mutateAsync).toHaveBeenCalledWith({
+        agent_id: "ag_polly",
+        input: { name: "Polly-copy" },
+      }),
+    );
+    // AgentSpec names must not contain whitespace, so the clone suffix stays hyphenated.
+    const cloned = hooks.clone.mutateAsync.mock.calls[0][0].input.name as string;
+    expect(cloned).toMatch(/^[a-zA-Z0-9._-]+$/);
   });
 
   it("shows an explicit empty state", () => {

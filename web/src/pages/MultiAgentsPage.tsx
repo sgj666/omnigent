@@ -4,6 +4,7 @@ import {
   CopyIcon,
   DownloadIcon,
   FileUpIcon,
+  LinkIcon,
   PencilIcon,
   PlusIcon,
   Trash2Icon,
@@ -22,6 +23,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
+import { AgentFeishuPairingDialog } from "@/components/multi-agent/AgentFeishuPairingDialog";
 import {
   useCloneMultiAgent,
   useDeleteMultiAgent,
@@ -58,13 +60,14 @@ export function MultiAgentsPage() {
   const importBundle = useImportMultiAgent();
   const fileInput = useRef<HTMLInputElement>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [feishuAgent, setFeishuAgent] = useState<MultiAgentSummary | null>(null);
 
   async function cloneTemplate(agent: MultiAgentSummary) {
     setActionError(null);
     try {
       const draft = await clone.mutateAsync({
         agent_id: agent.id,
-        input: { name: `${agent.name} copy` },
+        input: { name: `${agent.name}-copy` },
       });
       navigate(`/multi-agents/${draft.card.id}`);
     } catch (error) {
@@ -218,6 +221,9 @@ export function MultiAgentsPage() {
                 >
                   <CopyIcon /> {t("actions.useTemplate")}
                 </Button>
+                <Button size="sm" variant="outline" onClick={() => setFeishuAgent(agent)}>
+                  <LinkIcon /> {t("feishu.connect")}
+                </Button>
                 {!agent.readonly && agent.editable !== false && (
                   <Button asChild size="sm" variant="outline">
                     <Link to={`/multi-agents/${agent.id}`}>
@@ -252,6 +258,16 @@ export function MultiAgentsPage() {
             </Card>
           ))}
         </div>
+      )}
+      {feishuAgent && (
+        <AgentFeishuPairingDialog
+          agentId={feishuAgent.id}
+          agentName={feishuAgent.name}
+          open
+          onOpenChange={(open) => {
+            if (!open) setFeishuAgent(null);
+          }}
+        />
       )}
     </PageScroll>
   );
