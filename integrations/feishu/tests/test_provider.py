@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 
 import pytest
 from omnigent_feishu.cards import (
@@ -10,7 +11,11 @@ from omnigent_feishu.cards import (
     verify_action_value,
 )
 from omnigent_feishu.credentials import FeishuCredentialCipher, FeishuCredentialError
-from omnigent_feishu.device_flow import FeishuPending, FeishuPersonalAgentDeviceFlow
+from omnigent_feishu.device_flow import (
+    FeishuDeviceFlowError,
+    FeishuPending,
+    FeishuPersonalAgentDeviceFlow,
+)
 from omnigent_feishu.protocol import challenge_response, decode_message, verify_signature
 
 
@@ -78,3 +83,55 @@ async def test_device_flow_uses_form_contract_and_preserves_pending() -> None:
     assert isinstance(pending, FeishuPending)
     assert calls[0][1] == "https://accounts.feishu.cn/oauth/v1/app/registration"
     assert calls[0][3] == {"Content-Type": "application/x-www-form-urlencoded"}
+
+
+def _flow_returning(bot_response: object) -> FeishuPersonalAgentDeviceFlow:
+    replies: list[object] = [{"tenant_access_token": "tenant-token"}, bot_response]
+
+    async def request(_method, _url, _body, _headers):
+        return replies.pop(0)
+
+    return FeishuPersonalAgentDeviceFlow(request=request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bot_response",
+    [
+        pytest.param({"code": 0, "msg": "success", "bot": {"open_id": "ou_bot"}}, id="top-level"),
+        pytest.param({"data": {"bot": {"open_id": "ou_bot"}}}, id="nested-data"),
+    ],
+)
+async def test_device_flow_accepts_supported_bot_info_shapes(bot_response) -> None:
+    flow = _flow_returning(bot_response)
+    assert await flow.bot_info("app-id", "app-secret") == {"open_id": "ou_bot"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "bot_response",
+    [
+        pytest.param({"code": 0, "msg": "success"}, id="no-envelope"),
+        pytest.param({"data": {"code": 0}}, id="data-without-bot"),
+        pytest.param({"data": {"bot": {}}}, id="bot-without-open-id"),
+        pytest.param({"data": {"bot": {"open_id": "   "}}}, id="blank-open-id"),
+        pytest.param({"bot": "ou_bot"}, id="bot-not-a-mapping"),
+        pytest.param({"data": "unexpected", "bot": None}, id="data-not-a-mapping"),
+    ],
+)
+async def test_device_flow_rejects_unusable_bot_info(bot_response) -> None:
+    flow = _flow_returning(bot_response)
+    with pytest.raises(FeishuDeviceFlowError) as excinfo:
+        await flow.bot_info("app-id", "app-secret")
+    assert excinfo.value.kind == "protocol"
+
+
+@pytest.mark.asyncio
+async def test_device_flow_bot_info_failure_log_omits_secrets(caplog) -> None:
+    flow = _flow_returning({"code": 99, "msg": "permission denied"})
+    with caplog.at_level(logging.WARNING), pytest.raises(FeishuDeviceFlowError):
+        await flow.bot_info("app-id", "app-secret")
+    logged = caplog.text
+    assert "app-id" in logged
+    assert "app-secret" not in logged
+    assert "tenant-token" not in logged
