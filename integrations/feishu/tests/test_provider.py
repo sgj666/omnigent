@@ -108,6 +108,14 @@ async def test_device_flow_accepts_supported_bot_info_shapes(bot_response) -> No
 
 
 @pytest.mark.asyncio
+async def test_device_flow_prefers_nested_bot_when_both_envelopes_are_usable() -> None:
+    flow = _flow_returning(
+        {"bot": {"open_id": "ou_top"}, "data": {"bot": {"open_id": "ou_nested"}}}
+    )
+    assert await flow.bot_info("app-id", "app-secret") == {"open_id": "ou_nested"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "bot_response",
     [
@@ -117,6 +125,10 @@ async def test_device_flow_accepts_supported_bot_info_shapes(bot_response) -> No
         pytest.param({"data": {"bot": {"open_id": "   "}}}, id="blank-open-id"),
         pytest.param({"bot": "ou_bot"}, id="bot-not-a-mapping"),
         pytest.param({"data": "unexpected", "bot": None}, id="data-not-a-mapping"),
+        pytest.param(
+            {"bot": {"open_id": "ou_top_level"}, "data": {"bot": None}},
+            id="explicit-nested-null-does-not-fall-back",
+        ),
     ],
 )
 async def test_device_flow_rejects_unusable_bot_info(bot_response) -> None:
