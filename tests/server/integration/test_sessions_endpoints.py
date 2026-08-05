@@ -8192,10 +8192,11 @@ async def test_non_native_message_still_raises_when_runner_offline(
 async def test_message_forward_failure_surfaces_runner_unavailable(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
     failure_mode: str,
 ) -> None:
     """
-    A runner that is bound but unreachable surfaces 503, not silent 200.
+    A runner that is bound but unreachable or rejects a message surfaces 503.
 
     Before the fix (issue #2428): when a bound runner's /events POST
     failed with an HTTPError or ConnectionError, _forward_event_to_runner
@@ -8212,14 +8213,19 @@ async def test_message_forward_failure_surfaces_runner_unavailable(
     """
     from omnigent.server.routes import sessions as sessions_module
 
+    rejection_tail = "runner_rejection_tail_must_be_truncated"
+
     def _handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path.endswith("/events"):
             if failure_mode == "transport_error":
                 raise httpx.ConnectError("runner unreachable")
             if failure_mode == "runner_rejected":
                 return httpx.Response(
-                    503,
-                    json={"error": "dispatch_receipt_unavailable"},
+                    409,
+                    json={
+                        "error": "no_live_harness",
+                        "detail": "x" * 600 + rejection_tail,
+                    },
                 )
             # Bare ConnectionError: what WSTunnelTransport raises on tunnel close.
             raise ConnectionError("tunnel closed mid-request")
@@ -8243,6 +8249,13 @@ async def test_message_forward_failure_surfaces_runner_unavailable(
         session = await _create_session(client, agent["id"])
         sid = session["id"]
 
+        published: list[tuple[str, dict[str, Any]]] = []
+
+        def _capture_publish(session_id: str, event: dict[str, Any]) -> None:
+            published.append((session_id, event))
+
+        monkeypatch.setattr(sessions_module.session_stream, "publish", _capture_publish)
+        caplog.clear()
         resp = await client.post(
             f"/v1/sessions/{sid}/events",
             json={
@@ -8255,5 +8268,20 @@ async def test_message_forward_failure_surfaces_runner_unavailable(
             f"Expected 503 RUNNER_UNAVAILABLE when runner forward fails, "
             f"got {resp.status_code}: {resp.text}"
         )
+        error = resp.json()["error"]
+        assert error["code"] == "runner_unavailable"
+        if failure_mode == "runner_rejected":
+            assert "Runner rejected the message (status=409)" in error["message"]
+            assert "session=" + sid in caplog.text
+            assert "status=409" in caplog.text
+            assert "no_live_harness" in caplog.text
+            assert rejection_tail not in caplog.text
+
+        session_events = [event for session_id, event in published if session_id == sid]
+        assert any(
+            event.get("type") == "session.status" and event.get("status") == "idle"
+            for event in session_events
+        )
+        assert not any(event.get("type") == "session.input.consumed" for event in session_events)
     finally:
         await fake_runner.aclose()

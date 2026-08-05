@@ -4464,14 +4464,30 @@ async def _forward_event_to_runner(
                     agent=agent_name or "",
                 )
     except (httpx.HTTPError, ConnectionError) as exc:
-        _logger.exception(
-            "Forward to runner failed for session=%s",
-            session_id,
-        )
+        if isinstance(exc, httpx.HTTPStatusError):
+            runner_status = exc.response.status_code
+            _logger.exception(
+                "Runner rejected event forward for session=%s status=%d response_body=%r",
+                session_id,
+                runner_status,
+                exc.response.text[:500],
+            )
+            error_message = (
+                f"Runner rejected the message (status={runner_status}); "
+                "the message was persisted but was not accepted."
+            )
+        else:
+            _logger.exception(
+                "Forward to runner failed for session=%s",
+                session_id,
+            )
+            error_message = (
+                "Runner is unreachable; message was persisted but could not be delivered. "
+                "The runner may be restarting — retry or spawn a new session."
+            )
         _publish_status(session_id, "idle")
         raise OmnigentError(
-            "Runner is unreachable; message was persisted but could not be delivered. "
-            "The runner may be restarting — retry or spawn a new session.",
+            error_message,
             code=ErrorCode.RUNNER_UNAVAILABLE,
         ) from exc
 
