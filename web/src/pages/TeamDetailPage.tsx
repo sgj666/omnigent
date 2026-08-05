@@ -29,15 +29,34 @@ export function TeamDetailPage() {
 
   const initial = useMemo(() => {
     if (!team.data) return undefined;
-    const members = [toDraft(team.data.coordinator, "coordinator"), ...team.data.workers.map((worker, index) => toDraft(worker, `worker-${index + 1}`))];
+    const members = [
+      toDraft(team.data.coordinator, "coordinator"),
+      ...team.data.workers.map((worker, index) => toDraft(worker, `worker-${index + 1}`)),
+    ];
     return { name: team.data.name, members, workspaceId: "", executionMode: "auto" as const };
   }, [team.data]);
 
-  if (!isNew && team.isLoading) return <div className="flex min-h-full items-center justify-center text-sm text-muted-foreground">Loading team…</div>;
-  if (!isNew && (team.isError || !team.data)) return <div role="alert" className="p-8 text-sm text-destructive">Could not load this team.</div>;
+  if (!isNew && team.isLoading)
+    return (
+      <div className="flex min-h-full items-center justify-center text-sm text-muted-foreground">
+        Loading team…
+      </div>
+    );
+  if (!isNew && (team.isError || !team.data))
+    return (
+      <div role="alert" className="p-8 text-sm text-destructive">
+        Could not load this team.
+      </div>
+    );
 
   async function save(values: TeamFormValues) {
-    const members = values.members.map(({ id: _id, pairing, surface: memberSurface, ...member }) => ({ ...member, pairing, surface: memberSurface }));
+    const members = values.members.map(
+      ({ id: _id, pairing, surface: memberSurface, ...member }) => ({
+        ...member,
+        pairing,
+        surface: memberSurface,
+      }),
+    );
     if (isNew) {
       const created = await create.mutateAsync({ name: values.name, members });
       navigate(`/teams/${created.id}`);
@@ -49,15 +68,44 @@ export function TeamDetailPage() {
   const coordinator = initial?.members.find((member) => member.role === "coordinator");
   return (
     <PageScroll contentClassName="mx-auto w-full max-w-5xl px-6 py-8" extraBottom="2.5rem">
-      <div className="mb-6 flex items-center gap-3"><Link to="/teams" className="text-sm text-muted-foreground hover:underline">← Teams</Link><h1 className="text-2xl font-semibold">{isNew ? "Create team" : `Edit ${team.data?.name ?? "team"}`}</h1></div>
+      <div className="mb-6 flex items-center gap-3">
+        <Link to="/teams" className="text-sm text-muted-foreground hover:underline">
+          ← Teams
+        </Link>
+        <h1 className="text-2xl font-semibold">
+          {isNew ? "Create team" : `Edit ${team.data?.name ?? "team"}`}
+        </h1>
+      </div>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
-        <Card><CardHeader><CardTitle>Team Builder</CardTitle></CardHeader><CardContent><TeamForm initial={initial} workspaces={workspaces.data ?? []} onSubmit={save} submitting={create.isPending || update.isPending} /></CardContent></Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Team Builder</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <TeamForm
+              initial={initial}
+              workspaces={workspaces.data ?? []}
+              onSubmit={save}
+              submitting={create.isPending || update.isPending}
+            />
+          </CardContent>
+        </Card>
         <div className="space-y-6">
-          <FeishuPairingPanel pairing={coordinator?.pairing} onChange={() => setSurface((state) => ({ ...state, status: "ready" }))} />
-          <BotSurfacePanel surface={coordinator?.surface as BotSurfaceState | undefined ?? surface} onReinitialize={async () => setSurface({ status: "ready" })} />
+          <FeishuPairingPanel
+            pairing={coordinator?.pairing}
+            onChange={() => setSurface((state) => ({ ...state, status: "ready" }))}
+          />
+          <BotSurfacePanel
+            surface={(coordinator?.surface as BotSurfaceState | undefined) ?? surface}
+            onReinitialize={async () => setSurface({ status: "ready" })}
+          />
         </div>
       </div>
-      {(create.isError || update.isError) && <p role="alert" className="mt-4 text-sm text-destructive">{(create.error ?? update.error)?.message}</p>}
+      {(create.isError || update.isError) && (
+        <p role="alert" className="mt-4 text-sm text-destructive">
+          {(create.error ?? update.error)?.message}
+        </p>
+      )}
     </PageScroll>
   );
 }

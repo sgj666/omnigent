@@ -880,9 +880,7 @@ class SqlAlchemyRunStore:
                 raise ValueError("Run Child follow-up Attempt disappeared")
             if current.dispatch_call_id == idempotency_key:
                 return (
-                    "accepted"
-                    if current.status == AttemptStatus.RUNNING.value
-                    else "dispatching",
+                    "accepted" if current.status == AttemptStatus.RUNNING.value else "dispatching",
                     _attempt(current),
                 )
             return "conflict", _attempt(current)

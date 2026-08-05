@@ -236,9 +236,7 @@ async def register_host(
                         fut.set_result(
                             {
                                 "status": current_stop_status,
-                                "error": (
-                                    None if current_stop_status == "ok" else "stop boom"
-                                ),
+                                "error": (None if current_stop_status == "ok" else "stop boom"),
                             }
                         )
 
@@ -361,20 +359,23 @@ async def test_run_child_reserves_attempt_and_launches_in_two_repo_workspace(
 
     try:
         try:
-            output = await asyncio.wait_for(execute_tool(
-                tool_name="sys_session_send",
-                arguments=json.dumps(
-                    {
-                        "agent": "worker",
-                        "title": "implement both repos",
-                        "args": "implement both repos",
-                    }
+            output = await asyncio.wait_for(
+                execute_tool(
+                    tool_name="sys_session_send",
+                    arguments=json.dumps(
+                        {
+                            "agent": "worker",
+                            "title": "implement both repos",
+                            "args": "implement both repos",
+                        }
+                    ),
+                    server_client=_RecordingClient(),  # type: ignore[arg-type]
+                    conversation_id=root.id,
+                    agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="worker")]),
+                    session_inbox=session_inbox,
                 ),
-                server_client=_RecordingClient(),  # type: ignore[arg-type]
-                conversation_id=root.id,
-                agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="worker")]),
-                session_inbox=session_inbox,
-            ), timeout=10.0)
+                timeout=10.0,
+            )
         except TimeoutError:
             pytest.fail(f"tool dispatch timed out after requests: {requests}")
     finally:
@@ -441,16 +442,12 @@ async def test_run_child_reserves_attempt_and_launches_in_two_repo_workspace(
     assert cap.remove == []
     retained_terminal_leases = run_store.list_active_worktree_leases(run.id)
     assert len(retained_terminal_leases) == 2
-    assert {lease.status.value for lease in retained_terminal_leases} == {
-        "recovery_required"
-    }
+    assert {lease.status.value for lease in retained_terminal_leases} == {"recovery_required"}
     removed_at_terminal = len(cap.remove)
 
     followup_cap = register_host(
         launch_status=(
-            "failed"
-            if followup_outcome in {"launch_failed", "launch_stop_failed"}
-            else "launched"
+            "failed" if followup_outcome in {"launch_failed", "launch_stop_failed"} else "launched"
         ),
         stop_status=(
             ("ok", "failed")
@@ -571,9 +568,7 @@ async def test_run_child_reserves_attempt_and_launches_in_two_repo_workspace(
             assert failed_child["workspace"] == str(attempt_root)
             retained = run_store.list_active_worktree_leases(run.id)
             assert len(retained) == 2
-            assert {lease.status.value for lease in retained} == {
-                "recovery_required"
-            }
+            assert {lease.status.value for lease in retained} == {"recovery_required"}
             assert len(followup_cap.remove) == 2
             assert failed_child["runner_id"] is None
             assert len(followup_cap.launch) == 1
@@ -584,9 +579,7 @@ async def test_run_child_reserves_attempt_and_launches_in_two_repo_workspace(
     assert json.loads(followup)["conversation_id"] == child_id
     followup_leases = run_store.list_active_worktree_leases(run.id)
     assert len(followup_leases) == 2
-    followup_root = Path(
-        (await client.get(f"/v1/sessions/{child_id}")).json()["workspace"]
-    )
+    followup_root = Path((await client.get(f"/v1/sessions/{child_id}")).json()["workspace"])
     assert followup_root != attempt_root
     assert {lease.worktree_path for lease in followup_leases} == {
         str(followup_root / "api"),
@@ -603,9 +596,7 @@ async def test_run_child_reserves_attempt_and_launches_in_two_repo_workspace(
     assert second_terminal.status_code == 202, second_terminal.text
     retained_second_attempt = run_store.list_active_worktree_leases(run.id)
     assert len(retained_second_attempt) == 2
-    assert {lease.status.value for lease in retained_second_attempt} == {
-        "recovery_required"
-    }
+    assert {lease.status.value for lease in retained_second_attempt} == {"recovery_required"}
     assert len(followup_cap.remove) == 2
 
     retry_payload = {
@@ -708,9 +699,7 @@ async def test_run_child_reserves_attempt_and_launches_in_two_repo_workspace(
     assert third_terminal.status_code == 202, third_terminal.text
     retained_third_attempt = run_store.list_active_worktree_leases(run.id)
     assert len(retained_third_attempt) == 2
-    assert {lease.status.value for lease in retained_third_attempt} == {
-        "recovery_required"
-    }
+    assert {lease.status.value for lease in retained_third_attempt} == {"recovery_required"}
     assert len(followup_cap.remove) == 6
 
     deleted = await client.delete(f"/v1/sessions/{child_id}")
@@ -743,9 +732,7 @@ async def test_native_run_child_terminal_failure_tears_down_and_allows_new_attem
         files={"bundle": ("agent.tar.gz", bundle, "application/gzip")},
     )
     assert created_agent.status_code == 201, created_agent.text
-    agent_response = await client.get(
-        f"/v1/sessions/{created_agent.json()['session_id']}/agent"
-    )
+    agent_response = await client.get(f"/v1/sessions/{created_agent.json()['session_id']}/agent")
     assert agent_response.status_code == 200, agent_response.text
     agent = SqlAlchemyAgentStore(db_uri).get(agent_response.json()["id"])
     assert agent is not None
@@ -842,9 +829,7 @@ async def test_native_run_child_terminal_failure_tears_down_and_allows_new_attem
         assert run_store.get_run(run.id).status.value == "failed"
         retained_first_attempt = run_store.list_active_worktree_leases(run.id)
         assert len(retained_first_attempt) == 2
-        assert {lease.status.value for lease in retained_first_attempt} == {
-            "recovery_required"
-        }
+        assert {lease.status.value for lease in retained_first_attempt} == {"recovery_required"}
         assert cap.remove == []
         assert forwarded_statuses == [
             {
@@ -871,9 +856,7 @@ async def test_native_run_child_terminal_failure_tears_down_and_allows_new_attem
         assert attempts[1].status.value == "failed"
         retained_second_attempt = run_store.list_active_worktree_leases(run.id)
         assert len(retained_second_attempt) == 2
-        assert {lease.status.value for lease in retained_second_attempt} == {
-            "recovery_required"
-        }
+        assert {lease.status.value for lease in retained_second_attempt} == {"recovery_required"}
         assert len(cap.remove) == 2
         assert len(forwarded_statuses) == 2
     finally:

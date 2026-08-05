@@ -346,10 +346,7 @@ def test_followup_dispatch_claim_is_durable_across_store_instances(
             with result_lock:
                 errors.append(exc)
 
-    threads = [
-        threading.Thread(target=_claim, args=(store,))
-        for store in (store_a, store_b)
-    ]
+    threads = [threading.Thread(target=_claim, args=(store,)) for store in (store_a, store_b)]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -586,8 +583,7 @@ async def test_indeterminate_dispatch_failure_projects_run_wakes_parent_and_defe
         delivered_sources.add(source)
 
     monkeypatch.setattr(
-        "omnigent.server.routes._sessions.orchestration."
-        "_forward_native_subagent_terminal_failure",
+        "omnigent.server.routes._sessions.orchestration._forward_native_subagent_terminal_failure",
         _record_parent_wake,
     )
     from omnigent.server.routes._sessions import orchestration as orchestration_module
@@ -1575,9 +1571,7 @@ async def test_worktree_manager_restores_heartbeat_for_live_active_attempt_after
         conversation_store=conversations,
         liveness_lookup=lambda _ids: {},
     )
-    assert {lease.status for lease in restarted.for_attempt(attempt_id)} == {
-        LeaseStatus.ACTIVE
-    }
+    assert {lease.status for lease in restarted.for_attempt(attempt_id)} == {LeaseStatus.ACTIVE}
 
     now[0] = 105.0
     await restarted.reconcile_hydrated_active(
@@ -1595,9 +1589,7 @@ async def test_worktree_manager_restores_heartbeat_for_live_active_attempt_after
 
     assert recovered == ()
     assert removed == []
-    assert {lease.status for lease in restarted.for_attempt(attempt_id)} == {
-        LeaseStatus.ACTIVE
-    }
+    assert {lease.status for lease in restarted.for_attempt(attempt_id)} == {LeaseStatus.ACTIVE}
 
     expired_clock = [200.0]
     expired = WorktreeLeaseManager(

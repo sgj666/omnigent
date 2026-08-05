@@ -248,8 +248,7 @@ class WorktreeLeaseManager:
         if not records or any(lease.status is not LeaseStatus.ACTIVE for lease in records):
             return
         keys = {
-            (lease.workspace_id, lease.host_id, lease.attempt_id, lease.owner)
-            for lease in records
+            (lease.workspace_id, lease.host_id, lease.attempt_id, lease.owner) for lease in records
         }
         if len(keys) != 1:
             raise WorktreeLeaseError("heartbeat leases must belong to one attempt owner")
@@ -265,8 +264,7 @@ class WorktreeLeaseManager:
         """Stop the owner heartbeat task associated with *leases*."""
         records = tuple(leases)
         keys = {
-            (lease.workspace_id, lease.host_id, lease.attempt_id, lease.owner)
-            for lease in records
+            (lease.workspace_id, lease.host_id, lease.attempt_id, lease.owner) for lease in records
         }
         for key in keys:
             task = self._heartbeat_tasks.pop(key, None)
@@ -363,10 +361,7 @@ class WorktreeLeaseManager:
             and (lease.workspace_id, lease.attempt_id) not in self._hydrated_active_attempts
             and (
                 lease.status is LeaseStatus.RECOVERY_REQUIRED
-                or (
-                    lease.status is LeaseStatus.ACTIVE
-                    and now - lease.heartbeat_at >= self._ttl_s
-                )
+                or (lease.status is LeaseStatus.ACTIVE and now - lease.heartbeat_at >= self._ttl_s)
             )
         }
 
@@ -477,8 +472,7 @@ class WorktreeLeaseManager:
             and (safe_attempt_ids is None or lease.attempt_id in safe_attempt_ids)
             and not (
                 lease.status is LeaseStatus.ACTIVE
-                and (lease.workspace_id, lease.attempt_id)
-                in self._hydrated_active_attempts
+                and (lease.workspace_id, lease.attempt_id) in self._hydrated_active_attempts
             )
         )
         locks = self._lease_locks(candidates)

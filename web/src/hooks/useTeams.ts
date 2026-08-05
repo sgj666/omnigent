@@ -54,4 +54,3 @@ export function useUpdateTeam(teamId: string) {
     },
   });
 }
-

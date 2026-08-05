@@ -520,10 +520,13 @@ async def test_runner_recovers_durable_dispatch_after_process_restart(db_uri: st
                     )
                 )
                 await asyncio.wait_for(claim_persisted.wait(), timeout=2)
-                assert store.get_runner_dispatch_receipt(
-                    conversation_id,
-                    idempotency_key=key,
-                )["phase"] == "queued"
+                assert (
+                    store.get_runner_dispatch_receipt(
+                        conversation_id,
+                        idempotency_key=key,
+                    )["phase"]
+                    == "queued"
+                )
                 interrupted_post.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await interrupted_post
@@ -612,9 +615,7 @@ async def test_runner_recovers_durable_dispatch_after_process_restart(db_uri: st
                             response_id=f"turn_batch_{suffix}",
                             data=MessageData(
                                 role="user",
-                                content=[
-                                    {"type": "input_text", "text": f"batch {suffix}"}
-                                ],
+                                content=[{"type": "input_text", "text": f"batch {suffix}"}],
                             ),
                         )
                     ],
@@ -623,9 +624,7 @@ async def test_runner_recovers_durable_dispatch_after_process_restart(db_uri: st
                 batch_bodies.append(
                     {
                         **body,
-                        "content": [
-                            {"type": "input_text", "text": f"batch {suffix}"}
-                        ],
+                        "content": [{"type": "input_text", "text": f"batch {suffix}"}],
                         "idempotency_key": batch_key,
                         "persisted_item_id": batch_item.id,
                     }
@@ -737,8 +736,7 @@ async def test_runner_restart_recovers_multiple_native_dispatches_in_enqueue_ord
         )
 
     initial = [
-        store.get_runner_dispatch_receipt(conversation_id, idempotency_key=key)
-        for key in keys
+        store.get_runner_dispatch_receipt(conversation_id, idempotency_key=key) for key in keys
     ]
     assert [receipt["phase"] for receipt in initial if receipt is not None] == [
         "queued",
@@ -1274,9 +1272,7 @@ async def test_runner_shutdown_cancels_persistent_terminal_receipt_retry(
                         "role": "user",
                         "harness": _TEST_HARNESS_NAME,
                         "model": "fake/model",
-                        "content": [
-                            {"type": "input_text", "text": "finish then cancel"}
-                        ],
+                        "content": [{"type": "input_text", "text": "finish then cancel"}],
                         "idempotency_key": key,
                         "persisted_item_id": persisted.id,
                         "runner_id": runner_id,
@@ -1475,9 +1471,7 @@ async def test_runner_marks_cross_generation_running_dispatch_indeterminate(
                         response_id="turn_after_running_crash",
                         data=MessageData(
                             role="user",
-                            content=[
-                                {"type": "input_text", "text": "run only after failure"}
-                            ],
+                            content=[{"type": "input_text", "text": "run only after failure"}],
                         ),
                     )
                 ],
@@ -1488,9 +1482,7 @@ async def test_runner_marks_cross_generation_running_dispatch_indeterminate(
                 "role": "user",
                 "harness": _TEST_HARNESS_NAME,
                 "model": "fake/model",
-                "content": [
-                    {"type": "input_text", "text": "run only after failure"}
-                ],
+                "content": [{"type": "input_text", "text": "run only after failure"}],
                 "idempotency_key": queued_key,
                 "persisted_item_id": queued_item.id,
                 "runner_id": runner_id,
@@ -1543,9 +1535,7 @@ async def test_runner_marks_cross_generation_running_dispatch_indeterminate(
                         response_id="turn_after_fatal_recovery",
                         data=MessageData(
                             role="user",
-                            content=[
-                                {"type": "input_text", "text": "must stay queued"}
-                            ],
+                            content=[{"type": "input_text", "text": "must stay queued"}],
                         ),
                     )
                 ],
@@ -1785,9 +1775,7 @@ async def test_dispatch_receipt_api_requires_matching_runner_identity(db_uri: st
     assert anonymous.status_code == 401
     assert mismatch.status_code == 403
     assert recovery.status_code == 200
-    assert [entry["conversation_id"] for entry in recovery.json()["data"]] == [
-        conversation_ids[0]
-    ]
+    assert [entry["conversation_id"] for entry in recovery.json()["data"]] == [conversation_ids[0]]
     assert foreign.status_code == 403
     assert conversation_ids[1] not in foreign.text
 

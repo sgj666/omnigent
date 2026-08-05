@@ -49,9 +49,16 @@ class MemoryDeduper:
 class LarkAdapter:
     """Translate provider events into Coordinator requests only."""
 
-    def __init__(self, router: LarkRouter | None = None, *, signing_secret: str | None = None,
-                 nonce_ttl: int = 600, sender: Any = None, deduper: Any = None,
-                 signature_ttl: int = 300) -> None:
+    def __init__(
+        self,
+        router: LarkRouter | None = None,
+        *,
+        signing_secret: str | None = None,
+        nonce_ttl: int = 600,
+        sender: Any = None,
+        deduper: Any = None,
+        signature_ttl: int = 300,
+    ) -> None:
         self.router = router or LarkRouter()
         self.signing_secret = signing_secret
         self.nonce_ttl = nonce_ttl
@@ -84,8 +91,13 @@ class LarkAdapter:
             if isinstance(body, str)
             else json.dumps(body, separators=(",", ":"), sort_keys=True)
         )
-        if not verify_signature(timestamp=timestamp, nonce=action.nonce, body=encoded,
-                                secret=self.signing_secret, signature=signature):
+        if not verify_signature(
+            timestamp=timestamp,
+            nonce=action.nonce,
+            body=encoded,
+            secret=self.signing_secret,
+            signature=signature,
+        ):
             raise LarkRoutingError(
                 "invalid_signature", "Card action signature verification failed"
             )
@@ -112,8 +124,13 @@ class LarkAdapter:
         if expired:
             raise LarkRoutingError("invalid_signature", "Message signature expired")
         encoded = raw_body or json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-        if not verify_signature(timestamp=timestamp, nonce=nonce, body=encoded,
-                                secret=self.signing_secret, signature=signature):
+        if not verify_signature(
+            timestamp=timestamp,
+            nonce=nonce,
+            body=encoded,
+            secret=self.signing_secret,
+            signature=signature,
+        ):
             raise LarkRoutingError("invalid_signature", "Message signature verification failed")
 
     def _claim(self, key: str) -> bool:
@@ -167,8 +184,7 @@ class LarkAdapter:
                         payload = dict(payload)
                         payload.setdefault(
                             "signature",
-                            headers.get("X-Lark-Signature")
-                            or headers.get("X-Las-Signature"),
+                            headers.get("X-Lark-Signature") or headers.get("X-Las-Signature"),
                         )
                         payload.setdefault("timestamp", headers.get("X-Lark-Timestamp"))
                         payload.setdefault("nonce", headers.get("X-Lark-Nonce"))
@@ -224,8 +240,9 @@ class LarkAdapter:
         self._seen_events[event_id] = response
         return response
 
-    async def send_with_retry(self, message: Mapping[str, Any], *, attempts: int = 3,
-                              delay: float = 0.05) -> Any:
+    async def send_with_retry(
+        self, message: Mapping[str, Any], *, attempts: int = 3, delay: float = 0.05
+    ) -> Any:
         """Send through an injected client, retrying transient failures."""
         if self.sender is None:
             return message

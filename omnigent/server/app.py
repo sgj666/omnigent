@@ -2040,9 +2040,7 @@ def create_app(
             _on_indeterminate_dispatch_failure,
         )
 
-    app.state.replay_pending_runner_dispatch_effects = (
-        _replay_pending_runner_dispatch_effects
-    )
+    app.state.replay_pending_runner_dispatch_effects = _replay_pending_runner_dispatch_effects
 
     app.include_router(
         create_runner_dispatch_receipts_router(

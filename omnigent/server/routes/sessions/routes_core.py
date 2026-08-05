@@ -323,9 +323,7 @@ def register_core_routes(
         # POST /v1/hosts/{host_id}/runners via resolve_host_launch)
         # sees the grant.
         if permission_store is not None and user_id is not None:
-            await _guard_run_child_create(
-                asyncio.to_thread(permission_store.ensure_user, user_id)
-            )
+            await _guard_run_child_create(asyncio.to_thread(permission_store.ensure_user, user_id))
             await _guard_run_child_create(
                 asyncio.to_thread(permission_store.grant, user_id, resp.id, LEVEL_OWNER)
             )

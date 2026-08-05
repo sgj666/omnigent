@@ -3103,9 +3103,7 @@ def test_runner_dispatch_receipt_enforces_state_graph_and_item_fifo(
             execution_owner_id="generation-a",
         )
 
-    recovered = conversation_store.list_recoverable_runner_dispatch_receipts(
-        "runner-state-graph"
-    )
+    recovered = conversation_store.list_recoverable_runner_dispatch_receipts("runner-state-graph")
     assert [receipt["idempotency_key"] for receipt in recovered] == [
         "z-first",
         "a-second",

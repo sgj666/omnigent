@@ -1582,8 +1582,7 @@ async def test_native_subagent_message_uses_native_terminal_forward(
         "runner_id": None,
     }
     assert (
-        forwarded_event["body"]["idempotency_key"]
-        == forwarded_event["body"]["dispatch_source_id"]
+        forwarded_event["body"]["idempotency_key"] == forwarded_event["body"]["dispatch_source_id"]
     )
 
     items_resp = await client.get(f"/v1/sessions/{child['id']}/items")

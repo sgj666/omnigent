@@ -10,12 +10,25 @@ vi.mock("@/hooks/useTeams", () => ({
 }));
 vi.mock("@/hooks/useWorkspaces", () => ({ useWorkspaces: () => ({ data: [], isLoading: false }) }));
 vi.mock("@/hooks/useFeishuInstall", () => ({
-  useFeishuInstall: () => ({ mutateAsync: vi.fn().mockResolvedValue({ session: "s", status: "pending", verification_uri_complete: "https://example.test" }), isPending: false }),
+  useFeishuInstall: () => ({
+    mutateAsync: vi.fn().mockResolvedValue({
+      session: "s",
+      status: "pending",
+      verification_uri_complete: "https://example.test",
+    }),
+    isPending: false,
+  }),
   useFeishuInstallStatus: () => ({ data: undefined }),
 }));
 
 function renderPage() {
-  return render(<MemoryRouter initialEntries={["/teams/new"]}><Routes><Route path="/teams/:teamId" element={<TeamDetailPage />} /></Routes></MemoryRouter>);
+  return render(
+    <MemoryRouter initialEntries={["/teams/new"]}>
+      <Routes>
+        <Route path="/teams/:teamId" element={<TeamDetailPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
 }
 
 describe("TeamDetailPage", () => {

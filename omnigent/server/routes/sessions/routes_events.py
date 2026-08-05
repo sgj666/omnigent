@@ -1065,6 +1065,7 @@ def register_events_routes(
                     attempt_id=followup_attempt_id,
                     idempotency_key=dispatch_idempotency_key,
                 )
+
         # Item event (message, function_call_output, etc.).
         if (
             body.type == "message"
@@ -1266,9 +1267,7 @@ def register_events_routes(
                             )
                             await _cleanup_projected_run_attempt(
                                 terminal_projection,
-                                host_registry=getattr(
-                                    request.app.state, "host_registry", None
-                                ),
+                                host_registry=getattr(request.app.state, "host_registry", None),
                             )
                         return {"queued": True, "item_id": item_id}
                     relaunched_runner_id = launch_attempt.runner_id

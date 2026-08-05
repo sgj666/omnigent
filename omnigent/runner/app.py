@@ -334,6 +334,8 @@ _TERMINAL_RECEIPT_RETRY_MAX_DELAY_S = 5.0
 
 class _RetryableDispatchReceiptTransitionError(RuntimeError):
     """A transient AP response that may be retried without re-executing work."""
+
+
 # 4xx statuses that are transient and worth retrying (mirrors the forwarder's
 # classification): everything else in 4xx is a permanent client-side rejection.
 _WAKE_POST_TRANSIENT_4XX = frozenset({408, 409, 425, 429})
@@ -2004,9 +2006,7 @@ def create_runner_app(
                         f"dispatch receipt lookup failed ({existing.status_code})"
                     )
                 if existing.status_code >= 400:
-                    raise RuntimeError(
-                        f"dispatch receipt lookup failed ({existing.status_code})"
-                    )
+                    raise RuntimeError(f"dispatch receipt lookup failed ({existing.status_code})")
                 if existing.status_code < 400:
                     receipt = existing.json()
                     if isinstance(receipt, dict) and receipt.get("phase") == phase:
@@ -2020,9 +2020,7 @@ def create_runner_app(
                 await asyncio.sleep(0)
                 continue
             if response.status_code >= 400:
-                raise RuntimeError(
-                    f"dispatch receipt transition failed ({response.status_code})"
-                )
+                raise RuntimeError(f"dispatch receipt transition failed ({response.status_code})")
             receipt = response.json()
             return receipt if isinstance(receipt, dict) else None
         return None
@@ -8875,14 +8873,14 @@ def create_runner_app(
                 timeout=10.0,
             )
             if response.status_code >= 400:
-                raise RuntimeError(
-                    f"dispatch receipt recovery failed ({response.status_code})"
-                )
+                raise RuntimeError(f"dispatch receipt recovery failed ({response.status_code})")
             payload = response.json()
             entries = payload.get("data") if isinstance(payload, dict) else None
-            return [entry for entry in entries if isinstance(entry, dict)] if isinstance(
-                entries, list
-            ) else []
+            return (
+                [entry for entry in entries if isinstance(entry, dict)]
+                if isinstance(entries, list)
+                else []
+            )
 
         async def _recover_queued_entries(
             conversation_id: str,
@@ -8916,9 +8914,7 @@ def create_runner_app(
             buffered = _session_message_buffers.get(conversation_id)
             if buffered is not None:
                 remaining = [
-                    body
-                    for body in buffered
-                    if body.get("idempotency_key") not in active_keys
+                    body for body in buffered if body.get("idempotency_key") not in active_keys
                 ]
                 if remaining:
                     _session_message_buffers[conversation_id] = remaining
@@ -9004,9 +9000,7 @@ def create_runner_app(
                     )
                 refreshed = await _fetch_recoverable_entries()
                 refreshed_entries = [
-                    entry
-                    for entry in refreshed
-                    if entry.get("conversation_id") == conversation_id
+                    entry for entry in refreshed if entry.get("conversation_id") == conversation_id
                 ]
                 await _recover_queued_entries(conversation_id, refreshed_entries)
             except asyncio.CancelledError:

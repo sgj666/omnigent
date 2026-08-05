@@ -150,8 +150,12 @@ def decode_card_action(payload: Mapping[str, Any]) -> LarkCardAction:
         action_id=action_id,
         nonce=nonce,
         chat_id=chat_id,
-        thread_id=(event.get("thread_id") or context.get("thread_id")
-                   or context.get("open_thread_id") or value.get("thread_id")),
+        thread_id=(
+            event.get("thread_id")
+            or context.get("thread_id")
+            or context.get("open_thread_id")
+            or value.get("thread_id")
+        ),
         actor_id=actor_id,
         value=dict(value),
         signature=action.get("signature") or envelope.get("signature"),
@@ -168,9 +172,7 @@ def decode_event(payload: Mapping[str, Any] | bytes | str) -> LarkMessage | Lark
     header = payload.get("header", {})
     event_type = header.get("event_type") if isinstance(header, Mapping) else None
     event = payload.get("event", {})
-    if event_type == "card.action.trigger" or (
-        isinstance(event, Mapping) and "action" in event
-    ):
+    if event_type == "card.action.trigger" or (isinstance(event, Mapping) and "action" in event):
         return decode_card_action(payload)
     return decode_message(payload)
 

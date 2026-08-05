@@ -56,8 +56,7 @@ async def _apply_pending_effects(
         )
     except Exception:  # noqa: BLE001 - a fresh maintenance cycle retries the pending row
         _logger.warning(
-            "Runner dispatch effects completed but durable completion remains pending "
-            "for %s/%s",
+            "Runner dispatch effects completed but durable completion remains pending for %s/%s",
             conversation_id,
             idempotency_key,
             exc_info=True,
@@ -75,8 +74,7 @@ async def drain_pending_runner_dispatch_effects(
         conversation_store.list_pending_runner_dispatch_effects,
     )
     return [
-        await _apply_pending_effects(conversation_store, receipt, callback)
-        for receipt in receipts
+        await _apply_pending_effects(conversation_store, receipt, callback) for receipt in receipts
     ]
 
 
@@ -204,8 +202,7 @@ def create_runner_dispatch_receipts_router(
             on_indeterminate_failure is not None
             and receipt.get("effects_status") == "pending"
             and isinstance(receipt.get("result"), dict)
-            and receipt["result"].get("failure_code")
-            == _INDETERMINATE_FAILURE_CODE
+            and receipt["result"].get("failure_code") == _INDETERMINATE_FAILURE_CODE
         ):
             receipt = await _apply_pending_effects(
                 conversation_store,

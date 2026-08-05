@@ -114,8 +114,7 @@ class DAGScheduler:
             if (run_id is None or spec.task.run_id == run_id)
             and spec.task.status is TaskStatus.PENDING
             and all(
-                self._spec(dep).task.status is TaskStatus.COMPLETED
-                for dep in spec.task.depends_on
+                self._spec(dep).task.status is TaskStatus.COMPLETED for dep in spec.task.depends_on
             )
         )
 
@@ -234,9 +233,10 @@ class DAGScheduler:
         if self.team_concurrency is not None and len(active) >= self.team_concurrency:
             return False
         limit = self.profile_concurrency.get(profile_id)
-        if limit is not None and sum(
-            item.agent_profile_id == profile_id for item in active
-        ) >= limit:
+        if (
+            limit is not None
+            and sum(item.agent_profile_id == profile_id for item in active) >= limit
+        ):
             return False
         return True
 

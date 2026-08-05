@@ -2160,11 +2160,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                 # the whole INSERT aborts and the item never persists.
                 data = self._encode_item_data(strip_nul_bytes(json.dumps(data_dict)))
                 search = self._item_search_text(item)
-                item_id = (
-                    item_ids[index]
-                    if item_ids is not None
-                    else generate_item_id(item.type)
-                )
+                item_id = item_ids[index] if item_ids is not None else generate_item_id(item.type)
                 row = SqlConversationItem(
                     id=item_id,
                     conversation_id=conversation_id,
@@ -3358,9 +3354,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                 session.execute(
                     delete(SqlRunnerDispatchReceipt).where(
                         SqlRunnerDispatchReceipt.workspace_id == current_workspace_id(),
-                        SqlRunnerDispatchReceipt.phase.in_(
-                            ("completed", "failed", "cancelled")
-                        ),
+                        SqlRunnerDispatchReceipt.phase.in_(("completed", "failed", "cancelled")),
                         SqlRunnerDispatchReceipt.effects_status == "completed",
                         SqlRunnerDispatchReceipt.completed_at.is_not(None),
                         SqlRunnerDispatchReceipt.completed_at < now - 30 * 24 * 60 * 60,

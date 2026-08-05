@@ -67,15 +67,10 @@ def action_value(
 def build_workspace_menu() -> JsonObject:
     """Return the fixed menu contract shared by every Omnigent team bot."""
     return {
-        "top_entries": [
-            {"action": action, "label": label} for action, label in TOP_ENTRIES
-        ],
-        "quick_commands": [
-            {"action": action, "label": label} for action, label in QUICK_COMMANDS
-        ],
+        "top_entries": [{"action": action, "label": label} for action, label in TOP_ENTRIES],
+        "quick_commands": [{"action": action, "label": label} for action, label in QUICK_COMMANDS],
         "context_selectors": [
-            {"selector": selector, "label": label}
-            for selector, label in CONTEXT_SELECTORS
+            {"selector": selector, "label": label} for selector, label in CONTEXT_SELECTORS
         ],
     }
 

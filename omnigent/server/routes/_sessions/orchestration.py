@@ -4016,6 +4016,8 @@ async def _forward_native_terminal_message(
             detail=f"{display_name} terminal message delivery failed: {failure}",
         )
     return persisted_item_id
+
+
 async def _persist_session_event(
     session_id: str,
     body: SessionEventInput,

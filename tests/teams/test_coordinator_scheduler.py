@@ -33,10 +33,18 @@ def test_completed_worker_unblocks_review_without_human_comment() -> None:
     coordinator.on_worker_completed("run-1", "task-1", attempts[0].id)
 
     assert coordinator.task("review-task").status is TaskStatus.RUNNING
-    assert coordinator.scheduler.attempts[next(iter(
-        attempt.id for attempt in coordinator.scheduler.active_attempts()
-        if attempt.task_id == "review-task"
-    ))].agent_profile_id == "reviewer"
+    assert (
+        coordinator.scheduler.attempts[
+            next(
+                iter(
+                    attempt.id
+                    for attempt in coordinator.scheduler.active_attempts()
+                    if attempt.task_id == "review-task"
+                )
+            )
+        ].agent_profile_id
+        == "reviewer"
+    )
     assert coordinator.wake_count("run-1") == 1
 
 
@@ -151,9 +159,7 @@ def test_failure_is_recorded_in_injected_ledger() -> None:
     )
     coordinator.add_task(Task("task-1", "run-1", "implementation"))
     attempt = coordinator.start_run("run-1")[0]
-    coordinator.on_attempt_failed(
-        "run-1", "task-1", attempt.id, failure_code="EXIT", exit_code=1
-    )
+    coordinator.on_attempt_failed("run-1", "task-1", attempt.id, failure_code="EXIT", exit_code=1)
     assert len(ledger.failures) == 1
     assert ledger.failures[0][1].failure_code == "EXIT"  # type: ignore[union-attr]
     repeated = coordinator.on_attempt_failed(

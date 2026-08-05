@@ -104,11 +104,7 @@ class SurfaceResult:
         ):
             return None
         surface_type: SurfaceType = (
-            "menu"
-            if status == "ready"
-            else "persistent_card"
-            if status == "partial"
-            else "none"
+            "menu" if status == "ready" else "persistent_card" if status == "partial" else "none"
         )
         return cls(
             installation_id=installation_id,

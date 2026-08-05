@@ -469,9 +469,7 @@ async def _confirm_recovery_attempts_stopped(
             continue
         child_id = leases[0].child_session_id
         child = (
-            conversation_store.get_conversation(child_id)
-            if isinstance(child_id, str)
-            else None
+            conversation_store.get_conversation(child_id) if isinstance(child_id, str) else None
         )
         runner_id = getattr(child, "runner_id", None) if child is not None else None
         if child is None:

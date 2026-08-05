@@ -48,18 +48,29 @@ class LarkRouter:
     optional callable for SQL-backed deployments and receives ``(chat, thread)``.
     """
 
-    def __init__(self, *, bindings: Mapping[tuple[str, str | None], RouteContext] | None = None,
-                 resolver: Callable[[str, str | None], RouteContext | None] | None = None,
-                 coordinator_callback: Callable[[RunRequest], Any] | None = None,
-                 action_callback: Callable[[RouteContext, LarkCardAction], Any] | None = None,
-                 ) -> None:
+    def __init__(
+        self,
+        *,
+        bindings: Mapping[tuple[str, str | None], RouteContext] | None = None,
+        resolver: Callable[[str, str | None], RouteContext | None] | None = None,
+        coordinator_callback: Callable[[RunRequest], Any] | None = None,
+        action_callback: Callable[[RouteContext, LarkCardAction], Any] | None = None,
+    ) -> None:
         self.bindings = dict(bindings or {})
         self.resolver = resolver
         self.coordinator_callback = coordinator_callback
         self.action_callback = action_callback
 
-    def bind(self, chat_id: str, team: Any, coordinator: Any, *, thread_id: str | None = None,
-             workspace_id: str | None = None, members: set[str] | None = None) -> RouteContext:
+    def bind(
+        self,
+        chat_id: str,
+        team: Any,
+        coordinator: Any,
+        *,
+        thread_id: str | None = None,
+        workspace_id: str | None = None,
+        members: set[str] | None = None,
+    ) -> RouteContext:
         context = RouteContext(team, coordinator, workspace_id, set(members or ()))
         self.bindings[(chat_id, thread_id)] = context
         return context
@@ -91,8 +102,17 @@ class LarkRouter:
             raise LarkRoutingError("forbidden", "Lark member is not allowed to send messages")
         team_id = self._id(context.team)
         coordinator_id = self._id(context.coordinator)
-        request = RunRequest(event.text, "coordinator", event.sender_id, team_id, coordinator_id,
-                             context.workspace_id, event.chat_id, event.thread_id, event.mentions)
+        request = RunRequest(
+            event.text,
+            "coordinator",
+            event.sender_id,
+            team_id,
+            coordinator_id,
+            context.workspace_id,
+            event.chat_id,
+            event.thread_id,
+            event.mentions,
+        )
         if self.coordinator_callback is not None:
             return self.coordinator_callback(request)
         coordinator = context.coordinator
