@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+_logger = logging.getLogger(__name__)
 
 REGISTRATION_URL = "https://accounts.feishu.cn/oauth/v1/app/registration"
 FORM_HEADERS = {"Content-Type": "application/x-www-form-urlencoded"}
@@ -50,6 +53,16 @@ class FeishuRegistration:
 
 def _text(value: object) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _extract_bot(response: object) -> object:
+    """Read bot info from either the nested ``data.bot`` or top-level ``bot`` envelope."""
+    if not isinstance(response, Mapping):
+        return None
+    data = response.get("data")
+    if isinstance(data, Mapping) and "bot" in data:
+        return data.get("bot")
+    return response.get("bot")
 
 
 class FeishuPersonalAgentDeviceFlow:
@@ -199,9 +212,14 @@ class FeishuPersonalAgentDeviceFlow:
             None,
             {"Authorization": f"Bearer {token}"},
         )
-        data = response.get("data", {})
-        bot = data.get("bot") if isinstance(data, Mapping) else None
+        bot = _extract_bot(response)
         if not isinstance(bot, Mapping) or _text(bot.get("open_id")) is None:
+            _logger.warning(
+                "Feishu bot info envelope unrecognised app_id=%s response_keys=%s "
+                "— expected top-level 'bot' or nested 'data.bot' with open_id",
+                app_id,
+                sorted(response) if isinstance(response, Mapping) else type(response).__name__,
+            )
             raise FeishuDeviceFlowError("protocol", "Feishu returned invalid bot info")
         return dict(bot)
 
