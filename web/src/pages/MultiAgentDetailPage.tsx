@@ -28,6 +28,7 @@ import {
   useUpdateMultiAgent,
 } from "@/hooks/useMultiAgents";
 import { useAgentFeishuConnection } from "@/hooks/useFeishuInstall";
+import { useHostModelOptions, useHosts } from "@/hooks/useHosts";
 import {
   buildConfigPatches,
   DraftJsonError,
@@ -132,6 +133,13 @@ function draftWorkerName(worker: EditableFile): string {
   return worker.pending ? worker.visual.name.trim() || worker.name : worker.name;
 }
 
+function modelPreviewHarness(harness: string): string | null {
+  if (["claude", "claude_sdk", "claude-sdk", "claude-native"].includes(harness))
+    return "claude-native";
+  if (["codex", "codex-native"].includes(harness)) return "codex-native";
+  return null;
+}
+
 function CreateBundleForm() {
   const { t } = useTranslation("agents", { keyPrefix: "multiAgent" });
   const create = useCreateMultiAgent();
@@ -210,6 +218,7 @@ export function MultiAgentDetailPage() {
   const bundle = useMultiAgent(isNew ? null : agentId);
   const formSchema = useAgentFormSchema(!isNew);
   const bundleOptions = useAgentBundleOptions(!isNew);
+  const hosts = useHosts({ enabled: !isNew });
   const feishuConnection = useAgentFeishuConnection(agentId ?? "", !isNew && Boolean(agentId));
   const update = useUpdateMultiAgent();
   const [mode, setMode] = useState("visual");
@@ -307,6 +316,40 @@ export function MultiAgentDetailPage() {
   const selected =
     allFiles.find((file) => file.path === selectedPath) ??
     (selectedRaw ? undefined : (coordinator ?? workers[0]));
+  const previewHostId = hosts.data?.find((host) => host.status === "online")?.host_id ?? null;
+  const previewHarness = modelPreviewHarness(selected?.visual.harness ?? "");
+  const hostModels = useHostModelOptions(
+    previewHostId,
+    previewHarness ?? "",
+    !isNew && previewHarness !== null,
+  );
+  const modelOptions = useMemo(() => {
+    const hosted = (hostModels.data ?? []).map((model) => ({
+      id: model.model || model.id,
+      label: model.displayName || model.id,
+    }));
+    if (hosted.length > 0) return hosted;
+    const advertised: { id: string; label: string }[] = [];
+    for (const model of bundleOptions.data?.models ?? []) {
+      const modelHarness = typeof model.harness === "string" ? model.harness : null;
+      if (modelHarness && modelHarness !== selected?.visual.harness) continue;
+      const id =
+        typeof model.model === "string"
+          ? model.model
+          : typeof model.id === "string"
+            ? model.id
+            : null;
+      if (!id) continue;
+      const label =
+        typeof model.label === "string"
+          ? model.label
+          : typeof model.displayName === "string"
+            ? model.displayName
+            : id;
+      advertised.push({ id, label });
+    }
+    return advertised;
+  }, [bundleOptions.data?.models, hostModels.data, selected?.visual.harness]);
   const readonly = bundle.data?.card.readonly === true || bundle.data?.card.editable === false;
   const hasInvalidYaml = allFiles.some((file) => file.yamlDiagnostic !== null);
   const feishuStatus = feishuConnection.data?.status ?? "disconnected";
@@ -870,6 +913,7 @@ export function MultiAgentDetailPage() {
                           key={selected.path}
                           schema={formSchema.data}
                           harnesses={bundleOptions.data?.harnesses}
+                          models={modelOptions}
                           workerNames={workers.map(draftWorkerName)}
                           value={selected.visual}
                           onChange={(visual) =>

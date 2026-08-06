@@ -14,6 +14,7 @@ const hooks = vi.hoisted(() => ({
   detail: vi.fn(),
   schema: vi.fn(),
   options: vi.fn(),
+  hostModels: vi.fn(),
   create: { mutateAsync: vi.fn(), isPending: false, isError: false, error: null },
   update: { mutateAsync: vi.fn(), isPending: false, isError: false, error: null },
   feishuConnection: vi.fn(),
@@ -47,6 +48,7 @@ vi.mock("@/hooks/useWorkspaces", () => ({
 
 vi.mock("@/hooks/useHosts", () => ({
   useHosts: () => ({ data: [{ host_id: "host_1", name: "Local Mac", status: "online" }] }),
+  useHostModelOptions: (...args: unknown[]) => hooks.hostModels(...args),
 }));
 
 vi.mock("@/hooks/useFeishuInstall", () => ({
@@ -154,6 +156,7 @@ describe("MultiAgentDetailPage", () => {
         environment: [],
       },
     });
+    hooks.hostModels.mockReturnValue({ data: [], isLoading: false, isError: false });
     hooks.update.mutateAsync.mockResolvedValue({ ...data, version: data.version + 1 });
     hooks.feishuConnection.mockReturnValue({ data: null, isLoading: false, error: null });
   });
@@ -162,12 +165,50 @@ describe("MultiAgentDetailPage", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "My bundle" })).toBeVisible();
-    expect(screen.getByLabelText("Model")).toHaveValue("");
+    expect(screen.getByLabelText("Model")).toHaveTextContent("Use local default");
     expect(screen.getAllByText("Use local default")).not.toHaveLength(0);
     expect(screen.getByRole("tab", { name: "Visual" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "Advanced YAML" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Connect Feishu" })).toBeVisible();
     expect(screen.getByText("Not connected")).toBeVisible();
+  });
+
+  it("selects a model from the online Host catalog and keeps the prompt compact", async () => {
+    hooks.hostModels.mockReturnValue({
+      data: [
+        {
+          id: "sonnet",
+          model: "provider-model",
+          displayName: "Sonnet",
+        },
+      ],
+      isLoading: false,
+      isError: false,
+    });
+
+    renderPage();
+
+    expect(hooks.hostModels).toHaveBeenLastCalledWith("host_1", "codex-native", true);
+    expect(screen.getByLabelText("Prompt")).toHaveClass(
+      "h-44",
+      "min-h-32",
+      "resize-y",
+      "overflow-y-auto",
+    );
+    fireEvent.pointerDown(screen.getByLabelText("Model"), {
+      button: 0,
+      pointerType: "mouse",
+    });
+    fireEvent.click(screen.getByText("Sonnet"));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(hooks.update.mutateAsync).toHaveBeenCalledOnce());
+    expect(hooks.update.mutateAsync.mock.calls[0][0].request.patches).toContainEqual({
+      file: "config.yaml",
+      op: "add",
+      path: "/executor/model",
+      value: "provider-model",
+    });
   });
 
   it("surfaces structured diagnostics without mixing run controls into the editor", () => {

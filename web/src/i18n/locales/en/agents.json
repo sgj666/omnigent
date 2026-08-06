@@ -191,6 +191,7 @@
       "model": "Model",
       "localDefault": "Use local default",
       "localDefaultHelp": "Leave blank to omit the model field and use the local runtime default.",
+      "modelCatalogEmpty": "The current runtime has not returned a model catalog from an online Host yet. The local default is the safest choice.",
       "identity": "Basic settings",
       "identityHelp": "Set this Agent's identity and runtime.",
       "descriptionHelp": "Summarize this Agent's responsibility in one sentence. This appears in team lists and pickers.",

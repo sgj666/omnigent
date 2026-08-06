@@ -24,6 +24,7 @@ import type { AgentConfigDraft } from "@/lib/multiAgentDraft";
 
 const LOCAL_DEFAULT = "__local_default__";
 const EMPTY_HARNESSES: AgentHarnessOption[] = [];
+const EMPTY_MODEL_OPTIONS: { id: string; label: string }[] = [];
 const EMPTY_STRINGS: string[] = [];
 const STRUCTURED_FIELDS = ["tools", "skills", "mcp", "environment", "guardrails"] as const;
 const SYSTEM_PATHS = new Set(["/spec_version", "/executor/type"]);
@@ -585,6 +586,7 @@ export function AgentConfigEditor({
   disabled = false,
   schema,
   harnesses = EMPTY_HARNESSES,
+  models = EMPTY_MODEL_OPTIONS,
   workerNames = EMPTY_STRINGS,
 }: {
   value: AgentConfigDraft;
@@ -592,6 +594,7 @@ export function AgentConfigEditor({
   disabled?: boolean;
   schema?: AgentFormSchema;
   harnesses?: AgentHarnessOption[];
+  models?: { id: string; label: string }[];
   workerNames?: string[];
 }) {
   const { t } = useTranslation("agents", { keyPrefix: "multiAgent" });
@@ -628,6 +631,11 @@ export function AgentConfigEditor({
       ? harnesses
       : [{ id: value.harness, label: value.harness }, ...harnesses]
     : harnesses;
+  const modelOptions = value.model
+    ? models.some((option) => option.id === value.model)
+      ? models
+      : [{ id: value.model, label: value.model }, ...models]
+    : models;
   const visibleStructuredFields = STRUCTURED_FIELDS.filter(
     (field) => showUnusedAdvanced || isConfigured(value[field]),
   );
@@ -690,15 +698,25 @@ export function AgentConfigEditor({
             />
           </Field>
           <Field label={t("fields.model")} help={t("fields.localDefaultHelp")}>
-            <Input
-              aria-label={t("fields.model")}
-              value={value.model}
-              onChange={(event) => set("model", event.target.value)}
-              placeholder={t("fields.localDefault")}
+            <Select
+              value={value.model || LOCAL_DEFAULT}
+              onValueChange={(next) => set("model", next === LOCAL_DEFAULT ? "" : next)}
               disabled={disabled}
-            />
-            {!value.model && (
-              <p className="text-xs font-medium text-primary">{t("fields.localDefault")}</p>
+            >
+              <SelectTrigger aria-label={t("fields.model")} className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={LOCAL_DEFAULT}>{t("fields.localDefault")}</SelectItem>
+                {modelOptions.map((model) => (
+                  <SelectItem key={model.id} value={model.id}>
+                    {model.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {modelOptions.length === 0 && (
+              <p className="text-xs text-muted-foreground">{t("fields.modelCatalogEmpty")}</p>
             )}
           </Field>
         </div>
@@ -711,7 +729,7 @@ export function AgentConfigEditor({
         </div>
         <Textarea
           aria-label={t("fields.prompt")}
-          className="min-h-56 font-mono text-xs leading-relaxed"
+          className="h-44 min-h-32 max-h-[70vh] resize-y overflow-y-auto font-mono text-xs leading-relaxed"
           value={value.prompt}
           onChange={(event) => set("prompt", event.target.value)}
           disabled={disabled}

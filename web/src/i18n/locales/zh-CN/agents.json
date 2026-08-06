@@ -191,6 +191,7 @@
       "model": "模型",
       "localDefault": "使用本地默认",
       "localDefaultHelp": "留空将省略 model 字段，并使用本地运行时默认模型。",
+      "modelCatalogEmpty": "当前运行框架尚未从在线 Host 返回模型目录；使用本地默认最稳妥。",
       "identity": "基本设置",
       "identityHelp": "设置这个 Agent 的身份与运行方式。",
       "descriptionHelp": "用一句话说明它负责什么，团队成员列表和选择器会展示这段说明。",
