@@ -35,7 +35,7 @@ class FakeCore:
 
     async def list_hosts(self):
         return {
-            "data": [
+            "hosts": [
                 {"host_id": "host-1", "name": "Local Mac", "status": "online"},
                 {"host_id": "host-2", "name": "Build Mac", "status": "online"},
             ]
@@ -340,6 +340,40 @@ async def test_workspace_card_switches_only_to_an_agent_authorized_directory(tmp
     assert refreshed.id == binding.id
     assert refreshed.workspace_id == "/Users/test/new"
     assert refreshed.host_id == "host-2"
+
+
+@pytest.mark.asyncio
+async def test_manage_devices_card_uses_the_core_hosts_contract(tmp_path) -> None:
+    store = FeishuStore(tmp_path / "provider.db")
+    await store.initialize()
+    installation = await store.create_pending_installation(
+        agent_id="ag_polly", session="s", verification_uri="https://qr"
+    )
+    await store.bind_thread(
+        installation_id=installation.id,
+        chat_id="chat",
+        thread_id=None,
+        agent_id="ag_polly",
+        workspace_id="/Users/test/workspace",
+        host_id="host-1",
+    )
+    value = action_value(
+        "manage_devices", signing_secret="secret", nonce="devices", agent_id="ag_polly"
+    )
+
+    result = await FeishuRouter(store, FakeCore(), action_secret="secret").route_action(
+        FeishuCardAction(
+            "evt-devices", "manage_devices", "devices", "chat", None, "ou_sender", value
+        ),
+        installation.id,
+    )
+
+    assert isinstance(result.payload, dict)
+    actions = result.payload["guide_card"]["elements"][1]["actions"]
+    assert [action["text"]["content"] for action in actions] == [
+        "🖥️ Local Mac",
+        "🖥️ Build Mac",
+    ]
 
 
 @pytest.mark.asyncio

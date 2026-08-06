@@ -332,7 +332,11 @@ class FeishuRouter:
         elif action == "manage_devices":
             host_id = value.get("host_id")
             hosts_payload = await self._core.list_hosts()
-            rows = hosts_payload.get("data", []) if isinstance(hosts_payload, dict) else []
+            rows = hosts_payload.get("hosts") if isinstance(hosts_payload, dict) else []
+            if not isinstance(rows, list) and isinstance(hosts_payload, dict):
+                rows = hosts_payload.get("data", [])
+            if not isinstance(rows, list):
+                rows = []
             hosts = [
                 (str(row["host_id"]), str(row.get("name") or row["host_id"]))
                 for row in rows
