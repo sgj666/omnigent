@@ -77,11 +77,9 @@ def test_credentials_and_cards_are_secret_safe() -> None:
         for button in element["actions"]
     ]
     assert {button["value"]["action_id"] for button in guide_actions} == {
-        "new_session",
-        "create_task",
+        "quick_commands",
+        "manage_devices",
         "switch_workspace",
-        "create_workspace",
-        "help",
     }
 
 

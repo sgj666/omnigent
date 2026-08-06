@@ -12,6 +12,8 @@ import {
   reinitializeAgentFeishuSurface,
   getAgentDefaultWorkspaceScope,
   setAgentDefaultWorkspaceScope,
+  getAgentFeishuSurfaceProfile,
+  setAgentFeishuSurfaceProfile,
   type AgentFeishuBinding,
   type AgentFeishuInstallation,
   type AgentFeishuSurface,
@@ -19,6 +21,7 @@ import {
   type FeishuInstallSession,
   type AgentFeishuWorkspaceScopeInput,
   type AgentDefaultWorkspaceScope,
+  type AgentFeishuSurfaceProfile,
 } from "@/lib/feishuApi";
 
 export const feishuInstallQueryKey = ["feishu-install"] as const;
@@ -27,6 +30,32 @@ export const agentFeishuSurfaceQueryKey = (agentId: string) =>
   ["agent-feishu", agentId, "surface"] as const;
 export const agentDefaultWorkspaceQueryKey = (agentId: string) =>
   ["agent-default-workspace", agentId] as const;
+export const agentFeishuSurfaceProfileQueryKey = (agentId: string) =>
+  ["agent-feishu", agentId, "surface-profile"] as const;
+
+export function useAgentFeishuSurfaceProfile(agentId: string, enabled = true) {
+  return useQuery<AgentFeishuSurfaceProfile>({
+    queryKey: agentFeishuSurfaceProfileQueryKey(agentId),
+    queryFn: () => getAgentFeishuSurfaceProfile(agentId),
+    enabled,
+  });
+}
+
+export function useSetAgentFeishuSurfaceProfile() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    AgentFeishuSurfaceProfile,
+    Error,
+    {
+      agentId: string;
+      input: Pick<AgentFeishuSurfaceProfile, "details_base_url" | "actions">;
+    }
+  >({
+    mutationFn: ({ agentId, input }) => setAgentFeishuSurfaceProfile(agentId, input),
+    onSuccess: (profile, { agentId }) =>
+      queryClient.setQueryData(agentFeishuSurfaceProfileQueryKey(agentId), profile),
+  });
+}
 
 export function useAgentDefaultWorkspaceScope(agentId: string, enabled = true) {
   return useQuery<AgentDefaultWorkspaceScope | null>({

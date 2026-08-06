@@ -53,6 +53,7 @@ def create_app(
             adapter,
             surface_provisioner=surface_provisioner,
             installation_connected=realtime.start_installation,
+            surface_profile_changed=realtime.sync_agent_surface,
         )
     )
 

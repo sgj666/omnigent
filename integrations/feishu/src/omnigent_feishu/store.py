@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS agent_default_scopes (
   agent_id TEXT PRIMARY KEY, workspace TEXT NOT NULL, host_id TEXT NOT NULL,
   updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS agent_workspace_scopes (
+  agent_id TEXT NOT NULL, host_id TEXT NOT NULL, workspace TEXT NOT NULL,
+  updated_at INTEGER NOT NULL, PRIMARY KEY(agent_id,host_id,workspace)
+);
+CREATE TABLE IF NOT EXISTS agent_surface_profiles (
+  agent_id TEXT PRIMARY KEY, details_base_url TEXT NOT NULL,
+  actions TEXT NOT NULL, updated_at INTEGER NOT NULL
+);
 """
 
 _INSTALLATION_COLUMNS = {
@@ -373,7 +381,64 @@ class FeishuStore:
                 (agent_id,workspace,host_id,updated_at) VALUES(?,?,?,?)""",
                 (agent_id, workspace, host_id, self._clock()),
             )
+            await db.execute(
+                """INSERT INTO agent_workspace_scopes
+                (agent_id,host_id,workspace,updated_at) VALUES(?,?,?,?)
+                ON CONFLICT(agent_id,host_id,workspace) DO UPDATE SET
+                updated_at=excluded.updated_at""",
+                (agent_id, host_id, workspace, self._clock()),
+            )
             await db.commit()
+
+    async def list_agent_workspace_scopes(
+        self, agent_id: str, *, host_id: str | None = None
+    ) -> list[tuple[str, str]]:
+        query = """SELECT workspace,host_id FROM agent_workspace_scopes
+                   WHERE agent_id=?"""
+        params: tuple[object, ...] = (agent_id,)
+        if host_id is not None:
+            query += " AND host_id=?"
+            params = (agent_id, host_id)
+        query += " ORDER BY updated_at DESC,workspace"
+        async with aiosqlite.connect(self.path) as db:
+            rows = await (await db.execute(query, params)).fetchall()
+        return [(str(row[0]), str(row[1])) for row in rows]
+
+    async def get_agent_surface_profile(self, agent_id: str) -> Mapping[str, object] | None:
+        async with aiosqlite.connect(self.path) as db:
+            row = await (
+                await db.execute(
+                    """SELECT details_base_url,actions,updated_at
+                    FROM agent_surface_profiles WHERE agent_id=?""",
+                    (agent_id,),
+                )
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "details_enabled": True,
+            "details_base_url": str(row[0]),
+            "actions": json.loads(row[1]),
+            "updated_at": int(row[2]),
+        }
+
+    async def set_agent_surface_profile(
+        self, agent_id: str, *, details_base_url: str, actions: list[str]
+    ) -> Mapping[str, object]:
+        now = self._clock()
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """INSERT INTO agent_surface_profiles
+                (agent_id,details_base_url,actions,updated_at) VALUES(?,?,?,?)
+                ON CONFLICT(agent_id) DO UPDATE SET
+                details_base_url=excluded.details_base_url,
+                actions=excluded.actions,updated_at=excluded.updated_at""",
+                (agent_id, details_base_url, json.dumps(actions), now),
+            )
+            await db.commit()
+        profile = await self.get_agent_surface_profile(agent_id)
+        assert profile is not None
+        return profile
 
     async def delete_agent_installation(self, agent_id: str) -> bool:
         async with aiosqlite.connect(self.path) as db:

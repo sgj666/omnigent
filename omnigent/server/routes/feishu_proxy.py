@@ -110,6 +110,11 @@ def create_feishu_proxy_router(
     async def default_workspace_scope(request: Request, agent_id: str) -> Response:
         return await forward(request, f"/v1/agents/{agent_id}/feishu/default-workspace")
 
+    @router.get("/agents/{agent_id}/feishu/surface-profile")
+    @router.put("/agents/{agent_id}/feishu/surface-profile")
+    async def surface_profile(request: Request, agent_id: str) -> Response:
+        return await forward(request, f"/v1/agents/{agent_id}/feishu/surface-profile")
+
     @router.get("/agents/{agent_id}/feishu/surface/status")
     async def surface_status(request: Request, agent_id: str) -> Response:
         return await forward(request, f"/v1/agents/{agent_id}/feishu/surface/status")

@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from dataclasses import asdict
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -23,6 +24,7 @@ from omnigent_feishu.protocol import FeishuProtocolError
 from omnigent_feishu.router import FeishuRoutingError
 from omnigent_feishu.store import FeishuStore
 from omnigent_feishu.surface import BotSurfaceProvisioner, enrich_surface
+from omnigent_feishu.surface_profile import ALLOWED_SURFACE_ACTIONS, surface_profile
 
 
 class BindingRequest(BaseModel):
@@ -38,6 +40,11 @@ class BindingRequest(BaseModel):
 class WorkspaceScopeRequest(BaseModel):
     workspace: str = Field(min_length=1)
     host_id: str = Field(min_length=1)
+
+
+class SurfaceProfileRequest(BaseModel):
+    details_base_url: str = Field(min_length=1)
+    actions: list[str] = Field(default_factory=list)
 
 
 def _installation(value: Any, *, now: int) -> dict[str, object]:
@@ -107,6 +114,7 @@ def create_feishu_router(
     *,
     surface_provisioner: BotSurfaceProvisioner | None = None,
     installation_connected: Callable[[Any], Awaitable[None]] | None = None,
+    surface_profile_changed: Callable[[str], Awaitable[Mapping[str, object]]] | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -166,7 +174,38 @@ def create_feishu_router(
         if not workspace.startswith("/"):
             raise HTTPException(422, {"code": "workspace_must_be_absolute"})
         await store.set_agent_default_scope(agent_id, workspace=workspace, host_id=body.host_id)
+        installation = await store.get_agent_installation(agent_id)
+        if installation is not None:
+            await store.set_installation_workspace_scope(
+                installation.id, workspace=workspace, host_id=body.host_id
+            )
         return {"workspace": workspace, "host_id": body.host_id}
+
+    @router.get("/v1/agents/{agent_id}/feishu/surface-profile")
+    async def get_surface_profile(agent_id: str) -> dict[str, object]:
+        payload = surface_profile(await store.get_agent_surface_profile(agent_id))
+        sync = await store.get_meta(f"surface_sync:{agent_id}")
+        if sync:
+            with suppress(ValueError):
+                payload["sync"] = json.loads(sync)
+        return payload
+
+    @router.put("/v1/agents/{agent_id}/feishu/surface-profile")
+    async def set_surface_profile(agent_id: str, body: SurfaceProfileRequest) -> dict[str, object]:
+        parsed = urlparse(body.details_base_url.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise HTTPException(422, {"code": "details_url_must_be_http"})
+        unknown = set(body.actions) - ALLOWED_SURFACE_ACTIONS
+        if unknown:
+            raise HTTPException(422, {"code": "unknown_surface_action"})
+        actions = list(dict.fromkeys(body.actions))
+        profile = await store.set_agent_surface_profile(
+            agent_id,
+            details_base_url=body.details_base_url.strip().rstrip("/"),
+            actions=actions,
+        )
+        sync = await surface_profile_changed(agent_id) if surface_profile_changed else None
+        return {**dict(profile), **({"sync": sync} if sync else {})}
 
     @router.get("/v1/agents/{agent_id}/feishu/installations/{session}")
     async def poll_install(agent_id: str, session: str) -> dict[str, object]:
@@ -329,4 +368,4 @@ def create_feishu_router(
     return router
 
 
-__all__ = ["BindingRequest", "create_feishu_router"]
+__all__ = ["BindingRequest", "SurfaceProfileRequest", "create_feishu_router"]

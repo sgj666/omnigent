@@ -33,6 +33,14 @@ class FakeCore:
         self.calls.append({"get_session_items_id": session_id})
         return {"data": []}
 
+    async def list_hosts(self):
+        return {
+            "data": [
+                {"host_id": "host-1", "name": "Local Mac", "status": "online"},
+                {"host_id": "host-2", "name": "Build Mac", "status": "online"},
+            ]
+        }
+
 
 @pytest.mark.asyncio
 async def test_restart_dedup_routes_only_through_core_http_contract(tmp_path) -> None:
@@ -270,3 +278,65 @@ async def test_notification_retry_survives_restart(tmp_path) -> None:
     due = await restarted.due_notifications()
     assert due[0].status == "retrying"
     assert json.loads(due[0].payload) == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_surface_profile_and_workspace_allow_list_are_agent_scoped(tmp_path) -> None:
+    store = FeishuStore(tmp_path / "provider.db", clock=lambda: 100)
+    await store.initialize()
+    await store.set_agent_surface_profile(
+        "ag-one",
+        details_base_url="https://one.example",
+        actions=["quick_commands", "switch_workspace"],
+    )
+    await store.set_agent_default_scope("ag-one", workspace="/Users/me/one", host_id="host-1")
+    await store.set_agent_default_scope("ag-two", workspace="/Users/me/two", host_id="host-2")
+
+    assert await store.get_agent_surface_profile("ag-one") == {
+        "details_enabled": True,
+        "details_base_url": "https://one.example",
+        "actions": ["quick_commands", "switch_workspace"],
+        "updated_at": 100,
+    }
+    assert await store.get_agent_surface_profile("ag-two") is None
+    assert await store.list_agent_workspace_scopes("ag-one") == [("/Users/me/one", "host-1")]
+    assert await store.list_agent_workspace_scopes("ag-two") == [("/Users/me/two", "host-2")]
+
+
+@pytest.mark.asyncio
+async def test_workspace_card_switches_only_to_an_agent_authorized_directory(tmp_path) -> None:
+    store = FeishuStore(tmp_path / "provider.db")
+    await store.initialize()
+    installation = await store.create_pending_installation(
+        agent_id="ag_polly", session="s", verification_uri="https://qr"
+    )
+    binding = await store.bind_thread(
+        installation_id=installation.id,
+        chat_id="chat",
+        thread_id=None,
+        agent_id="ag_polly",
+        workspace_id="/Users/test/old",
+        host_id="host-1",
+    )
+    await store.set_agent_default_scope("ag_polly", workspace="/Users/test/new", host_id="host-2")
+    value = action_value(
+        "switch_workspace",
+        signing_secret="secret",
+        nonce="switch",
+        agent_id="ag_polly",
+        workspace_id="/Users/test/new",
+        host_id="host-2",
+    )
+
+    await FeishuRouter(store, FakeCore(), action_secret="secret").route_action(
+        FeishuCardAction(
+            "evt-switch", "switch_workspace", "switch", "chat", None, "ou_sender", value
+        ),
+        installation.id,
+    )
+
+    refreshed = await store.get_binding(installation.id, "chat", None)
+    assert refreshed is not None
+    assert refreshed.id == binding.id
+    assert refreshed.workspace_id == "/Users/test/new"
+    assert refreshed.host_id == "host-2"

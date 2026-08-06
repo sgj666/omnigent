@@ -5,22 +5,29 @@ import { AgentFeishuPairingDialog } from "./AgentFeishuPairingDialog";
 
 const mocks = vi.hoisted(() => ({
   connection: { data: null as Record<string, unknown> | null, isLoading: false, error: null },
-  surface: { data: undefined as Record<string, unknown> | undefined, error: null },
+  profile: {
+    data: {
+      details_enabled: true,
+      details_base_url: "https://omnigent.example.com",
+      actions: ["quick_commands", "manage_devices", "switch_workspace"],
+    } as Record<string, unknown>,
+    error: null,
+  },
   begin: { mutateAsync: vi.fn(), isPending: false, error: null },
   disconnect: { mutateAsync: vi.fn(), isPending: false, error: null },
   defaultScope: { data: null as Record<string, unknown> | null, isLoading: false, error: null },
   setDefaultScope: { mutateAsync: vi.fn(), isPending: false, error: null },
-  reinitialize: { mutateAsync: vi.fn(), isPending: false, error: null },
+  setProfile: { mutateAsync: vi.fn(), isPending: false, error: null },
 }));
 
 vi.mock("@/hooks/useFeishuInstall", () => ({
   useAgentFeishuConnection: () => mocks.connection,
-  useAgentFeishuSurface: () => mocks.surface,
+  useAgentFeishuSurfaceProfile: () => mocks.profile,
   useBeginAgentFeishu: () => mocks.begin,
   useDisconnectAgentFeishu: () => mocks.disconnect,
   useAgentDefaultWorkspaceScope: () => mocks.defaultScope,
   useSetAgentDefaultWorkspaceScope: () => mocks.setDefaultScope,
-  useReinitializeAgentFeishuSurface: () => mocks.reinitialize,
+  useSetAgentFeishuSurfaceProfile: () => mocks.setProfile,
 }));
 
 vi.mock("@/hooks/useHosts", () => ({
@@ -67,7 +74,13 @@ describe("AgentFeishuPairingDialog", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mocks.connection.data = null;
-    mocks.surface.data = undefined;
+    mocks.profile.data = {
+      details_enabled: true,
+      details_base_url: "https://omnigent.example.com",
+      actions: ["quick_commands", "manage_devices", "switch_workspace"],
+    };
+    mocks.setProfile.mutateAsync.mockResolvedValue(mocks.profile.data);
+    mocks.setDefaultScope.mutateAsync.mockResolvedValue(mocks.defaultScope.data);
     mocks.defaultScope.data = null;
     await i18n.changeLanguage("en");
   });
@@ -97,45 +110,57 @@ describe("AgentFeishuPairingDialog", () => {
     expect(screen.getByText("PAIR-123")).toBeVisible();
   });
 
-  it("shows connected tenant, bot, scope guidance, and persistent actions", () => {
+  it("shows the fixed details entry and visual Agent-scoped shortcut choices", () => {
     mocks.connection.data = {
       id: "installation-1",
       agent_id: "agent-1",
       status: "connected",
+      expires_in: 0,
       tenant_name: "Acme tenant",
       bot_name: "Polly bot",
       binding: { installation_id: "installation-1", chat_id: "chat-1", workspace_id: "ws-1" },
     };
-    mocks.surface.data = { status: "ready", surface_type: "menu" };
     renderDialog();
 
     expect(screen.getByText("Acme tenant")).toBeVisible();
     expect(screen.getByText("Polly bot")).toBeVisible();
-    expect(screen.getByText(/guide card is sent after connection/)).toBeVisible();
-    expect(screen.getByText("Switch workspace")).toBeVisible();
-    expect(screen.getByText("Approve necessary approval")).toBeVisible();
-    expect(screen.getByText("Logs / failure reason")).toBeVisible();
+    expect(screen.getByText("Execution details")).toBeVisible();
+    expect(screen.getByText("Always on")).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: /Quick commands/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Manage devices/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Workspace/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Current task/ })).not.toBeChecked();
+    expect(screen.queryByRole("button", { name: "Create a new QR code" })).not.toBeInTheDocument();
   });
 
-  it("retries partial surface provisioning", () => {
+  it("shows the Feishu permission action when the details tab cannot be synced", () => {
     mocks.connection.data = {
       id: "installation-1",
       agent_id: "agent-1",
       status: "connected",
     };
-    mocks.surface.data = {
-      status: "partial",
-      surface_type: "persistent_card",
-      error: "menu provisioning failed; using persistent card",
+    mocks.defaultScope.data = { workspace: "/Users/me/projects", host_id: "host-1" };
+    mocks.profile.data = {
+      details_enabled: true,
+      details_base_url: "https://omnigent.example.com",
+      actions: ["quick_commands"],
+      sync: {
+        status: "permission_required",
+        message: "Grant chat tab permissions.",
+        permission_url: "https://open.feishu.cn/app/cli_test/auth",
+      },
     };
+
     renderDialog();
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry provisioning" }));
-
-    expect(mocks.reinitialize.mutateAsync).toHaveBeenCalledWith("agent-1");
+    expect(screen.getByText("Execution details needs Feishu permission")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open Feishu permissions" })).toHaveAttribute(
+      "href",
+      "https://open.feishu.cn/app/cli_test/auth",
+    );
   });
 
-  it("saves an absolute non-Git container directory as the Feishu default scope", () => {
+  it("saves the directory and selected entries without reconnecting", async () => {
     mocks.connection.data = {
       id: "installation-1",
       agent_id: "agent-1",
@@ -146,12 +171,23 @@ describe("AgentFeishuPairingDialog", () => {
     fireEvent.change(screen.getByLabelText("Default start directory"), {
       target: { value: "/Users/me/projects" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save default start directory" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Current task/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Feishu configuration" }));
 
-    expect(mocks.setDefaultScope.mutateAsync).toHaveBeenCalledWith({
-      agentId: "agent-1",
-      input: { host_id: "host-1", workspace: "/Users/me/projects" },
+    await waitFor(() => {
+      expect(mocks.setDefaultScope.mutateAsync).toHaveBeenCalledWith({
+        agentId: "agent-1",
+        input: { host_id: "host-1", workspace: "/Users/me/projects" },
+      });
+      expect(mocks.setProfile.mutateAsync).toHaveBeenCalledWith({
+        agentId: "agent-1",
+        input: {
+          details_base_url: "https://omnigent.example.com",
+          actions: ["quick_commands", "manage_devices", "switch_workspace", "current_run"],
+        },
+      });
     });
+    expect(mocks.begin.mutateAsync).not.toHaveBeenCalled();
   });
 
   it("lets the operator choose the working directory from the selected host", () => {
@@ -164,26 +200,7 @@ describe("AgentFeishuPairingDialog", () => {
     expect(screen.getByLabelText("Default start directory")).toHaveValue("/Users/me/chosen");
   });
 
-  it("shows a failed surface reason and offers the same idempotent retry", () => {
-    mocks.connection.data = {
-      id: "installation-1",
-      agent_id: "agent-1",
-      status: "connected",
-    };
-    mocks.surface.data = {
-      status: "failed",
-      surface_type: "none",
-      error: "surface provisioning failed",
-    };
-    renderDialog();
-
-    expect(screen.getByRole("alert")).toHaveTextContent("surface provisioning failed");
-    fireEvent.click(screen.getByRole("button", { name: "Retry provisioning" }));
-
-    expect(mocks.reinitialize.mutateAsync).toHaveBeenCalledWith("agent-1");
-  });
-
-  it("replaces an expired grant with a new QR flow", () => {
+  it("replaces an expired grant after saving the current configuration", async () => {
     mocks.connection.data = {
       id: "installation-1",
       agent_id: "agent-1",
@@ -195,7 +212,7 @@ describe("AgentFeishuPairingDialog", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("expired");
     fireEvent.click(screen.getByRole("button", { name: "Create a new QR code" }));
 
-    expect(mocks.begin.mutateAsync).toHaveBeenCalledWith("agent-1");
+    await waitFor(() => expect(mocks.begin.mutateAsync).toHaveBeenCalledWith("agent-1"));
   });
 
   it("disconnects the current Agent-scoped installation", async () => {

@@ -78,6 +78,26 @@ export interface AgentFeishuWorkspaceScopeInput {
 }
 export interface AgentDefaultWorkspaceScope extends AgentFeishuWorkspaceScopeInput {}
 
+export type AgentFeishuSurfaceAction =
+  | "quick_commands"
+  | "manage_devices"
+  | "switch_workspace"
+  | "current_run"
+  | "stop_session"
+  | "help";
+
+export interface AgentFeishuSurfaceProfile {
+  details_enabled: true;
+  details_base_url: string;
+  actions: AgentFeishuSurfaceAction[];
+  updated_at?: number;
+  sync?: {
+    status: "pending" | "ready" | "permission_required" | "unavailable";
+    message: string;
+    permission_url?: string;
+  };
+}
+
 function agentFeishuPath(agentId: string, suffix = ""): string {
   return `/v1/agents/${encodeURIComponent(agentId)}/feishu${suffix}`;
 }
@@ -157,6 +177,27 @@ export async function setAgentDefaultWorkspaceScope(
 ): Promise<AgentDefaultWorkspaceScope> {
   return readAgentJson<AgentDefaultWorkspaceScope>(
     await authenticatedFetch(agentFeishuPath(agentId, "/default-workspace"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function getAgentFeishuSurfaceProfile(
+  agentId: string,
+): Promise<AgentFeishuSurfaceProfile> {
+  return readAgentJson<AgentFeishuSurfaceProfile>(
+    await authenticatedFetch(agentFeishuPath(agentId, "/surface-profile")),
+  );
+}
+
+export async function setAgentFeishuSurfaceProfile(
+  agentId: string,
+  input: Pick<AgentFeishuSurfaceProfile, "details_base_url" | "actions">,
+): Promise<AgentFeishuSurfaceProfile> {
+  return readAgentJson<AgentFeishuSurfaceProfile>(
+    await authenticatedFetch(agentFeishuPath(agentId, "/surface-profile"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),

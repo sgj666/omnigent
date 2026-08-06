@@ -262,3 +262,39 @@ async def test_surface_failure_returns_safe_per_action_errors(tmp_path) -> None:
     assert {action["status"] for action in failed["actions"]} == {"failed"}
     assert {action["error"] for action in failed["actions"]} == {"surface provisioning failed"}
     assert "must-never-serialize" not in json.dumps(failed)
+
+
+@pytest.mark.asyncio
+async def test_agent_surface_profile_has_visual_defaults_and_rejects_unknown_actions(
+    tmp_path,
+) -> None:
+    store = FeishuStore(tmp_path / "provider.db")
+    await store.initialize()
+    app = _app(store, object())
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://feishu"
+    ) as client:
+        defaults = (await client.get("/v1/agents/ag/feishu/surface-profile")).json()
+        saved = (
+            await client.put(
+                "/v1/agents/ag/feishu/surface-profile",
+                json={
+                    "details_base_url": "https://omnigent.example.com/",
+                    "actions": ["quick_commands", "manage_devices", "switch_workspace"],
+                },
+            )
+        ).json()
+        invalid = await client.put(
+            "/v1/agents/ag/feishu/surface-profile",
+            json={"details_base_url": "file:///tmp", "actions": ["raw_json"]},
+        )
+
+    assert defaults == {
+        "details_enabled": True,
+        "details_base_url": "",
+        "actions": ["quick_commands", "manage_devices", "switch_workspace"],
+    }
+    assert saved["details_enabled"] is True
+    assert saved["details_base_url"] == "https://omnigent.example.com"
+    assert saved["actions"] == ["quick_commands", "manage_devices", "switch_workspace"]
+    assert invalid.status_code == 422

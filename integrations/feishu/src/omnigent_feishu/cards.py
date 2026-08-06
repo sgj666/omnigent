@@ -11,6 +11,8 @@ from collections.abc import Callable, Mapping
 NonceFactory = Callable[[str], str]
 
 PERSISTENT_ACTIONS: tuple[tuple[str, str], ...] = (
+    ("quick_commands", "快捷指令"),
+    ("manage_devices", "管理设备"),
     ("new_session", "新建会话"),
     ("switch_workspace", "切换工作区"),
     ("create_workspace", "添加工作目录"),
@@ -48,6 +50,7 @@ def action_value(
     nonce: str,
     agent_id: str | None = None,
     workspace_id: str | None = None,
+    host_id: str | None = None,
     run_id: str | None = None,
     approval_id: str | None = None,
     elicitation_id: str | None = None,
@@ -59,6 +62,7 @@ def action_value(
         "action_id": action_id,
         "agent_id": agent_id,
         "workspace_id": workspace_id,
+        "host_id": host_id,
         "run_id": run_id,
         "approval_id": approval_id,
         "elicitation_id": elicitation_id,
@@ -120,6 +124,7 @@ def build_guide_card(
     workspace_id: str | None,
     has_active_session: bool = False,
     setup_required: bool = False,
+    surface_actions: tuple[str, ...] | list[str] | None = None,
     nonce_factory: NonceFactory | None = None,
 ) -> dict[str, object]:
     """Return the repeatable entry card for one Feishu chat."""
@@ -148,6 +153,21 @@ def build_guide_card(
         if workspace_id
         else "尚未选择工作目录。"
     )
+    selected = set(surface_actions or ("quick_commands", "manage_devices", "switch_workspace"))
+    entries = [
+        ("quick_commands", "⚡ 快捷指令"),
+        ("manage_devices", "🖥️ 管理设备"),
+        ("switch_workspace", "📁 工作区"),
+        ("current_run", "📊 当前任务"),
+        ("stop_session", "⏹️ 终止会话"),
+        ("help", "❓ 帮助"),
+    ]
+    actions = [
+        button(action, label)
+        for action, label in entries
+        if action in selected
+        and (action not in {"current_run", "stop_session"} or has_active_session)
+    ]
     return {
         "config": {"wide_screen_mode": True, "update_multi": True, "enable_forward": True},
         "header": {
@@ -185,34 +205,13 @@ def build_guide_card(
                 "content": "**快捷指令**\n• `/new` 开启全新会话\n• `/stop` 停止当前会话",
             },
             {"tag": "hr"},
-            {
-                "tag": "action",
-                "actions": [
-                    button("new_session", "新建会话", primary=True),
-                    button("create_task", "创建任务", primary=True),
-                    button("switch_workspace", "切换 Workspace"),
-                    button("create_workspace", "添加工作目录"),
-                    button("help", "帮助"),
-                ],
-            },
-            {
-                "tag": "action",
-                "actions": [
-                    button("create_workspace", "添加工作目录"),
-                    button("create_task", "创建任务", primary=True),
-                ],
-            },
-            *(
-                [{"tag": "action", "actions": [button("stop_session", "终止当前会话")]}]
-                if has_active_session
-                else []
-            ),
+            *([{"tag": "action", "actions": actions}] if actions else []),
         ],
     }
 
 
 def build_workspace_picker_card(
-    workspaces: list[str],
+    workspaces: list[tuple[str, str]],
     *,
     signing_secret: str,
     agent_id: str,
@@ -229,9 +228,10 @@ def build_workspace_picker_card(
                 nonce=nonce(workspace),
                 agent_id=agent_id,
                 workspace_id=workspace,
+                host_id=host_id,
             ),
         }
-        for workspace in workspaces[:12]
+        for workspace, host_id in workspaces[:12]
     ]
     return {
         "config": {"wide_screen_mode": True, "update_multi": True},
@@ -241,6 +241,71 @@ def build_workspace_picker_card(
             {"tag": "action", "actions": actions}
             if actions
             else {"tag": "markdown", "content": "还没有可切换的 Workspace。"},
+        ],
+    }
+
+
+def build_quick_commands_card(
+    *,
+    signing_secret: str,
+    agent_id: str,
+    has_active_session: bool,
+) -> dict[str, object]:
+    entries = [("new_session", "✨ 新建会话")]
+    if has_active_session:
+        entries.append(("stop_session", "⏹️ 终止当前会话"))
+    return {
+        "config": {"wide_screen_mode": True, "update_multi": True},
+        "header": {"title": {"tag": "plain_text", "content": "快捷指令"}},
+        "elements": [
+            {"tag": "markdown", "content": "选择要执行的会话操作。"},
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": label},
+                        "value": action_value(
+                            action,
+                            signing_secret=signing_secret,
+                            nonce=secrets.token_urlsafe(18),
+                            agent_id=agent_id,
+                        ),
+                    }
+                    for action, label in entries
+                ],
+            },
+        ],
+    }
+
+
+def build_device_picker_card(
+    hosts: list[tuple[str, str]], *, signing_secret: str, agent_id: str
+) -> dict[str, object]:
+    return {
+        "config": {"wide_screen_mode": True, "update_multi": True},
+        "header": {"title": {"tag": "plain_text", "content": "管理设备"}},
+        "elements": [
+            {"tag": "markdown", "content": "选择后，后续新会话将在该设备上运行。"},
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": f"🖥️ {name}"},
+                        "value": action_value(
+                            "manage_devices",
+                            signing_secret=signing_secret,
+                            nonce=secrets.token_urlsafe(18),
+                            agent_id=agent_id,
+                            host_id=host_id,
+                        ),
+                    }
+                    for host_id, name in hosts[:10]
+                ],
+            }
+            if hosts
+            else {"tag": "markdown", "content": "当前没有在线设备。"},
         ],
     }
 
@@ -324,8 +389,10 @@ __all__ = [
     "APPROVAL_ACTIONS",
     "PERSISTENT_ACTIONS",
     "action_value",
+    "build_device_picker_card",
     "build_elicitation_card",
     "build_guide_card",
+    "build_quick_commands_card",
     "build_run_card",
     "build_workspace_card",
     "build_workspace_menu",

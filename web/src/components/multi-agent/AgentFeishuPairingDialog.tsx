@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { QRCodeSVG } from "qrcode.react";
-import { BotIcon, CheckCircle2Icon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
+import {
+  ActivityIcon,
+  BoltIcon,
+  BotIcon,
+  ExternalLinkIcon,
+  FolderIcon,
+  HelpCircleIcon,
+  MonitorIcon,
+  RefreshCwIcon,
+  SquareIcon,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,32 +23,36 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  useAgentDefaultWorkspaceScope,
   useAgentFeishuConnection,
-  useAgentFeishuSurface,
+  useAgentFeishuSurfaceProfile,
   useBeginAgentFeishu,
   useDisconnectAgentFeishu,
-  useReinitializeAgentFeishuSurface,
-  useAgentDefaultWorkspaceScope,
   useSetAgentDefaultWorkspaceScope,
+  useSetAgentFeishuSurfaceProfile,
 } from "@/hooks/useFeishuInstall";
 import { useHosts } from "@/hooks/useHosts";
+import type {
+  AgentFeishuInstallation,
+  AgentFeishuSurfaceAction,
+  AgentFeishuSurfaceProfile,
+} from "@/lib/feishuApi";
 import { WorkspacePicker } from "@/shell/WorkspacePicker";
-import type { AgentFeishuInstallation, AgentFeishuSurface } from "@/lib/feishuApi";
+
+const DEFAULT_ACTIONS: AgentFeishuSurfaceAction[] = [
+  "quick_commands",
+  "manage_devices",
+  "switch_workspace",
+];
 
 const ACTIONS = [
-  "newSession",
-  "switchWorkspace",
-  "createWorkspace",
-  "createTask",
-  "stopSession",
-  "currentRun",
-  "taskList",
-  "logs",
-  "approve",
-  "deny",
-  "stopRun",
-  "help",
-] as const;
+  { id: "quick_commands", icon: BoltIcon },
+  { id: "manage_devices", icon: MonitorIcon },
+  { id: "switch_workspace", icon: FolderIcon },
+  { id: "current_run", icon: ActivityIcon },
+  { id: "stop_session", icon: SquareIcon },
+  { id: "help", icon: HelpCircleIcon },
+] satisfies { id: AgentFeishuSurfaceAction; icon: typeof BoltIcon }[];
 
 function verificationUri(installation: AgentFeishuInstallation): string | null {
   return installation.verification_uri_complete ?? installation.verification_uri ?? null;
@@ -57,10 +71,6 @@ function verificationCode(installation: AgentFeishuInstallation): string {
   return installation.session ?? installation.device_session ?? "—";
 }
 
-function surfaceState(surface: AgentFeishuSurface | undefined): string {
-  return surface?.status ?? "pending";
-}
-
 export function AgentFeishuPairingDialog({
   agentId,
   agentName,
@@ -76,19 +86,23 @@ export function AgentFeishuPairingDialog({
 }) {
   const { t } = useTranslation("agents", { keyPrefix: "multiAgent.feishu" });
   const connection = useAgentFeishuConnection(agentId, open);
+  const profile = useAgentFeishuSurfaceProfile(agentId, open);
+  const defaultScope = useAgentDefaultWorkspaceScope(agentId, open);
   const begin = useBeginAgentFeishu();
   const disconnect = useDisconnectAgentFeishu();
-  const defaultScope = useAgentDefaultWorkspaceScope(agentId, open);
   const setDefaultScope = useSetAgentDefaultWorkspaceScope();
+  const setProfile = useSetAgentFeishuSurfaceProfile();
   const { data: hosts } = useHosts({ enabled: open });
   const installation = connection.data ?? null;
-  const scopeReady = Boolean(defaultScope.data?.workspace && defaultScope.data?.host_id);
   const connected = installation?.status === "connected";
-  const surface = useAgentFeishuSurface(agentId, open && connected);
-  const reinitialize = useReinitializeAgentFeishuSurface();
   const [workspacePath, setWorkspacePath] = useState("");
   const [selectedHostId, setSelectedHostId] = useState("");
+  const [detailsBaseUrl, setDetailsBaseUrl] = useState(() => window.location.origin);
+  const [selectedActions, setSelectedActions] =
+    useState<AgentFeishuSurfaceAction[]>(DEFAULT_ACTIONS);
   const [pickingDirectory, setPickingDirectory] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [surfaceSync, setSurfaceSync] = useState<AgentFeishuSurfaceProfile["sync"]>();
   const [grantClock, setGrantClock] = useState(() => Date.now());
   const session = installation?.session ?? installation?.device_session ?? "";
   const grantDeadline = useMemo(
@@ -98,6 +112,7 @@ export function AgentFeishuPairingDialog({
         : null,
     [installation?.expires_in, installation?.status, session],
   );
+
   useEffect(() => {
     if (!open || installation?.status !== "pending") return;
     const timer = window.setInterval(() => setGrantClock(Date.now()), 1_000);
@@ -107,36 +122,56 @@ export function AgentFeishuPairingDialog({
     if (installation?.status) onStatusChange?.(installation.status);
   }, [installation?.status, onStatusChange]);
   useEffect(() => {
-    if (!workspacePath && (defaultScope.data?.workspace || installation?.default_workspace)) {
-      setWorkspacePath(defaultScope.data?.workspace ?? installation?.default_workspace ?? "");
-    }
-  }, [defaultScope.data?.workspace, installation?.default_workspace, workspacePath]);
+    setWorkspacePath(defaultScope.data?.workspace ?? installation?.default_workspace ?? "");
+  }, [agentId, defaultScope.data?.workspace, installation?.default_workspace]);
   useEffect(() => {
-    if (selectedHostId) return;
     const configured = defaultScope.data?.host_id ?? installation?.default_host_id;
     const fallback = hosts?.find((host) => host.status === "online")?.host_id;
     setSelectedHostId(configured ?? fallback ?? "");
-  }, [defaultScope.data?.host_id, hosts, installation?.default_host_id, selectedHostId]);
+  }, [agentId, defaultScope.data?.host_id, hosts, installation?.default_host_id]);
+  useEffect(() => {
+    if (!profile.data) return;
+    setDetailsBaseUrl(profile.data.details_base_url || window.location.origin);
+    setSelectedActions(profile.data.actions);
+    setSurfaceSync(profile.data.sync);
+  }, [agentId, profile.data]);
+
   const expiresIn = grantDeadline
     ? Math.max(0, Math.ceil((grantDeadline - grantClock) / 1_000))
     : (installation?.expires_in ?? null);
-  const expired = installation?.status === "expired" || expiresIn === 0;
+  const expired =
+    installation?.status === "expired" || (installation?.status === "pending" && expiresIn === 0);
   const qrUri = installation ? verificationUri(installation) : null;
-  const displayedSurface = surface.data ?? installation?.surface ?? undefined;
-  const provider = useMemo(
-    () => ({
-      tenant: installation?.tenant_name ?? installation?.tenant_key ?? installation?.app_id,
-      bot: installation?.bot_name ?? installation?.bot_open_id,
-    }),
-    [installation],
-  );
+  const provider = {
+    tenant: installation?.tenant_name ?? installation?.tenant_key ?? installation?.app_id,
+    bot: installation?.bot_name ?? installation?.bot_open_id,
+  };
+  const validScope = selectedHostId !== "" && workspacePath.startsWith("/");
+  const validDetailsUrl = /^https?:\/\//.test(detailsBaseUrl);
+  const saving = setDefaultScope.isPending || setProfile.isPending;
 
-  async function saveDefaultScope() {
-    if (!workspacePath.startsWith("/") || !selectedHostId) return;
-    await setDefaultScope.mutateAsync({
-      agentId,
-      input: { workspace: workspacePath, host_id: selectedHostId },
-    });
+  function toggleAction(action: AgentFeishuSurfaceAction) {
+    setSaved(false);
+    setSelectedActions((current) =>
+      current.includes(action) ? current.filter((item) => item !== action) : [...current, action],
+    );
+  }
+
+  async function saveConfiguration(startPairing = false) {
+    if (!validScope || !validDetailsUrl) return;
+    const [, savedProfile] = await Promise.all([
+      setDefaultScope.mutateAsync({
+        agentId,
+        input: { workspace: workspacePath, host_id: selectedHostId },
+      }),
+      setProfile.mutateAsync({
+        agentId,
+        input: { details_base_url: detailsBaseUrl, actions: selectedActions },
+      }),
+    ]);
+    setSurfaceSync(savedProfile?.sync);
+    setSaved(true);
+    if (startPairing) await begin.mutateAsync(agentId);
   }
 
   async function disconnectCurrent() {
@@ -145,7 +180,12 @@ export function AgentFeishuPairingDialog({
   }
 
   const operationError =
-    begin.error ?? disconnect.error ?? reinitialize.error ?? surface.error ?? connection.error;
+    begin.error ??
+    disconnect.error ??
+    setDefaultScope.error ??
+    setProfile.error ??
+    profile.error ??
+    connection.error;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -155,29 +195,84 @@ export function AgentFeishuPairingDialog({
           <DialogDescription>{t("modalDescription", { agent: agentName })}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3">
+        <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
           <div>
             <p className="font-medium">{t("coordinatorConnection")}</p>
             <p className="text-xs text-muted-foreground">{t("coordinatorOnly")}</p>
           </div>
-          <div className="flex items-center gap-2">
-            <Badge variant={installation?.status === "error" ? "destructive" : "outline"}>
-              {t(`states.${installation?.status ?? "disconnected"}`)}
-            </Badge>
-            {connected && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => void begin.mutateAsync(agentId)}
-                disabled={begin.isPending || !scopeReady}
-              >
-                <RefreshCwIcon /> 重新绑定飞书
-              </Button>
-            )}
-          </div>
+          <Badge variant={installation?.status === "error" ? "destructive" : "outline"}>
+            {t(`states.${installation?.status ?? "disconnected"}`)}
+          </Badge>
         </div>
 
-        <div className="space-y-3 rounded-lg border p-4">
+        <section className="space-y-4 rounded-lg border p-4">
+          <div>
+            <p className="font-medium">{t("entrySettingsTitle")}</p>
+            <p className="text-xs text-muted-foreground">{t("entrySettingsDescription")}</p>
+          </div>
+
+          <div className="space-y-2 rounded-lg bg-muted/40 p-3">
+            <div className="flex items-start gap-3">
+              <ExternalLinkIcon className="mt-0.5 size-5 text-blue-600" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">{t("detailsEntry")}</p>
+                  <Badge variant="secondary">{t("alwaysEnabled")}</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">{t("detailsEntryHelp")}</p>
+              </div>
+            </div>
+            <Input
+              aria-label={t("detailsBaseUrl")}
+              value={detailsBaseUrl}
+              placeholder="https://omnigent.example.com"
+              onChange={(event) => {
+                setSaved(false);
+                setDetailsBaseUrl(event.target.value);
+              }}
+            />
+            {detailsBaseUrl.includes("127.0.0.1") || detailsBaseUrl.includes("localhost") ? (
+              <p className="text-xs text-amber-600">{t("localDetailsWarning")}</p>
+            ) : null}
+          </div>
+
+          <div className="space-y-2">
+            <div>
+              <p className="text-sm font-medium">{t("quickEntries")}</p>
+              <p className="text-xs text-muted-foreground">{t("quickEntriesHelp")}</p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {ACTIONS.map(({ id, icon: Icon }) => {
+                const checked = selectedActions.includes(id);
+                return (
+                  <label
+                    key={id}
+                    className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
+                      checked ? "border-blue-500 bg-blue-500/5" : "hover:bg-muted/40"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1 size-4 accent-blue-600"
+                      checked={checked}
+                      onChange={() => toggleAction(id)}
+                    />
+                    <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">{t(`entryActions.${id}`)}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {t(`entryActionHelp.${id}`)}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground">{t("nativeMenuLimit")}</p>
+          </div>
+        </section>
+
+        <section className="space-y-3 rounded-lg border p-4">
           <div>
             <p className="font-medium">{t("defaultScopeTitle")}</p>
             <p className="text-xs text-muted-foreground">{t("defaultScopeDescription")}</p>
@@ -186,7 +281,10 @@ export function AgentFeishuPairingDialog({
             aria-label={t("workingDirectoryHost")}
             className="h-8 w-full rounded-lg border border-input bg-background px-2 text-sm"
             value={selectedHostId}
-            onChange={(event) => setSelectedHostId(event.target.value)}
+            onChange={(event) => {
+              setSaved(false);
+              setSelectedHostId(event.target.value);
+            }}
           >
             <option value="">{t("selectHost")}</option>
             {hosts
@@ -201,64 +299,44 @@ export function AgentFeishuPairingDialog({
             aria-label={t("defaultScopeTitle")}
             value={workspacePath}
             placeholder="/Users/me/projects"
-            onChange={(event) => setWorkspacePath(event.target.value)}
+            onChange={(event) => {
+              setSaved(false);
+              setWorkspacePath(event.target.value);
+            }}
           />
           <Button
             variant="outline"
             onClick={() => setPickingDirectory((value) => !value)}
             disabled={!selectedHostId}
           >
-            {t("browseDirectory")}
+            <FolderIcon /> {t("browseDirectory")}
           </Button>
           {pickingDirectory && (
             <WorkspacePicker
               hostId={selectedHostId || null}
               initialPath={workspacePath || undefined}
               onSelect={(path) => {
+                setSaved(false);
                 setWorkspacePath(path);
                 setPickingDirectory(false);
               }}
               onClose={() => setPickingDirectory(false)}
             />
           )}
-          <Button
-            onClick={() => void saveDefaultScope()}
-            disabled={
-              !selectedHostId || !workspacePath.startsWith("/") || setDefaultScope.isPending
-            }
-          >
-            {t("saveDefaultScope")}
-          </Button>
-          {scopeReady && (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <p className="text-emerald-600">
-                {t("defaultScopeReady", { workspace: defaultScope.data?.workspace })}
-              </p>
-              {connected && (
-                <span className="text-muted-foreground">
-                  目录已保存；点击上方“重新绑定飞书”获取新二维码。
-                </span>
-              )}
-              {!installation && (
-                <span className="text-muted-foreground">
-                  下一步：点击下方“连接飞书”获取二维码。
-                </span>
-              )}
-            </div>
-          )}
-        </div>
+          <p className="text-xs text-muted-foreground">{t("authorizedDirectoryHelp")}</p>
+        </section>
 
         {!installation && !connection.isLoading && (
           <div className="space-y-3 rounded-lg border border-dashed p-5 text-center">
             <BotIcon className="mx-auto size-8 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">
-              {scopeReady ? t("notConnected") : t("defaultScopeRequired")}
+              {validScope ? t("notConnected") : t("defaultScopeRequired")}
             </p>
             <Button
-              onClick={() => void begin.mutateAsync(agentId)}
-              disabled={begin.isPending || !scopeReady}
+              onClick={() => void saveConfiguration(true)}
+              disabled={saving || begin.isPending || !validScope || !validDetailsUrl}
             >
-              {begin.isPending ? t("creatingGrant") : t("createGrant")}
+              {saving || begin.isPending ? t("creatingGrant") : t("saveAndCreateGrant")}
             </Button>
           </div>
         )}
@@ -308,8 +386,8 @@ export function AgentFeishuPairingDialog({
               {installation?.error || t(expired ? "grantExpired" : "connectionFailed")}
             </p>
             <Button
-              onClick={() => void begin.mutateAsync(agentId)}
-              disabled={begin.isPending || !scopeReady}
+              onClick={() => void saveConfiguration(true)}
+              disabled={saving || begin.isPending || !validScope || !validDetailsUrl}
             >
               <RefreshCwIcon /> {t("retryConnection")}
             </Button>
@@ -328,69 +406,38 @@ export function AgentFeishuPairingDialog({
                 <p className="font-mono text-sm">{provider.bot || t("unknown")}</p>
               </div>
             </div>
-
-            <div className="space-y-3 rounded-lg border p-4">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <p className="font-medium">{t("surfaceTitle")}</p>
-                  <p className="text-xs text-muted-foreground">{t("surfaceDescription")}</p>
-                </div>
-                <Badge variant={displayedSurface?.status === "failed" ? "destructive" : "outline"}>
-                  {t(`surfaceStates.${surfaceState(displayedSurface)}`)}
-                </Badge>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {ACTIONS.map((action) => {
-                  const contextual = [
-                    "approve",
-                    "deny",
-                    "stopSession",
-                    "currentRun",
-                    "taskList",
-                    "logs",
-                    "stopRun",
-                  ].includes(action);
-                  const status = contextual ? "contextual" : surfaceState(displayedSurface);
-                  return (
-                    <div
-                      key={action}
-                      className="flex items-center gap-2 rounded-md bg-muted/50 p-2"
-                    >
-                      <CheckCircle2Icon className="size-4 text-muted-foreground" />
-                      <span className="min-w-0 flex-1 text-xs">{t(`actions.${action}`)}</span>
-                      <Badge variant="outline" className="text-10">
-                        {t(`surfaceStates.${status}`)}
-                      </Badge>
-                    </div>
-                  );
-                })}
-              </div>
-              {displayedSurface?.error && (
-                <p role="alert" className="text-sm text-destructive">
-                  {displayedSurface.error}
-                </p>
-              )}
-              {(displayedSurface?.status === "partial" ||
-                displayedSurface?.status === "failed") && (
-                <Button
-                  variant="outline"
-                  onClick={() => void reinitialize.mutateAsync(agentId)}
-                  disabled={reinitialize.isPending}
-                >
-                  <RefreshCwIcon />
-                  {reinitialize.isPending ? t("provisioning") : t("retryProvisioning")}
-                </Button>
-              )}
-              <p className="text-xs text-muted-foreground">{t("stateSource")}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                onClick={() => void saveConfiguration(false)}
+                disabled={saving || !validScope || !validDetailsUrl}
+              >
+                {saving ? t("savingConfiguration") : t("saveConfiguration")}
+              </Button>
+              {saved && <span className="text-sm text-emerald-600">{t("configurationSaved")}</span>}
+              <Button
+                variant="destructive"
+                onClick={() => void disconnectCurrent()}
+                disabled={disconnect.isPending}
+              >
+                {disconnect.isPending ? t("disconnecting") : t("disconnect")}
+              </Button>
             </div>
-
-            <Button
-              variant="destructive"
-              onClick={() => void disconnectCurrent()}
-              disabled={disconnect.isPending}
-            >
-              {disconnect.isPending ? t("disconnecting") : t("disconnect")}
-            </Button>
+            {surfaceSync?.status === "permission_required" && (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+                <p className="font-medium text-amber-700">{t("detailsPermissionRequired")}</p>
+                <p className="text-xs text-muted-foreground">{surfaceSync.message}</p>
+                {surfaceSync.permission_url && (
+                  <Button asChild className="mt-2" size="sm" variant="outline">
+                    <a href={surfaceSync.permission_url} target="_blank" rel="noreferrer">
+                      <ExternalLinkIcon /> {t("openPermissionSettings")}
+                    </a>
+                  </Button>
+                )}
+              </div>
+            )}
+            {surfaceSync?.status === "ready" && (
+              <p className="text-sm text-emerald-600">{t("detailsEntrySynced")}</p>
+            )}
           </div>
         )}
 

@@ -85,6 +85,9 @@ class CoreClient:
     async def list_workspaces(self) -> Any:
         return await self._request("GET", "/v1/workspaces")
 
+    async def list_hosts(self) -> Any:
+        return await self._request("GET", "/v1/hosts")
+
     async def select_workspace(self, workspace_id: str, thread_id: str) -> Any:
         return await self._request(
             "POST",

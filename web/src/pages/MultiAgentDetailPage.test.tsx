@@ -57,6 +57,14 @@ vi.mock("@/hooks/useFeishuInstall", () => ({
   useDisconnectAgentFeishu: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   useBindAgentFeishuWorkspace: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   useAgentFeishuSurface: () => ({ data: undefined, error: null }),
+  useAgentFeishuSurfaceProfile: () => ({
+    data: {
+      details_enabled: true,
+      details_base_url: "http://127.0.0.1:5173",
+      actions: ["quick_commands", "manage_devices", "switch_workspace"],
+    },
+    error: null,
+  }),
   useReinitializeAgentFeishuSurface: () => ({
     mutateAsync: vi.fn(),
     isPending: false,
@@ -64,6 +72,7 @@ vi.mock("@/hooks/useFeishuInstall", () => ({
   }),
   useAgentDefaultWorkspaceScope: () => ({ data: null, error: null }),
   useSetAgentDefaultWorkspaceScope: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
+  useSetAgentFeishuSurfaceProfile: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
 }));
 
 const draft: AgentBundleDraft = {

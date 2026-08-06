@@ -6,7 +6,9 @@ import asyncio
 from dataclasses import dataclass
 
 from omnigent_feishu.cards import (
+    build_device_picker_card,
     build_guide_card,
+    build_quick_commands_card,
     build_workspace_picker_card,
     verify_action_value,
 )
@@ -141,7 +143,9 @@ class FeishuRouter:
                 return RouteResult(
                     event.event_id,
                     binding.run_id,
-                    payload=self._guide_payload(binding, message="已新建会话。请直接发送任务。"),
+                    payload=await self._guide_payload(
+                        binding, message="已新建会话。请直接发送任务。"
+                    ),
                 )
             await self._store.complete_event(event.event_id, binding.run_id or "command")
             return RouteResult(
@@ -159,7 +163,7 @@ class FeishuRouter:
         if _is_greeting(event.text):
             await self._store.complete_event(event.event_id, binding.run_id or "guide")
             return RouteResult(
-                event.event_id, binding.run_id, payload=self._guide_payload(binding)
+                event.event_id, binding.run_id, payload=await self._guide_payload(binding)
             )
         if not binding.workspace_id or not binding.host_id:
             await self._store.complete_event(event.event_id, "workspace_required")
@@ -265,11 +269,13 @@ class FeishuRouter:
             assert binding is not None
             binding = await self._begin_new_session(binding)
             run_id = binding.run_id or ""
-            payload = self._guide_payload(binding, message="已准备好新会话。请直接发送任务。")
+            payload = await self._guide_payload(
+                binding, message="已准备好新会话。请直接发送任务。"
+            )
         elif action == "stop_session":
             root_session_id = await self._store.get_binding_root_session(binding.id)
             if not root_session_id:
-                payload = self._guide_payload(binding, message="当前没有正在进行的会话。")
+                payload = await self._guide_payload(binding, message="当前没有正在进行的会话。")
             else:
                 try:
                     await self._core.stop_session(root_session_id)
@@ -281,32 +287,85 @@ class FeishuRouter:
                     installation_id, event.chat_id, event.thread_id
                 )
                 assert binding is not None
-                payload = self._guide_payload(binding, message="当前会话已终止。")
+                payload = await self._guide_payload(binding, message="当前会话已终止。")
+        elif action == "quick_commands":
+            payload = {
+                "guide_card": build_quick_commands_card(
+                    signing_secret=self._action_secret,
+                    agent_id=binding.agent_id,
+                    has_active_session=bool(binding.run_id),
+                )
+            }
+        elif action == "manage_devices":
+            host_id = value.get("host_id")
+            hosts_payload = await self._core.list_hosts()
+            rows = hosts_payload.get("data", []) if isinstance(hosts_payload, dict) else []
+            hosts = [
+                (str(row["host_id"]), str(row.get("name") or row["host_id"]))
+                for row in rows
+                if isinstance(row, dict)
+                and row.get("status") == "online"
+                and isinstance(row.get("host_id"), str)
+            ]
+            if not isinstance(host_id, str) or not host_id:
+                payload = {
+                    "guide_card": build_device_picker_card(
+                        hosts,
+                        signing_secret=self._action_secret,
+                        agent_id=binding.agent_id,
+                    )
+                }
+            elif host_id not in {item[0] for item in hosts}:
+                raise FeishuRoutingError("host_unavailable", "Host is not online")
+            else:
+                scopes = await self._store.list_agent_workspace_scopes(
+                    binding.agent_id, host_id=host_id
+                )
+                if not scopes:
+                    payload = await self._guide_payload(
+                        binding,
+                        message="该设备还没有授权目录，请先在 Omnigent 的飞书连接设置中添加。",
+                    )
+                else:
+                    await self._store.set_binding_workspace_scope(
+                        binding.id, workspace=scopes[0][0], host_id=host_id
+                    )
+                    binding = await self._store.get_binding(
+                        installation_id, event.chat_id, event.thread_id
+                    )
+                    assert binding is not None
+                    payload = await self._guide_payload(
+                        binding, message=f"已切换设备：{dict(hosts)[host_id]}"
+                    )
         elif action == "switch_workspace":
             workspace_id = value.get("workspace_id")
+            host_id = value.get("host_id")
             if not isinstance(workspace_id, str) or not workspace_id:
-                payload = self._workspace_picker_payload(
-                    binding, await self._core.list_workspaces()
-                )
+                payload = await self._workspace_picker_payload(binding)
             else:
-                await self._store.set_binding_workspace(binding.id, workspace_id)
+                scopes = await self._store.list_agent_workspace_scopes(binding.agent_id)
+                if not isinstance(host_id, str) or (workspace_id, host_id) not in scopes:
+                    raise FeishuRoutingError("workspace_forbidden", "Workspace is not authorized")
+                await self._store.set_binding_workspace_scope(
+                    binding.id, workspace=workspace_id, host_id=host_id
+                )
                 binding = await self._store.get_binding(
                     installation_id, event.chat_id, event.thread_id
                 )
                 assert binding is not None
-                payload = self._guide_payload(binding, message=f"已切换到：{workspace_id}")
+                payload = await self._guide_payload(binding, message=f"已切换到：{workspace_id}")
         elif action == "create_workspace":
             if not binding.host_id:
-                payload = self._guide_payload(binding, setup_required=True)
+                payload = await self._guide_payload(binding, setup_required=True)
             else:
                 payload = {
                     "message": "请在 Omnigent 的飞书连接设置中选择在线主机和本地工作目录。",
-                    "guide_card": self._guide_card(binding, setup_required=True),
+                    "guide_card": await self._guide_card(binding, setup_required=True),
                 }
         elif action == "create_task":
             payload = {
                 "message": "请直接发送任务描述。我会在当前 Workspace 中创建并持续更新这次 Run。",
-                "guide_card": self._guide_card(
+                "guide_card": await self._guide_card(
                     binding, setup_required=not bool(binding.workspace_id)
                 ),
             }
@@ -330,7 +389,7 @@ class FeishuRouter:
                 run_id, approval_id, approved=action == "approve"
             )
         elif action == "help":
-            payload = self._guide_payload(binding)
+            payload = await self._guide_payload(binding)
         elif action == "list_runs":
             payload = {"action": action}
         else:
@@ -338,18 +397,21 @@ class FeishuRouter:
         await self._store.complete_event(event.event_id, run_id)
         return RouteResult(event.event_id, run_id or None, duplicate=not claimed, payload=payload)
 
-    def _guide_card(
+    async def _guide_card(
         self, binding: ThreadBinding, *, setup_required: bool = False
     ) -> dict[str, object]:
+        profile = await self._store.get_agent_surface_profile(binding.agent_id)
+        actions = profile.get("actions") if profile is not None else None
         return build_guide_card(
             signing_secret=self._action_secret,
             agent_id=binding.agent_id,
             workspace_id=binding.workspace_id,
             has_active_session=bool(binding.run_id),
             setup_required=setup_required,
+            surface_actions=actions if isinstance(actions, list) else None,
         )
 
-    def _guide_payload(
+    async def _guide_payload(
         self,
         binding: ThreadBinding,
         *,
@@ -357,22 +419,15 @@ class FeishuRouter:
         setup_required: bool = False,
     ) -> dict[str, object]:
         return {
-            "guide_card": self._guide_card(binding, setup_required=setup_required),
+            "guide_card": await self._guide_card(binding, setup_required=setup_required),
             "message": message,
         }
 
-    def _workspace_picker_payload(
-        self, binding: ThreadBinding, payload: object
-    ) -> dict[str, object]:
-        rows = payload.get("data", []) if isinstance(payload, dict) else []
-        paths = [
-            row.get("root_path")
-            for row in rows
-            if isinstance(row, dict) and isinstance(row.get("root_path"), str)
-        ]
+    async def _workspace_picker_payload(self, binding: ThreadBinding) -> dict[str, object]:
+        scopes = await self._store.list_agent_workspace_scopes(binding.agent_id)
         return {
             "guide_card": build_workspace_picker_card(
-                paths, signing_secret=self._action_secret, agent_id=binding.agent_id
+                scopes, signing_secret=self._action_secret, agent_id=binding.agent_id
             )
         }
 

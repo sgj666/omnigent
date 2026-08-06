@@ -7,6 +7,7 @@ import json
 import logging
 import threading
 from typing import Any
+from urllib.parse import quote, urlencode
 
 import httpx
 import lark_oapi as lark
@@ -65,6 +66,8 @@ class FeishuRealtimeRuntime:
         # v3 refreshes the guide card layout after the former passive connection notice.
         welcome_key = f"welcome_sent:{installation.id}:v3"
         if installation.installer_open_id and not await self._store.get_meta(welcome_key):
+            profile = await self._store.get_agent_surface_profile(installation.agent_id)
+            actions = profile.get("actions") if profile is not None else None
             await self._send_interactive_card(
                 installation.app_id,
                 secret,
@@ -75,6 +78,7 @@ class FeishuRealtimeRuntime:
                     agent_id=installation.agent_id,
                     workspace_id=installation.default_workspace,
                     setup_required=not bool(installation.default_workspace),
+                    surface_actions=actions if isinstance(actions, list) else None,
                 ),
             )
             await self._store.set_meta(welcome_key, "1")
@@ -198,6 +202,15 @@ class FeishuRealtimeRuntime:
                 and isinstance(result.response.get("run"), dict)
                 else None
             )
+            details_session_id = (
+                root_session_id
+                if isinstance(root_session_id, str) and root_session_id
+                else run_id
+                if isinstance(run_id, str) and run_id
+                else None
+            )
+            if details_session_id:
+                await self.sync_agent_surface(installation.agent_id)
             baseline_assistant_id = (
                 result.response["run"].get("baseline_assistant_id")
                 if isinstance(result.response, dict)
@@ -649,6 +662,131 @@ class FeishuRealtimeRuntime:
             payload = response.json()
             if payload.get("code", 0) != 0:
                 raise RuntimeError(f"Feishu message API rejected the reply: {payload.get('code')}")
+
+    async def sync_agent_surface(self, agent_id: str) -> dict[str, object]:
+        installation = await self._store.get_agent_installation(agent_id)
+        binding = await self._store.get_agent_binding(agent_id)
+        if (
+            installation is None
+            or binding is None
+            or not binding.run_id
+            or not installation.app_id
+            or not installation.app_secret_ciphertext
+        ):
+            result: dict[str, object] = {
+                "status": "pending",
+                "message": "首次在飞书中启动任务后，将创建执行详情入口。",
+            }
+            await self._store.set_meta(f"surface_sync:{agent_id}", json.dumps(result))
+            return result
+        secret = self._cipher.decrypt(installation.app_secret_ciphertext)
+        try:
+            await self._ensure_details_tab(installation, secret, binding.chat_id, binding.run_id)
+        except httpx.HTTPStatusError as exc:
+            try:
+                payload = exc.response.json()
+            except ValueError:
+                payload = {}
+            if payload.get("code") == 99991672:
+                query = urlencode(
+                    {
+                        "q": "im:chat.tabs:read,im:chat.tabs:write_only",
+                        "op_from": "openapi",
+                        "token_type": "tenant",
+                    }
+                )
+                result = {
+                    "status": "permission_required",
+                    "message": "需要开通飞书会话标签页的读写权限。",
+                    "permission_url": f"https://open.feishu.cn/app/{installation.app_id}/auth?{query}",
+                }
+                await self._store.set_meta(f"surface_sync:{agent_id}", json.dumps(result))
+                logger.warning(
+                    "feishu_details_tab_permission_required installation_id=%s",
+                    installation.id,
+                )
+                return result
+            logger.exception(
+                "feishu_details_tab_profile_sync_failed installation_id=%s",
+                installation.id,
+            )
+            result = {"status": "unavailable", "message": "飞书执行详情入口同步失败。"}
+            await self._store.set_meta(f"surface_sync:{agent_id}", json.dumps(result))
+            return result
+        except Exception:
+            logger.exception(
+                "feishu_details_tab_profile_sync_failed installation_id=%s",
+                installation.id,
+            )
+            result = {"status": "unavailable", "message": "飞书执行详情入口同步失败。"}
+            await self._store.set_meta(f"surface_sync:{agent_id}", json.dumps(result))
+            return result
+        result = {"status": "ready", "message": "执行详情入口已同步到飞书。"}
+        await self._store.set_meta(f"surface_sync:{agent_id}", json.dumps(result))
+        return result
+
+    async def _ensure_details_tab(
+        self, installation: Installation, secret: str, chat_id: str, session_id: str
+    ) -> None:
+        profile = await self._store.get_agent_surface_profile(installation.agent_id)
+        if profile is None or not profile.get("details_base_url"):
+            return
+        base_url = str(profile["details_base_url"]).rstrip("/")
+        details_url = f"{base_url}/c/{quote(session_id, safe='')}"
+        chat = quote(chat_id, safe="")
+        tab_key = f"details_tab:{installation.id}:{chat_id}"
+        tab_id = await self._store.get_meta(tab_key)
+        async with httpx.AsyncClient(timeout=20) as client:
+            token = await self._tenant_token(client, installation.app_id or "", secret)
+            headers = {"Authorization": f"Bearer {token}"}
+            if not tab_id:
+                response = await client.get(
+                    f"https://open.feishu.cn/open-apis/im/v1/chats/{chat}/chat_tabs/list_tabs",
+                    headers=headers,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                data = payload.get("data", {}) if isinstance(payload, dict) else {}
+                rows = []
+                if isinstance(data, dict):
+                    for key in ("chat_tabs", "tab_list", "items"):
+                        if isinstance(data.get(key), list):
+                            rows = data[key]
+                            break
+                found = next(
+                    (
+                        row.get("tab_id")
+                        for row in rows
+                        if isinstance(row, dict)
+                        and row.get("tab_name") == "执行详情"
+                        and isinstance(row.get("tab_id"), str)
+                    ),
+                    None,
+                )
+                tab_id = found if isinstance(found, str) else None
+            tab = {
+                "tab_name": "执行详情",
+                "tab_type": "url",
+                "tab_content": {"url": details_url},
+            }
+            endpoint = f"https://open.feishu.cn/open-apis/im/v1/chats/{chat}/chat_tabs"
+            if tab_id:
+                tab["tab_id"] = tab_id
+                response = await client.post(
+                    f"{endpoint}/update_tabs", headers=headers, json={"chat_tabs": [tab]}
+                )
+            else:
+                response = await client.post(endpoint, headers=headers, json={"chat_tabs": [tab]})
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("code", 0) != 0:
+                code = payload.get("code")
+                raise RuntimeError(f"Feishu chat tab API rejected the request: {code}")
+            if not tab_id:
+                data = payload.get("data", {})
+                rows = data.get("chat_tabs", []) if isinstance(data, dict) else []
+                if rows and isinstance(rows[0], dict) and isinstance(rows[0].get("tab_id"), str):
+                    await self._store.set_meta(tab_key, rows[0]["tab_id"])
 
     @staticmethod
     async def _tenant_token(client: httpx.AsyncClient, app_id: str, secret: str) -> str:
