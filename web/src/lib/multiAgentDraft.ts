@@ -143,7 +143,7 @@ export function readAgentConfig(
     mcp: json(at(value, ["tools", "mcp"])),
     environment: json(at(value, ["os_env"])),
     guardrails: json(at(value, ["guardrails"])),
-    policies: json(at(value, ["guardrails", "policies"])),
+    policies: json(at(value, ["policies"])),
     async:
       typeof at(value, ["async"]) === "boolean" ? (at(value, ["async"]) as boolean) : undefined,
     timers:
@@ -225,7 +225,7 @@ export function buildConfigPatches(
     patch(file, original, ["tools", "mcp"], parseJsonField(draft, "mcp")),
     patch(file, original, ["os_env"], parseJsonField(draft, "environment")),
     patch(file, original, ["guardrails"], parseJsonField(draft, "guardrails")),
-    patch(file, original, ["guardrails", "policies"], parseJsonField(draft, "policies")),
+    patch(file, original, ["policies"], parseJsonField(draft, "policies")),
     patch(file, original, ["async"], draft.async),
     patch(file, original, ["timers"], draft.timers),
     patch(file, original, ["spawn"], draft.spawn),

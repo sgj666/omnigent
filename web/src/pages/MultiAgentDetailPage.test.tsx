@@ -209,6 +209,7 @@ describe("MultiAgentDetailPage", () => {
       name: "My bundle",
       executor: { config: { harness: "codex-native" } },
       prompt: "Coordinate the work",
+      interaction: { mode: "chat" },
       unknown: "keep",
     };
     hooks.detail.mockReturnValue({ data, isLoading: false, isError: false });
@@ -235,18 +236,17 @@ describe("MultiAgentDetailPage", () => {
     expect(screen.getByLabelText("Timers")).toHaveTextContent("Default");
     expect(screen.getByLabelText("Spawn child sessions")).toHaveTextContent("Default");
     fireEvent.click(screen.getByRole("button", { name: /Advanced properties/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Show unconfigured properties" }));
-    fireEvent.change(screen.getByLabelText("/interaction"), {
-      target: { value: '{"mode":"chat"}' },
-    });
+    expect(screen.queryByLabelText("/interaction")).toBeNull();
+    expect(screen.getAllByText(/conversation protocol/i)).not.toHaveLength(0);
+    fireEvent.change(screen.getByLabelText("mode"), { target: { value: "guided" } });
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(hooks.update.mutateAsync).toHaveBeenCalledOnce());
     expect(hooks.update.mutateAsync.mock.calls[0][0].request.patches).toContainEqual({
       file: "config.yaml",
-      op: "add",
+      op: "replace",
       path: "/interaction",
-      value: { mode: "chat" },
+      value: { mode: "guided" },
     });
   });
 
@@ -273,7 +273,12 @@ describe("MultiAgentDetailPage", () => {
           "/executor/auth",
         ].map((path) => ({
           path,
-          type: path === "/executor/context_window" ? "integer" : "string",
+          type:
+            path === "/executor/context_window"
+              ? "integer"
+              : path === "/executor/config" || path === "/executor/auth"
+                ? "object"
+                : "string",
           group: "executor",
           required: false,
           secret: path === "/executor/auth",
@@ -286,11 +291,10 @@ describe("MultiAgentDetailPage", () => {
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: /Advanced properties/ }));
 
-    expect(screen.getByLabelText("/executor/type")).toHaveValue("provider");
-    expect(screen.getByLabelText("/executor/context_window")).toHaveValue("128000");
-    expect(screen.getByLabelText("/executor/config")).toHaveValue(
-      '{\n  "provider_region": "us-east",\n  "retries": 2\n}',
-    );
+    expect(screen.queryByLabelText("/executor/type")).toBeNull();
+    expect(screen.getByLabelText("/executor/context_window")).toHaveValue(128000);
+    expect(screen.getByLabelText("provider_region")).toHaveValue("us-east");
+    expect(screen.getByLabelText("retries")).toHaveValue(2);
     expect(screen.getByLabelText("/executor/auth")).toHaveValue("");
     expect(screen.getByLabelText("/executor/auth")).toHaveAttribute(
       "placeholder",
@@ -311,6 +315,102 @@ describe("MultiAgentDetailPage", () => {
         value: 64000,
       },
     ]);
+  });
+
+  it("uses guided controls for advanced settings without exposing JSON", async () => {
+    const data = copyDraft();
+    data.coordinator!.data = {
+      name: "My bundle",
+      executor: { type: "provider", config: { harness: "codex-native" } },
+      tools: {
+        agents: ["reviewer"],
+        builtins: null,
+        timeout: null,
+        retry: null,
+      },
+      os_env: {
+        type: "caller_process",
+        cwd: ".",
+        sandbox: { type: "none" },
+      },
+      guardrails: {
+        policies: {
+          blast_radius: {
+            on: ["tool_call"],
+            function: {
+              path: "omnigent.guardrails.blast_radius",
+              arguments: { gate_pushes: true },
+            },
+          },
+        },
+      },
+      policies: { top_level_policy: { enabled: true } },
+    };
+    hooks.detail.mockReturnValue({ data, isLoading: false, isError: false });
+    hooks.schema.mockReturnValue({
+      data: {
+        schema_version: "1",
+        fields: [
+          {
+            path: "/spec_version",
+            type: "string",
+            group: "advanced",
+            required: false,
+            secret: false,
+            translation_key: "/spec_version",
+            editor: "text",
+          },
+          {
+            path: "/executor/type",
+            type: "string",
+            group: "executor",
+            required: false,
+            secret: false,
+            translation_key: "/executor/type",
+            editor: "text",
+          },
+        ],
+      },
+    });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /Advanced properties/ }));
+
+    expect(screen.getByText("Callable teammates")).toBeVisible();
+    const teammateButton = screen
+      .getAllByRole("button", { name: "reviewer" })
+      .find((button) => button.hasAttribute("aria-pressed"));
+    expect(teammateButton).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Built-in tools")).toBeNull();
+    expect(screen.queryByText("Tool timeout")).toBeNull();
+    expect(screen.queryByText("Failure retries")).toBeNull();
+    expect(screen.getByText("Execution mode")).toBeVisible();
+    expect(screen.getByText("Working directory")).toBeVisible();
+    expect(screen.getByText("OS isolation")).toBeVisible();
+    expect(screen.getByText("Isolation mode")).toBeVisible();
+    expect(screen.getByText("Trigger")).toBeVisible();
+    expect(screen.getByText("Function path")).toBeVisible();
+    expect(screen.getByText("Gate pushes")).toBeVisible();
+    expect(screen.queryByLabelText("/spec_version")).toBeNull();
+    expect(screen.queryByLabelText("/executor/type")).toBeNull();
+    expect(screen.queryByText("top_level_policy")).toBeNull();
+    expect(screen.queryByDisplayValue(/\{\s*"agents"/)).toBeNull();
+
+    fireEvent.click(teammateButton!);
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(hooks.update.mutateAsync).toHaveBeenCalledOnce());
+    expect(hooks.update.mutateAsync.mock.calls[0][0].request.patches).toContainEqual({
+      file: "config.yaml",
+      op: "replace",
+      path: "/tools",
+      value: {
+        agents: [],
+        builtins: null,
+        timeout: null,
+        retry: null,
+      },
+    });
   });
 
   it("keeps non-inline files visible in the file tree", () => {

@@ -36,6 +36,19 @@ describe("multi-agent visual draft patches", () => {
     expect(buildConfigPatches("config.yaml", original, readAgentConfig(original))).toEqual([]);
   });
 
+  it("keeps top-level policies separate from guardrail policies", () => {
+    const original = {
+      guardrails: { policies: { nested: true } },
+      policies: { topLevel: true },
+    };
+
+    const visual = readAgentConfig(original);
+
+    expect(JSON.parse(visual.guardrails)).toEqual({ policies: { nested: true } });
+    expect(JSON.parse(visual.policies)).toEqual({ topLevel: true });
+    expect(buildConfigPatches("config.yaml", original, visual)).toEqual([]);
+  });
+
   it("preserves inherited booleans as Default and removes explicit values", () => {
     const original = { name: "coordinator", async: true, timers: false, spawn: true };
     const visual: AgentConfigDraft = {

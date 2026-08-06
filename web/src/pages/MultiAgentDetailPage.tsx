@@ -870,6 +870,7 @@ export function MultiAgentDetailPage() {
                           key={selected.path}
                           schema={formSchema.data}
                           harnesses={bundleOptions.data?.harnesses}
+                          workerNames={workers.map(draftWorkerName)}
                           value={selected.visual}
                           onChange={(visual) =>
                             updateSelected((file) => ({ ...file, visual, visualDirty: true }))

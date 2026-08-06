@@ -187,37 +187,144 @@
       "name": "Name",
       "description": "Description",
       "harness": "Harness",
+      "harnessHelp": "Choose the local runtime that executes this Agent. Keep the local default if you are unsure.",
       "model": "Model",
       "localDefault": "Use local default",
       "localDefaultHelp": "Leave blank to omit the model field and use the local runtime default.",
       "identity": "Basic settings",
       "identityHelp": "Set this Agent's identity and runtime.",
+      "descriptionHelp": "Summarize this Agent's responsibility in one sentence. This appears in team lists and pickers.",
       "instructions": "Agent instructions",
       "instructionsHelp": "Describe the role, boundaries, and expected behavior in plain language.",
       "capabilities": "Runtime capabilities",
       "capabilitiesHelp": "Choose whether this Agent can dispatch background work, use timers, or create child sessions.",
       "advancedProperties": "Advanced properties",
-      "advancedPropertiesHelp": "Low-frequency and source-level options stay hidden until you need them.",
+      "advancedPropertiesHelp": "Configure collaboration, skills, runtime, and safety by purpose — no JSON knowledge required.",
+      "advancedVisualHelp": "Only settings that can be explained and edited safely appear here. Empty values use runtime defaults; use Advanced YAML for rare custom extensions.",
       "configuredCount": "{{count}} configured",
+      "configured": "Configured",
       "showUnused": "Show unconfigured properties",
       "hideUnused": "Hide unconfigured properties",
       "noAdvancedConfigured": "No advanced properties are configured for this Agent.",
       "prompt": "Prompt",
       "tools": "Tools",
+      "toolsHelp": "Choose which teammates this Agent can call and set optional tool timeouts or retries. Most teams only need the teammate selector.",
       "skills": "Skills",
+      "skillsHelp": "Control which reusable skills the runtime may load. Keep the default unless you need an explicit allow-list.",
       "mcp": "MCP",
+      "mcpHelp": "Connect external tool services such as source control, documents, or business systems. Maintain complex server definitions in Advanced YAML.",
       "environment": "Environment",
+      "environmentHelp": "Control where commands run, whether they can access local files directly, and which OS isolation is used.",
       "guardrails": "Guardrails",
+      "guardrailsHelp": "Run checks or blocks before sensitive actions such as tool calls. Configure these only when you need explicit approval or safety rules.",
       "policies": "Policies",
+      "contextWindow": "Context window",
+      "auth": "Credentials",
+      "executorConfig": "Runtime extensions",
+      "interaction": "Interaction mode",
       "async": "Async dispatch",
+      "asyncHelp": "Allow long-running work to be dispatched in the background; useful for Coordinators.",
       "timers": "Timers",
+      "timersHelp": "Allow delayed or scheduled wake-ups. Most Workers do not need this.",
       "spawn": "Spawn child sessions",
+      "spawnHelp": "Allow this Agent to create more child sessions when it needs to split work further.",
       "default": "Default",
       "enabled": "Enabled",
       "disabled": "Disabled",
       "advanced": "Advanced fields",
       "jsonHelp": "JSON value. Unknown YAML fields remain untouched.",
-      "secretConfigured": "Configured — enter a new value to replace it"
+      "secretConfigured": "Configured — enter a new value to replace it",
+      "listHelp": "Separate multiple values with commas.",
+      "listPlaceholder": "For example: reviewer, researcher",
+      "complexYamlOnly": "This value uses a complex custom structure. Edit it in Advanced YAML to avoid an unsafe rewrite.",
+      "usesRuntimeDefault": "Runtime default",
+      "hiddenDefaults_one": "{{count}} empty or default item is hidden.",
+      "hiddenDefaults_other": "{{count}} empty or default items are hidden.",
+      "collaborators": "Callable teammates",
+      "collaboratorsHelp": "Selected Workers become teammates this Agent can dispatch work to.",
+      "noCollaborators": "There are no Workers to select yet. Add a teammate from the left panel first.",
+      "toolLimits": "Tool limits",
+      "skillAccess": "Skill access",
+      "skillAccessHelp": "Use the runtime default, allow everything, disable skills, or provide a specific allow-list.",
+      "allSkills": "Allow all skills",
+      "noSkills": "Disable all skills",
+      "selectedSkills": "Only selected skills",
+      "skillNames": "Allowed skill names",
+      "callerProcess": "Current process (recommended)",
+      "noIsolation": "No isolation (full local access)",
+      "linuxIsolation": "Linux sandbox (Bubblewrap)",
+      "macIsolation": "macOS sandbox (Seatbelt)",
+      "functionPolicy": "Function policy",
+      "authHelp": "Runtime credentials. Existing secrets stay hidden and are replaced only when you enter a new value.",
+      "extensionHelp": "A runtime- or plugin-owned extension. Leave it unchanged if you are unsure.",
+      "yamlEscapeHatch": "Use Advanced YAML for system-level and custom structures."
+    },
+    "advancedKeys": {
+      "agents": { "label": "Teammates", "help": "Workers this Agent may call." },
+      "builtins": {
+        "label": "Built-in tools",
+        "help": "Restrict runtime-provided tools; leave empty to use the runtime default."
+      },
+      "timeout": { "label": "Tool timeout", "help": "Maximum time to wait for one tool call." },
+      "retry": { "label": "Failure retries", "help": "How failed tool calls are retried." },
+      "type": {
+        "label": "Execution mode",
+        "help": "caller_process runs in the active local runtime process."
+      },
+      "environmentType": {
+        "label": "Execution mode",
+        "help": "Current process uses the local runtime directly; this is the common choice for local Agents."
+      },
+      "sandboxType": {
+        "label": "Isolation mode",
+        "help": "No isolation grants full local access; Linux/macOS sandboxes restrict files, processes, and networking."
+      },
+      "policyType": {
+        "label": "Policy type",
+        "help": "A function policy calls the backend check configured below; this is the only supported type today."
+      },
+      "cwd": {
+        "label": "Working directory",
+        "help": ". uses the working directory selected for the session."
+      },
+      "sandbox": {
+        "label": "OS isolation",
+        "help": "Limit access to local files and processes.",
+        "type": {
+          "label": "Isolation mode",
+          "help": "none disables OS isolation, allowing access to resources available to the current user."
+        }
+      },
+      "policies": { "label": "Policies", "help": "Named checks applied at runtime." },
+      "blast_radius": {
+        "label": "Change-scope check",
+        "help": "Check the impact radius before high-impact operations."
+      },
+      "on": {
+        "label": "Trigger",
+        "help": "For example, tool_call runs before each tool invocation."
+      },
+      "function": {
+        "label": "Check function",
+        "help": "The backend function that evaluates the policy."
+      },
+      "path": {
+        "label": "Function path",
+        "help": "Python import path for the policy implementation."
+      },
+      "arguments": { "label": "Policy options", "help": "Options passed to the check function." },
+      "gate_pushes": {
+        "label": "Gate pushes",
+        "help": "Require this policy to pass before code is pushed."
+      }
+    },
+    "advancedPaths": {
+      "executor": {
+        "context_window": "Override the model context window; the runtime normally detects this automatically.",
+        "auth": "Runtime credentials. Existing values remain safely stored.",
+        "config": "Runtime-specific extension settings."
+      },
+      "interaction": "Control the conversation protocol; keep the default unless a custom interaction mode is required."
     },
     "editor": {
       "newTitle": "New Multi-Agent",
