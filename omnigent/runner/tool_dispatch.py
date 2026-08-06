@@ -1886,7 +1886,11 @@ async def _execute_subagent_tool(
                 agent_spec=agent_spec,
                 harness=child_harness,
             )
-        resp = await server_client.post("/v1/sessions", json=create_body, timeout=30.0)
+        # Child creation may include host-side worktree preparation and runner
+        # launch.  Thirty seconds is too short for that path on a busy local
+        # workspace and leaves a successfully-starting child reported as a
+        # ReadTimeout to the parent agent.
+        resp = await server_client.post("/v1/sessions", json=create_body, timeout=180.0)
         if resp.status_code >= 400:
             return f"Error: failed to create child session: {resp.status_code} {resp.text[:200]}"
         child_data = resp.json()

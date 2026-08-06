@@ -2470,6 +2470,8 @@ async def _recover_subagent_status_forward_via_parent(
     tunnel_registry: TunnelRegistry | None,
     conversation_store: ConversationStore,
     forward_body: dict[str, Any],
+    *,
+    preserve_child_binding: bool = False,
 ) -> _RunnerForwardResult | None:
     """
     Re-deliver a sub-agent terminal status through the parent's live runner.
@@ -2506,11 +2508,28 @@ async def _recover_subagent_status_forward_via_parent(
         runner was resolved, or ``None`` when none could be (the caller then
         fails the forward as before).
     """
-    client = await _heal_subagent_runner_binding_via_parent(
-        child_conv, runner_router, tunnel_registry, conversation_store
-    )
+    if preserve_child_binding:
+        parent_id = child_conv.parent_conversation_id
+        parent = (
+            await asyncio.to_thread(conversation_store.get_conversation, parent_id)
+            if parent_id is not None
+            else None
+        )
+        client = await _get_runner_client(parent.id, runner_router) if parent is not None else None
+    else:
+        client = await _heal_subagent_runner_binding_via_parent(
+            child_conv, runner_router, tunnel_registry, conversation_store
+        )
     if client is None:
         return None
+    if preserve_child_binding:
+        try:
+            response = await client.post(
+                f"/v1/sessions/{child_conv.id}/events", json=forward_body, timeout=5.0
+            )
+        except (httpx.HTTPError, ConnectionError):
+            return None
+        return _RunnerForwardResult(status_code=response.status_code, body=response.text)
     return await _forward_session_change_to_runner(
         child_conv.id,
         runner_router,
@@ -4415,11 +4434,12 @@ async def _forward_event_to_runner(
     # and starts the turn as a background task. No streaming
     # response to drain — events flow through GET /stream.
     try:
-        await runner_client.post(
+        runner_response = await runner_client.post(
             f"/v1/sessions/{session_id}/events",
             json=runner_body,
             timeout=_RUNNER_FORWARD_TIMEOUT,
         )
+        runner_response.raise_for_status()
         # Publish input.consumed AFTER the forward succeeds —
         # the runner has the message and will start the turn.
         _publish_input_consumed(session_id, persisted_items[0])
@@ -4883,6 +4903,43 @@ async def _relay_runner_stream(
                                 conversation_store.get_conversation, session_id
                             )
                             if projected_conv is not None:
+                                if (
+                                    projected_conv.kind == "sub_agent"
+                                    and projected_conv.host_id is not None
+                                    and status in {"idle", "completed", "failed"}
+                                ):
+                                    # Run Children execute on dedicated runners. Their
+                                    # stream terminal edge must also reach the parent
+                                    # runner, which owns the sys_session_send inbox and
+                                    # continuation wake. The dedicated runner is torn
+                                    # down immediately after this edge, so relying on its
+                                    # own status handling strands the Coordinator idle.
+                                    parent_status = "idle" if status == "completed" else status
+                                    forward_body = {
+                                        "type": "external_session_status",
+                                        "data": await _enrich_idle_status_with_subagent_output(
+                                            {"status": parent_status},
+                                            parent_status,
+                                            session_id,
+                                            conversation_store,
+                                        ),
+                                    }
+                                    forwarded = await _recover_subagent_status_forward_via_parent(
+                                        projected_conv,
+                                        get_server_runner_router(),
+                                        None,
+                                        conversation_store,
+                                        forward_body,
+                                        preserve_child_binding=True,
+                                    )
+                                    if forwarded is None or forwarded.status_code >= 400:
+                                        _logger.warning(
+                                            "Run Child terminal edge did not reach parent inbox; "
+                                            "child=%s status=%s result=%s",
+                                            session_id,
+                                            parent_status,
+                                            forwarded,
+                                        )
                                 terminal_projection = observe(
                                     getattr(conversation_store, "run_projection", None),
                                     "terminal",

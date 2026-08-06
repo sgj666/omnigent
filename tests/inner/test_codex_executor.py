@@ -1834,6 +1834,27 @@ class TestCodexExecutor(unittest.TestCase):
 
         _run(_t())
 
+    def test_reader_loop_fails_pending_request_when_app_server_exits(self):
+        """EOF must not strand initialize/turn RPCs until the idle watchdog."""
+
+        async def _t():
+            session = _CodexAppServerSession(
+                codex_path="/bin/echo",
+                cwd="/tmp/workspace",
+                env={},
+                tool_executor=None,
+            )
+            session._proc = _FakeProcess()
+            pending = asyncio.get_running_loop().create_future()
+            session._pending_requests[1] = pending
+
+            await session._reader_loop()
+
+            with self.assertRaisesRegex(RuntimeError, "exited before responding"):
+                await pending
+
+        _run(_t())
+
 
 # ── Retryable ExecutorError emission ──────────────────────────
 #

@@ -2142,6 +2142,19 @@ class _CodexAppServerSession:
                         future.set_result(message)
                     continue
                 await self._events.put(message)
+            # An app-server that exits before replying leaves callers of
+            # ``_request`` waiting forever.  The outer harness then mistakes
+            # that startup failure for a silent model turn and only reports
+            # the idle watchdog minutes later.  Wake every in-flight RPC as
+            # soon as stdout reaches EOF so the real launch failure surfaces
+            # on this turn.
+            detail = "Codex App Server exited before responding"
+            if self._recent_stderr:
+                detail = f"{detail}: {' | '.join(self._recent_stderr[-5:])}"
+            for future in self._pending_requests.values():
+                if not future.done():
+                    future.set_exception(RuntimeError(detail))
+            self._pending_requests.clear()
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — reader loop logs and exits on any unexpected error  # pragma: no cover - defensive

@@ -857,6 +857,21 @@ def register_events_routes(
                         )
                         if recovered is not None:
                             runner_result = recovered
+                    elif conv.host_id is not None:
+                        # A Run Child has a dedicated runner. Its terminal edge
+                        # must also reach the parent runner's in-memory inbox,
+                        # without rebinding the child (cleanup must stop only
+                        # the dedicated runner, never the Root runner).
+                        from omnigent.server.routes import sessions as _sf
+
+                        await _sf._recover_subagent_status_forward_via_parent(
+                            conv,
+                            runner_router,
+                            getattr(request.app.state, "tunnel_registry", None),
+                            conversation_store,
+                            forward_body,
+                            preserve_child_binding=True,
+                        )
                     _require_external_status_forward(
                         session_id,
                         status,
@@ -1140,12 +1155,14 @@ def register_events_routes(
                 if conv is None:
                     raise _session_not_found()
                 runner_client = await _get_runner_client(session_id, runner_router)
-        if runner_client is None and conv.kind == "sub_agent":
+        if runner_client is None and conv.kind == "sub_agent" and conv.host_id is None:
             # A sub-agent copies its parent's runner_id at creation and is
             # never repointed when the parent's runner is relaunched.  If the
             # runner is dead but the parent has a live replacement, repair the
             # stale binding via the ancestor chain and continue through the
-            # normal init+dispatch flow.
+            # normal init+dispatch flow. Host-bound Run Children own dedicated
+            # runners; their startup gap must continue into the host grace path
+            # below rather than replacing their binding with the parent's.
             _tunnel_registry = getattr(request.app.state, "tunnel_registry", None)
             healed_client = await _heal_subagent_runner_binding_via_parent(
                 conv,

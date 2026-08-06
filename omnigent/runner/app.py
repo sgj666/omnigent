@@ -8953,7 +8953,20 @@ def create_runner_app(
             turn_task.add_done_callback(_background_tasks.discard)
             _background_tasks.add(turn_task)
 
-        entries = await _fetch_recoverable_entries()
+        try:
+            entries = await _fetch_recoverable_entries()
+        except BaseException:
+            # Recovery starts as soon as the runner app is created, which can
+            # precede the control-plane auth token becoming available.  Do not
+            # leave the global scan barrier raised after that transient
+            # failure: every newly accepted durable dispatch would otherwise
+            # be buffered forever with its receipt stuck in ``queued``.
+            _dispatch_recovery_scan_in_progress = False
+            scan_buffered = set(_dispatch_recovery_scan_buffered)
+            _dispatch_recovery_scan_buffered.clear()
+            for conversation_id in scan_buffered:
+                await _check_and_start_next_turn(conversation_id)
+            raise
         by_conversation: dict[str, list[dict[str, Any]]] = {}
         for entry in entries:
             conversation_id = entry.get("conversation_id")

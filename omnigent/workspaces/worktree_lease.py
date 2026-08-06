@@ -475,31 +475,24 @@ class WorktreeLeaseManager:
                 and (lease.workspace_id, lease.attempt_id) in self._hydrated_active_attempts
             )
         )
-        locks = self._lease_locks(candidates)
-        for lock in locks:
-            await lock.acquire()
+        expired = tuple(
+            lease
+            for lease in candidates
+            if lease.status is LeaseStatus.RECOVERY_REQUIRED
+            or (lease.status is LeaseStatus.ACTIVE and now - lease.heartbeat_at >= self._ttl_s)
+        )
+        for lease in expired:
+            if lease.status is LeaseStatus.ACTIVE:
+                lease.status = LeaseStatus.EXPIRED
+        await self.stop_heartbeat(expired)
         try:
-            expired = tuple(
-                lease
-                for lease in candidates
-                if lease.status is LeaseStatus.RECOVERY_REQUIRED
-                or (lease.status is LeaseStatus.ACTIVE and now - lease.heartbeat_at >= self._ttl_s)
-            )
+            await self._release_locked(host_registry, host_conn, expired)
+        except Exception:
             for lease in expired:
-                if lease.status is LeaseStatus.ACTIVE:
-                    lease.status = LeaseStatus.EXPIRED
-            await self.stop_heartbeat(expired)
-            try:
-                await self._release_locked(host_registry, host_conn, expired)
-            except Exception:
-                for lease in expired:
-                    if lease.status is not LeaseStatus.RELEASED:
-                        lease.status = LeaseStatus.RECOVERY_REQUIRED
-                        self._mark_recovery_required(lease)
-                raise
-        finally:
-            for lock in reversed(locks):
-                lock.release()
+                if lease.status is not LeaseStatus.RELEASED:
+                    lease.status = LeaseStatus.RECOVERY_REQUIRED
+                    self._mark_recovery_required(lease)
+            raise
         return expired
 
     async def _release(

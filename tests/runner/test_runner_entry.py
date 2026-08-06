@@ -509,6 +509,23 @@ def test_managed_mint_factory_installs_for_retry_on_transient_boot_failure(
     assert factory() is None  # still can't mint, but it's armed to retry
 
 
+def test_managed_mint_factory_declines_loopback_unauthorized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A local Core may reject delegated mint while accepting bare callbacks."""
+
+    def _unauthorized(mint_url: str, server_url: str, binding_token: str) -> tuple[str, float]:
+        request = httpx.Request("POST", mint_url)
+        raise httpx.HTTPStatusError(
+            "unauthorized", request=request, response=httpx.Response(401, request=request)
+        )
+
+    monkeypatch.setattr("omnigent.runner._entry._mint_managed_owner_token", _unauthorized)
+
+    assert _make_managed_mint_factory("http://127.0.0.1:6777", "btok") is None
+    assert _make_managed_mint_factory("https://s.example.com", "btok") is not None
+
+
 def test_managed_mint_factory_recovers_after_transient_boot_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

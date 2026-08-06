@@ -8185,7 +8185,10 @@ async def test_non_native_message_still_raises_when_runner_offline(
     assert [i for i in items if i["type"] == "error"] == []
 
 
-@pytest.mark.parametrize("failure_mode", ["transport_error", "bare_connection_error"])
+@pytest.mark.parametrize(
+    "failure_mode",
+    ["transport_error", "bare_connection_error", "runner_rejected"],
+)
 async def test_message_forward_failure_surfaces_runner_unavailable(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -8213,6 +8216,11 @@ async def test_message_forward_failure_surfaces_runner_unavailable(
         if request.method == "POST" and request.url.path.endswith("/events"):
             if failure_mode == "transport_error":
                 raise httpx.ConnectError("runner unreachable")
+            if failure_mode == "runner_rejected":
+                return httpx.Response(
+                    503,
+                    json={"error": "dispatch_receipt_unavailable"},
+                )
             # Bare ConnectionError: what WSTunnelTransport raises on tunnel close.
             raise ConnectionError("tunnel closed mid-request")
         return httpx.Response(202, json={})

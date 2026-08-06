@@ -623,8 +623,10 @@ class _ManagedMintTokenFactory:
             )
         except httpx.HTTPStatusError as exc:
             response = exc.response
-            if response.status_code in (400, 404) or (
-                response.is_redirect and _is_login_redirect_or_unauthorized(response)
+            if (
+                response.status_code in (400, 404)
+                or (response.status_code == 401 and _is_loopback_server_url(self._server_url))
+                or (response.is_redirect and _is_login_redirect_or_unauthorized(response))
             ):
                 self.declined = True
                 return None
@@ -647,6 +649,13 @@ class _ManagedMintTokenFactory:
         if self._cached_token is not None and now < self._cached_expires_at:
             return self._cached_token
         return None
+
+
+def _is_loopback_server_url(server_url: str) -> bool:
+    """Return whether *server_url* points at this machine."""
+    from urllib.parse import urlparse
+
+    return (urlparse(server_url).hostname or "").lower() in {"127.0.0.1", "localhost", "::1"}
 
 
 def _mint_managed_owner_token(
