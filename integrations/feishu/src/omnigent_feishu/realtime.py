@@ -18,6 +18,7 @@ from omnigent_feishu.cards import build_elicitation_card, build_guide_card
 from omnigent_feishu.core_client import CoreApiError, CoreClient
 from omnigent_feishu.credentials import FeishuCredentialCipher
 from omnigent_feishu.models import Installation
+from omnigent_feishu.router import FeishuRoutingError
 from omnigent_feishu.store import FeishuStore
 
 logger = logging.getLogger(__name__)
@@ -107,10 +108,19 @@ class FeishuRealtimeRuntime:
                 future.add_done_callback(self._log_failure)
             return P2CardActionTriggerResponse()
 
+        def receive_menu(event: Any) -> None:
+            if self._app_loop is None:
+                return
+            future = asyncio.run_coroutine_threadsafe(
+                self._receive_menu(installation, secret, event), self._app_loop
+            )
+            future.add_done_callback(self._log_failure)
+
         handler = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(receive)
             .register_p2_card_action_trigger(receive_action)
+            .register_p2_application_bot_menu_v6(receive_menu)
             .register_p2_im_message_reaction_created_v1(lambda _event: None)
             .register_p2_im_message_reaction_deleted_v1(lambda _event: None)
             .build()
@@ -159,6 +169,7 @@ class FeishuRealtimeRuntime:
                     "chat_id": message.chat_id,
                     "thread_id": message.thread_id,
                     "root_id": message.root_id,
+                    "chat_type": message.chat_type,
                     "message_type": message.message_type,
                     "content": message.content,
                 },
@@ -365,6 +376,60 @@ class FeishuRealtimeRuntime:
         if isinstance(message, str) and isinstance(receive_id, str) and receive_id:
             await self._send_text(installation.app_id or "", secret, receive_id, message)
 
+    async def _receive_menu(self, installation: Installation, secret: str, event: Any) -> None:
+        data = event.event
+        operator_id = data.operator.operator_id
+        open_id = operator_id.open_id
+        event_key = data.event_key
+        event_id = event.header.event_id
+        if not all(isinstance(item, str) and item for item in (open_id, event_key, event_id)):
+            logger.warning("feishu_bot_menu_event_incomplete installation_id=%s", installation.id)
+            return
+        payload = {
+            "header": {
+                "event_id": event_id,
+                "event_type": "application.bot.menu_v6",
+            },
+            "event": {
+                "operator": {"operator_id": {"open_id": open_id}},
+                "event_key": event_key,
+            },
+        }
+        try:
+            result = await self._adapter.receive(
+                json.dumps(payload).encode(), {}, installation_id=installation.id
+            )
+            run = result.response.get("run") if isinstance(result.response, dict) else None
+            if not isinstance(run, dict):
+                return
+            card = run.get("guide_card")
+            message = run.get("message")
+            if isinstance(card, dict):
+                await self._send_interactive_card(
+                    installation.app_id or "", secret, open_id, "open_id", card
+                )
+            if isinstance(message, str):
+                await self._send_text(
+                    installation.app_id or "",
+                    secret,
+                    open_id,
+                    message,
+                    receive_id_type="open_id",
+                )
+        except Exception as exc:
+            logger.exception(
+                "feishu_bot_menu_event_failed installation_id=%s event_key=%s",
+                installation.id,
+                event_key,
+            )
+            await self._send_text(
+                installation.app_id or "",
+                secret,
+                open_id,
+                _failure_message(exc),
+                receive_id_type="open_id",
+            )
+
     async def _deliver_result(
         self,
         installation: Installation,
@@ -504,7 +569,9 @@ class FeishuRealtimeRuntime:
         session: object,
         sent: set[str],
     ) -> None:
-        if not isinstance(session, dict) or not isinstance(session.get("pending_elicitations"), list):
+        if not isinstance(session, dict) or not isinstance(
+            session.get("pending_elicitations"), list
+        ):
             return
         for pending in session["pending_elicitations"]:
             if not isinstance(pending, dict):
@@ -645,15 +712,23 @@ class FeishuRealtimeRuntime:
             if payload.get("code", 0) != 0:
                 raise RuntimeError(f"Feishu card update rejected: {payload.get('code')}")
 
-    async def _send_text(self, app_id: str, secret: str, chat_id: str, text: str) -> None:
+    async def _send_text(
+        self,
+        app_id: str,
+        secret: str,
+        receive_id: str,
+        text: str,
+        *,
+        receive_id_type: str = "chat_id",
+    ) -> None:
         async with httpx.AsyncClient(timeout=20) as client:
             token = await self._tenant_token(client, app_id, secret)
             response = await client.post(
                 "https://open.feishu.cn/open-apis/im/v1/messages",
-                params={"receive_id_type": "chat_id"},
+                params={"receive_id_type": receive_id_type},
                 headers={"Authorization": f"Bearer {token}"},
                 json={
-                    "receive_id": chat_id,
+                    "receive_id": receive_id,
                     "msg_type": "text",
                     "content": json.dumps({"text": text}, ensure_ascii=False),
                 },
@@ -838,6 +913,15 @@ class FeishuRealtimeRuntime:
 
 def _failure_message(exc: Exception) -> str:
     """Turn the expected disconnected-host response into an actionable reply."""
+    if isinstance(exc, FeishuRoutingError):
+        if exc.code == "p2p_binding_required":
+            return "请先在当前单聊中发送一条消息，再使用常驻菜单。"
+        if exc.code == "action_disabled":
+            return "当前 Agent 未启用这个飞书能力，请在 Omnigent 的连接设置中开启。"
+        if exc.code == "no_current_run":
+            return "当前没有正在进行的任务。"
+        if exc.code == "unknown_menu_action":
+            return "这个菜单项尚未绑定 Omnigent 动作，请检查飞书后台的 event_key。"
     if isinstance(exc, CoreApiError):
         detail = str(exc.detail).lower()
         if "host" in detail and ("offline" in detail or "not connected" in detail):
@@ -861,7 +945,12 @@ def _elicitation_question(pending: dict[str, object]) -> tuple[str, list[str]]:
         if isinstance(option, str):
             options.append(option)
         elif isinstance(option, dict):
-            label = option.get("label") or option.get("title") or option.get("text") or option.get("value")
+            label = (
+                option.get("label")
+                or option.get("title")
+                or option.get("text")
+                or option.get("value")
+            )
             if isinstance(label, str) and label:
                 options.append(label)
     return prompt, options

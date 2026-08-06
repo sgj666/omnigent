@@ -15,7 +15,13 @@ from omnigent_feishu.cards import (
 )
 from omnigent_feishu.credentials import FeishuCredentialCipher, FeishuCredentialError
 from omnigent_feishu.device_flow import FeishuPending, FeishuPersonalAgentDeviceFlow
-from omnigent_feishu.protocol import challenge_response, decode_message, verify_signature
+from omnigent_feishu.protocol import (
+    FeishuMenuAction,
+    challenge_response,
+    decode_event,
+    decode_message,
+    verify_signature,
+)
 from omnigent_feishu.realtime import (
     FeishuRealtimeRuntime,
     _format_progress,
@@ -36,6 +42,24 @@ def test_protocol_challenge_message_and_signature() -> None:
     body = b"body"
     expected = hashlib.sha256(b"1" + b"n" + b"s" + body).hexdigest()
     assert verify_signature(timestamp="1", nonce="n", body=body, secret="s", signature=expected)
+
+
+def test_protocol_decodes_bot_menu_events() -> None:
+    event = decode_event(
+        {
+            "header": {
+                "event_id": "evt-menu",
+                "event_type": "application.bot.menu_v6",
+            },
+            "event": {
+                "operator": {"operator_id": {"open_id": "ou_sender"}},
+                "event_key": "manage_devices",
+                "timestamp": 1669364458,
+            },
+        }
+    )
+
+    assert event == FeishuMenuAction("evt-menu", "manage_devices", "ou_sender")
 
 
 def test_credentials_and_cards_are_secret_safe() -> None:
@@ -206,3 +230,36 @@ async def test_realtime_card_action_routes_and_replies_with_a_guide_card() -> No
         "app-id", "secret", "oc_chat", "chat_id", guide_card
     )
     runtime._send_text.assert_awaited_once_with("app-id", "secret", "oc_chat", "已新建会话")
+
+
+@pytest.mark.asyncio
+async def test_realtime_bot_menu_event_routes_and_replies_to_the_operator() -> None:
+    runtime = FeishuRealtimeRuntime(None, None, None, None)  # type: ignore[arg-type]
+    guide_card = {"schema": "2.0", "header": {"title": {"content": "管理设备"}}}
+    runtime._adapter = SimpleNamespace(  # type: ignore[assignment]
+        receive=AsyncMock(
+            return_value=SimpleNamespace(
+                response={"run": {"guide_card": guide_card, "message": None}}
+            )
+        )
+    )
+    runtime._send_interactive_card = AsyncMock()
+    runtime._send_text = AsyncMock()
+    installation = SimpleNamespace(id="install-1", app_id="app-id")
+    event = SimpleNamespace(
+        header=SimpleNamespace(event_id="evt-menu"),
+        event=SimpleNamespace(
+            event_key="manage_devices",
+            operator=SimpleNamespace(operator_id=SimpleNamespace(open_id="ou-user")),
+        ),
+    )
+
+    await runtime._receive_menu(installation, "secret", event)
+
+    raw = runtime._adapter.receive.await_args.args[0]
+    payload = json.loads(raw)
+    assert payload["header"]["event_type"] == "application.bot.menu_v6"
+    assert payload["event"]["event_key"] == "manage_devices"
+    runtime._send_interactive_card.assert_awaited_once_with(
+        "app-id", "secret", "ou-user", "open_id", guide_card
+    )

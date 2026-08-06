@@ -22,6 +22,7 @@ class FeishuMessage:
     text: str
     sender_id: str
     mentions: tuple[str, ...] = ()
+    chat_type: str | None = None
     raw: Mapping[str, Any] = field(default_factory=dict, repr=False)
 
 
@@ -34,6 +35,13 @@ class FeishuCardAction:
     thread_id: str | None
     sender_id: str
     value: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class FeishuMenuAction:
+    event_id: str
+    event_key: str
+    sender_id: str
 
 
 def verify_signature(
@@ -124,6 +132,7 @@ def decode_message(payload: Mapping[str, Any]) -> FeishuMessage:
         text=_content_text(message.get("content", "")),
         sender_id=sender_id,
         mentions=tuple(mentions),
+        chat_type=message.get("chat_type"),
         raw=payload,
     )
 
@@ -155,13 +164,33 @@ def decode_card_action(payload: Mapping[str, Any]) -> FeishuCardAction:
     )
 
 
-def decode_event(payload: Mapping[str, Any] | bytes | str) -> FeishuMessage | FeishuCardAction:
+def decode_menu_action(payload: Mapping[str, Any]) -> FeishuMenuAction:
+    header = _mapping(payload.get("header", {}), "invalid event header")
+    event = _mapping(payload.get("event", payload), "invalid menu event")
+    operator = _mapping(event.get("operator", {}), "invalid menu operator")
+    event_id = header.get("event_id") or payload.get("event_id")
+    event_key = event.get("event_key")
+    sender_id = _identity(operator.get("operator_id") or operator)
+    if not isinstance(event_id, str) or not event_id:
+        raise FeishuProtocolError("menu event is missing event_id")
+    if not isinstance(event_key, str) or not event_key:
+        raise FeishuProtocolError("menu event is missing event_key")
+    if sender_id is None:
+        raise FeishuProtocolError("menu event is missing operator")
+    return FeishuMenuAction(event_id, event_key, sender_id)
+
+
+def decode_event(
+    payload: Mapping[str, Any] | bytes | str,
+) -> FeishuMessage | FeishuCardAction | FeishuMenuAction:
     if isinstance(payload, bytes | str):
         decoded = json.loads(payload)
         payload = _mapping(decoded, "event must be an object")
     header = payload.get("header", {})
     event_type = header.get("event_type") if isinstance(header, Mapping) else None
     event = payload.get("event", {})
+    if event_type in {"application.bot.menu_v6", "p2.application.bot.menu_v6"}:
+        return decode_menu_action(payload)
     if event_type == "card.action.trigger" or (isinstance(event, Mapping) and "action" in event):
         return decode_card_action(payload)
     return decode_message(payload)
@@ -169,15 +198,18 @@ def decode_event(payload: Mapping[str, Any] | bytes | str) -> FeishuMessage | Fe
 
 LarkMessage = FeishuMessage
 LarkCardAction = FeishuCardAction
+LarkMenuAction = FeishuMenuAction
 LarkProtocolError = FeishuProtocolError
 
 __all__ = [
     "FeishuCardAction",
+    "FeishuMenuAction",
     "FeishuMessage",
     "FeishuProtocolError",
     "challenge_response",
     "decode_card_action",
     "decode_event",
+    "decode_menu_action",
     "decode_message",
     "verify_signature",
 ]

@@ -9,6 +9,7 @@ from typing import Protocol
 
 from omnigent_feishu.protocol import (
     FeishuCardAction,
+    FeishuMenuAction,
     FeishuProtocolError,
     challenge_response,
     decode_event,
@@ -82,6 +83,8 @@ class FeishuAdapter:
         routed: RouteResult
         if isinstance(event, FeishuCardAction):
             routed = await self._router.route_action(event, installation_id)
+        elif isinstance(event, FeishuMenuAction):
+            routed = await self._router.route_menu_action(event, installation_id)
         else:
             routed = await self._router.route(event, installation_id)
         return AdapterResult(

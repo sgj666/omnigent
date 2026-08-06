@@ -70,6 +70,11 @@ CREATE TABLE IF NOT EXISTS agent_surface_profiles (
   agent_id TEXT PRIMARY KEY, details_base_url TEXT NOT NULL,
   actions TEXT NOT NULL, updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS p2p_chat_bindings (
+  installation_id TEXT NOT NULL, provider_user_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL, updated_at INTEGER NOT NULL,
+  PRIMARY KEY(installation_id,provider_user_id)
+);
 """
 
 _INSTALLATION_COLUMNS = {
@@ -534,6 +539,34 @@ class FeishuStore:
         values = list(row)
         values[-1] = tuple(json.loads(values[-1]))
         return ThreadBinding(*values)
+
+    async def set_p2p_chat_binding(
+        self, installation_id: str, provider_user_id: str, chat_id: str
+    ) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """INSERT INTO p2p_chat_bindings
+                (installation_id,provider_user_id,chat_id,updated_at) VALUES(?,?,?,?)
+                ON CONFLICT(installation_id,provider_user_id) DO UPDATE SET
+                chat_id=excluded.chat_id,updated_at=excluded.updated_at""",
+                (installation_id, provider_user_id, chat_id, self._clock()),
+            )
+            await db.commit()
+
+    async def get_p2p_chat_binding(
+        self, installation_id: str, provider_user_id: str
+    ) -> ThreadBinding | None:
+        async with aiosqlite.connect(self.path) as db:
+            row = await (
+                await db.execute(
+                    """SELECT chat_id FROM p2p_chat_bindings
+                    WHERE installation_id=? AND provider_user_id=?""",
+                    (installation_id, provider_user_id),
+                )
+            ).fetchone()
+        if row is None:
+            return None
+        return await self.get_binding(installation_id, str(row[0]), None)
 
     async def set_binding_run(self, binding_id: str, run_id: str) -> None:
         async with aiosqlite.connect(self.path) as db:

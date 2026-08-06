@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 
 from omnigent_feishu.cards import (
+    action_value,
     build_device_picker_card,
     build_guide_card,
     build_quick_commands_card,
@@ -14,8 +15,35 @@ from omnigent_feishu.cards import (
 )
 from omnigent_feishu.core_client import CoreApiError, CoreClient, SessionCreateCommand
 from omnigent_feishu.models import ThreadBinding
-from omnigent_feishu.protocol import FeishuCardAction, FeishuMessage
+from omnigent_feishu.protocol import FeishuCardAction, FeishuMenuAction, FeishuMessage
 from omnigent_feishu.store import FeishuStore
+from omnigent_feishu.surface_profile import surface_profile
+
+_MENU_EVENT_ACTIONS = {
+    "session_new": "new_session",
+    "quick_new": "new_session",
+    "new_session": "new_session",
+    "session_stop": "stop_session",
+    "quick_stop": "stop_session",
+    "stop_session": "stop_session",
+    "quick_commands": "quick_commands",
+    "manage_devices": "manage_devices",
+    "switch_workspace": "switch_workspace",
+    "workspace_switch": "switch_workspace",
+    "current_run": "current_run",
+    "help": "help",
+}
+
+_ACTION_CAPABILITIES = {
+    "quick_commands": {"quick_commands"},
+    "new_session": {"quick_commands"},
+    "create_run": {"quick_commands"},
+    "stop_session": {"quick_commands", "stop_session"},
+    "manage_devices": {"manage_devices"},
+    "switch_workspace": {"switch_workspace"},
+    "current_run": {"current_run"},
+    "help": {"help"},
+}
 
 
 class FeishuRoutingError(RuntimeError):
@@ -122,6 +150,8 @@ class FeishuRouter:
                     installation_id, event.chat_id, event.thread_id
                 )
                 assert binding is not None
+        if event.chat_type == "p2p":
+            await self._store.set_p2p_chat_binding(installation_id, event.sender_id, event.chat_id)
         root_session_id = await self._store.get_binding_root_session(binding.id)
         command = event.text.strip().lower()
         if command in {"/stop", "/new", "/reset"}:
@@ -242,6 +272,9 @@ class FeishuRouter:
         if value.get("agent_id") not in (None, binding.agent_id):
             raise FeishuRoutingError("binding_mismatch", "Agent binding mismatch")
         action = event.action_id
+        if not await self._action_enabled(binding.agent_id, action):
+            await self._store.fail_event(event.event_id, "action_disabled")
+            raise FeishuRoutingError("action_disabled", f"{action} is not enabled for this Agent")
         run_id = str(value.get("run_id") or binding.run_id or "")
         payload: object
         if action == "elicitation_choice":
@@ -372,11 +405,14 @@ class FeishuRouter:
         elif action in {"current_run", "run_logs"}:
             if not run_id:
                 raise FeishuRoutingError("no_current_run", "No current Run")
-            payload = (
-                await self._core.get_run(run_id)
-                if action == "current_run"
-                else await self._core.get_run_inspector(run_id)
-            )
+            if action == "current_run":
+                session = await self._core.get_session(run_id)
+                status = (
+                    session.get("status", "unknown") if isinstance(session, dict) else "unknown"
+                )
+                payload = {"message": f"当前任务状态：{status}\nSession：{run_id}"}
+            else:
+                payload = await self._core.get_run_inspector(run_id)
         elif action == "stop_run":
             if not run_id:
                 raise FeishuRoutingError("no_current_run", "No current Run")
@@ -396,6 +432,46 @@ class FeishuRouter:
             raise FeishuRoutingError("action_forbidden", "Action is not allowed")
         await self._store.complete_event(event.event_id, run_id)
         return RouteResult(event.event_id, run_id or None, duplicate=not claimed, payload=payload)
+
+    async def route_menu_action(
+        self, event: FeishuMenuAction, installation_id: str
+    ) -> RouteResult:
+        action = _MENU_EVENT_ACTIONS.get(event.event_key)
+        if action is None:
+            raise FeishuRoutingError("unknown_menu_action", "Unknown bot menu event_key")
+        binding = await self._store.get_p2p_chat_binding(installation_id, event.sender_id)
+        if binding is None:
+            raise FeishuRoutingError(
+                "p2p_binding_required",
+                "Send one direct message before using the bot menu",
+            )
+        value = action_value(
+            action,
+            signing_secret=self._action_secret,
+            nonce=event.event_id,
+            agent_id=binding.agent_id,
+            run_id=binding.run_id,
+        )
+        return await self.route_action(
+            FeishuCardAction(
+                event.event_id,
+                action,
+                event.event_id,
+                binding.chat_id,
+                binding.thread_id or None,
+                event.sender_id,
+                value,
+            ),
+            installation_id,
+        )
+
+    async def _action_enabled(self, agent_id: str, action: str) -> bool:
+        required = _ACTION_CAPABILITIES.get(action)
+        if required is None:
+            return True
+        profile = surface_profile(await self._store.get_agent_surface_profile(agent_id))
+        selected = profile.get("actions")
+        return isinstance(selected, list) and bool(required.intersection(selected))
 
     async def _guide_card(
         self, binding: ThreadBinding, *, setup_required: bool = False

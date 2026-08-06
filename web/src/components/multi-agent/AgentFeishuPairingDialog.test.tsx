@@ -110,7 +110,7 @@ describe("AgentFeishuPairingDialog", () => {
     expect(screen.getByText("PAIR-123")).toBeVisible();
   });
 
-  it("shows the fixed details entry and visual Agent-scoped shortcut choices", () => {
+  it("separates Agent capabilities from the manually published floating menu", () => {
     mocks.connection.data = {
       id: "installation-1",
       agent_id: "agent-1",
@@ -126,6 +126,14 @@ describe("AgentFeishuPairingDialog", () => {
     expect(screen.getByText("Polly bot")).toBeVisible();
     expect(screen.getByText("Execution details")).toBeVisible();
     expect(screen.getByText("Always on")).toBeVisible();
+    expect(screen.getByText("Agent Feishu capabilities")).toBeVisible();
+    expect(screen.getByText("Feishu floating menu")).toBeVisible();
+    expect(screen.getByText("application.bot.menu_v6")).toBeVisible();
+    expect(screen.getByText("manage_devices")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open Feishu developer console" })).toHaveAttribute(
+      "href",
+      "https://open.feishu.cn/app",
+    );
     expect(screen.getByRole("checkbox", { name: /Quick commands/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Manage devices/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Workspace/ })).toBeChecked();

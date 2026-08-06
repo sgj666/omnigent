@@ -4,8 +4,8 @@ import json
 
 import pytest
 from omnigent_feishu.cards import action_value
-from omnigent_feishu.protocol import FeishuCardAction, FeishuMessage
-from omnigent_feishu.router import FeishuRouter
+from omnigent_feishu.protocol import FeishuCardAction, FeishuMenuAction, FeishuMessage
+from omnigent_feishu.router import FeishuRouter, FeishuRoutingError
 from omnigent_feishu.store import FeishuStore
 
 
@@ -340,3 +340,97 @@ async def test_workspace_card_switches_only_to_an_agent_authorized_directory(tmp
     assert refreshed.id == binding.id
     assert refreshed.workspace_id == "/Users/test/new"
     assert refreshed.host_id == "host-2"
+
+
+@pytest.mark.asyncio
+async def test_bot_menu_event_routes_to_the_p2p_agent_binding_once(tmp_path) -> None:
+    store = FeishuStore(tmp_path / "provider.db")
+    await store.initialize()
+    installation = await store.create_pending_installation(
+        agent_id="ag_polly", session="s", verification_uri="https://qr"
+    )
+    await store.connect_installation(
+        installation.id,
+        app_id="app",
+        app_secret_ciphertext="ciphertext",
+        installer_open_id="ou_sender",
+        bot_open_id="bot",
+    )
+    await store.set_installation_workspace_scope(
+        installation.id, workspace="/Users/test/workspace", host_id="host-1"
+    )
+    await store.set_agent_surface_profile(
+        "ag_polly",
+        details_base_url="https://omnigent.example",
+        actions=["quick_commands"],
+    )
+    core = FakeCore()
+    router = FeishuRouter(store, core, action_secret="secret")
+    await router.route(
+        FeishuMessage(
+            "evt-hello",
+            "p2p-chat",
+            None,
+            "hello",
+            "ou_sender",
+            chat_type="p2p",
+        ),
+        installation.id,
+    )
+
+    first = await router.route_menu_action(
+        FeishuMenuAction("evt-menu", "session_new", "ou_sender"), installation.id
+    )
+    second = await router.route_menu_action(
+        FeishuMenuAction("evt-menu", "session_new", "ou_sender"), installation.id
+    )
+
+    assert first.run_id == second.run_id == "session-1"
+    assert second.duplicate
+    assert core.calls == [
+        {
+            "agent_id": "ag_polly",
+            "workspace": "/Users/test/workspace",
+            "host_id": "host-1",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bot_menu_event_respects_agent_capability_switches(tmp_path) -> None:
+    store = FeishuStore(tmp_path / "provider.db")
+    await store.initialize()
+    installation = await store.create_pending_installation(
+        agent_id="ag_polly", session="s", verification_uri="https://qr"
+    )
+    await store.connect_installation(
+        installation.id,
+        app_id="app",
+        app_secret_ciphertext="ciphertext",
+        installer_open_id="ou_sender",
+        bot_open_id="bot",
+    )
+    await store.set_agent_surface_profile(
+        "ag_polly",
+        details_base_url="https://omnigent.example",
+        actions=["help"],
+    )
+    router = FeishuRouter(store, FakeCore(), action_secret="secret")
+    await router.route(
+        FeishuMessage(
+            "evt-hello",
+            "p2p-chat",
+            None,
+            "hello",
+            "ou_sender",
+            chat_type="p2p",
+        ),
+        installation.id,
+    )
+
+    with pytest.raises(FeishuRoutingError, match="not enabled") as caught:
+        await router.route_menu_action(
+            FeishuMenuAction("evt-menu", "manage_devices", "ou_sender"), installation.id
+        )
+
+    assert caught.value.code == "action_disabled"
