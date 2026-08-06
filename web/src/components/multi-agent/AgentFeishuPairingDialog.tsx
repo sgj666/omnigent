@@ -267,10 +267,21 @@ export function AgentFeishuPairingDialog({
                       onChange={() => toggleAction(id)}
                     />
                     <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0">
+                    <span className="min-w-0 flex-1">
                       <span className="block text-sm font-medium">{t(`entryActions.${id}`)}</span>
                       <span className="block text-xs text-muted-foreground">
                         {t(`entryActionHelp.${id}`)}
+                      </span>
+                      <span className="mt-2 flex flex-wrap items-center gap-1">
+                        <span className="mr-0.5 text-[10px] text-muted-foreground">event_key</span>
+                        {MENU_EVENT_KEYS[id].map((eventKey) => (
+                          <code
+                            key={eventKey}
+                            className="rounded bg-muted px-1.5 py-0.5 text-[10px] leading-4"
+                          >
+                            {eventKey}
+                          </code>
+                        ))}
                       </span>
                     </span>
                   </label>
@@ -295,24 +306,6 @@ export function AgentFeishuPairingDialog({
             <div className="rounded-md bg-muted/40 p-3 text-xs">
               <p className="text-muted-foreground">{t("menuEventType")}</p>
               <code className="font-medium">application.bot.menu_v6</code>
-            </div>
-
-            <div className="space-y-2">
-              {selectedActions.map((action) => (
-                <div
-                  key={action}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs"
-                >
-                  <span>{t(`entryActions.${action}`)}</span>
-                  <span className="flex flex-wrap justify-end gap-1">
-                    {MENU_EVENT_KEYS[action].map((eventKey) => (
-                      <code key={eventKey} className="rounded bg-muted px-1.5 py-0.5">
-                        {eventKey}
-                      </code>
-                    ))}
-                  </span>
-                </div>
-              ))}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { i18n } from "@/i18n";
 import { AgentFeishuPairingDialog } from "./AgentFeishuPairingDialog";
@@ -110,7 +110,7 @@ describe("AgentFeishuPairingDialog", () => {
     expect(screen.getByText("PAIR-123")).toBeVisible();
   });
 
-  it("separates Agent capabilities from the manually published floating menu", () => {
+  it("shows every event key on its capability card", () => {
     mocks.connection.data = {
       id: "installation-1",
       agent_id: "agent-1",
@@ -129,15 +129,27 @@ describe("AgentFeishuPairingDialog", () => {
     expect(screen.getByText("Agent Feishu capabilities")).toBeVisible();
     expect(screen.getByText("Feishu floating menu")).toBeVisible();
     expect(screen.getByText("application.bot.menu_v6")).toBeVisible();
-    expect(screen.getByText("manage_devices")).toBeVisible();
     expect(screen.getByRole("link", { name: "Open Feishu developer console" })).toHaveAttribute(
       "href",
       "https://open.feishu.cn/app",
     );
-    expect(screen.getByRole("checkbox", { name: /Quick commands/ })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Manage devices/ })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Workspace/ })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Current task/ })).not.toBeChecked();
+    const quickCommands = screen.getByRole("checkbox", { name: /Quick commands/ });
+    const manageDevices = screen.getByRole("checkbox", { name: /Manage devices/ });
+    const workspace = screen.getByRole("checkbox", { name: /Workspace/ });
+    const currentTask = screen.getByRole("checkbox", { name: /Current task/ });
+    const stopSession = screen.getByRole("checkbox", { name: /End session/ });
+    const help = screen.getByRole("checkbox", { name: /Help/ });
+    expect(quickCommands).toBeChecked();
+    expect(manageDevices).toBeChecked();
+    expect(workspace).toBeChecked();
+    expect(currentTask).not.toBeChecked();
+    expect(within(quickCommands.closest("label")!).getByText("session_new")).toBeVisible();
+    expect(within(quickCommands.closest("label")!).getByText("session_stop")).toBeVisible();
+    expect(within(manageDevices.closest("label")!).getByText("manage_devices")).toBeVisible();
+    expect(within(workspace.closest("label")!).getByText("switch_workspace")).toBeVisible();
+    expect(within(currentTask.closest("label")!).getByText("current_run")).toBeVisible();
+    expect(within(stopSession.closest("label")!).getByText("session_stop")).toBeVisible();
+    expect(within(help.closest("label")!).getByText("help")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Create a new QR code" })).not.toBeInTheDocument();
   });
 
