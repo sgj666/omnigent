@@ -221,7 +221,11 @@ class FeishuRealtimeRuntime:
                 else None
             )
             if details_session_id:
-                await self.sync_agent_surface(installation.agent_id)
+                await self.sync_agent_surface(
+                    installation.agent_id,
+                    chat_id=message.chat_id,
+                    session_id=details_session_id,
+                )
             baseline_assistant_id = (
                 result.response["run"].get("baseline_assistant_id")
                 if isinstance(result.response, dict)
@@ -363,12 +367,27 @@ class FeishuRealtimeRuntime:
         result = await self._adapter.receive(
             json.dumps(payload).encode(), {}, installation_id=installation.id
         )
-        run = result.response.get("run") if isinstance(result.response, dict) else None
+        response = result.response if isinstance(result.response, dict) else {}
+        run_id = response.get("run_id")
+        receive_id = context.open_chat_id
+        action_id = (action.value or {}).get("action_id")
+        if (
+            action_id in {"new_session", "create_run"}
+            and isinstance(receive_id, str)
+            and receive_id
+            and isinstance(run_id, str)
+            and run_id
+        ):
+            await self.sync_agent_surface(
+                installation.agent_id,
+                chat_id=receive_id,
+                session_id=run_id,
+            )
+        run = response.get("run")
         if not isinstance(run, dict):
             return
         card = run.get("guide_card")
         message = run.get("message")
-        receive_id = context.open_chat_id
         if isinstance(card, dict) and isinstance(receive_id, str) and receive_id:
             await self._send_interactive_card(
                 installation.app_id or "", secret, receive_id, "chat_id", card
@@ -399,7 +418,21 @@ class FeishuRealtimeRuntime:
             result = await self._adapter.receive(
                 json.dumps(payload).encode(), {}, installation_id=installation.id
             )
-            run = result.response.get("run") if isinstance(result.response, dict) else None
+            response = result.response if isinstance(result.response, dict) else {}
+            run_id = response.get("run_id")
+            if (
+                event_key in {"session_new", "quick_new", "new_session"}
+                and isinstance(run_id, str)
+                and run_id
+            ):
+                binding = await self._store.get_p2p_chat_binding(installation.id, open_id)
+                if binding is not None:
+                    await self.sync_agent_surface(
+                        installation.agent_id,
+                        chat_id=binding.chat_id,
+                        session_id=run_id,
+                    )
+            run = response.get("run")
             if not isinstance(run, dict):
                 return
             card = run.get("guide_card")
@@ -738,13 +771,23 @@ class FeishuRealtimeRuntime:
             if payload.get("code", 0) != 0:
                 raise RuntimeError(f"Feishu message API rejected the reply: {payload.get('code')}")
 
-    async def sync_agent_surface(self, agent_id: str) -> dict[str, object]:
+    async def sync_agent_surface(
+        self,
+        agent_id: str,
+        *,
+        chat_id: str | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, object]:
         installation = await self._store.get_agent_installation(agent_id)
-        binding = await self._store.get_agent_binding(agent_id)
+        if not chat_id or not session_id:
+            binding = await self._store.get_agent_binding(agent_id)
+            if binding is not None:
+                chat_id = binding.chat_id
+                session_id = binding.run_id
         if (
             installation is None
-            or binding is None
-            or not binding.run_id
+            or not chat_id
+            or not session_id
             or not installation.app_id
             or not installation.app_secret_ciphertext
         ):
@@ -756,7 +799,7 @@ class FeishuRealtimeRuntime:
             return result
         secret = self._cipher.decrypt(installation.app_secret_ciphertext)
         try:
-            await self._ensure_details_tab(installation, secret, binding.chat_id, binding.run_id)
+            await self._ensure_details_tab(installation, secret, chat_id, session_id)
         except httpx.HTTPStatusError as exc:
             try:
                 payload = exc.response.json()

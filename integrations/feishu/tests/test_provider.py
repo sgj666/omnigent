@@ -204,13 +204,17 @@ async def test_realtime_card_action_routes_and_replies_with_a_guide_card() -> No
     runtime._adapter = SimpleNamespace(  # type: ignore[assignment]
         receive=AsyncMock(
             return_value=SimpleNamespace(
-                response={"run": {"guide_card": guide_card, "message": "已新建会话"}}
+                response={
+                    "run_id": "session-new",
+                    "run": {"guide_card": guide_card, "message": "已新建会话"},
+                }
             )
         )
     )
     runtime._send_interactive_card = AsyncMock()
     runtime._send_text = AsyncMock()
-    installation = SimpleNamespace(id="install-1", app_id="app-id")
+    runtime.sync_agent_surface = AsyncMock()
+    installation = SimpleNamespace(id="install-1", app_id="app-id", agent_id="agent-1")
     event = SimpleNamespace(
         header=SimpleNamespace(event_id="evt-action"),
         event=SimpleNamespace(
@@ -230,6 +234,9 @@ async def test_realtime_card_action_routes_and_replies_with_a_guide_card() -> No
         "app-id", "secret", "oc_chat", "chat_id", guide_card
     )
     runtime._send_text.assert_awaited_once_with("app-id", "secret", "oc_chat", "已新建会话")
+    runtime.sync_agent_surface.assert_awaited_once_with(
+        "agent-1", chat_id="oc_chat", session_id="session-new"
+    )
 
 
 @pytest.mark.asyncio
@@ -262,4 +269,39 @@ async def test_realtime_bot_menu_event_routes_and_replies_to_the_operator() -> N
     assert payload["event"]["event_key"] == "manage_devices"
     runtime._send_interactive_card.assert_awaited_once_with(
         "app-id", "secret", "ou-user", "open_id", guide_card
+    )
+
+
+@pytest.mark.asyncio
+async def test_realtime_new_session_menu_updates_the_exact_chat_details_tab() -> None:
+    runtime = FeishuRealtimeRuntime(None, None, None, None)  # type: ignore[arg-type]
+    runtime._adapter = SimpleNamespace(  # type: ignore[assignment]
+        receive=AsyncMock(
+            return_value=SimpleNamespace(
+                response={
+                    "run_id": "session-new",
+                    "run": {"guide_card": None, "message": "已新建会话"},
+                }
+            )
+        )
+    )
+    runtime._store = SimpleNamespace(  # type: ignore[assignment]
+        get_p2p_chat_binding=AsyncMock(return_value=SimpleNamespace(chat_id="oc_chat"))
+    )
+    runtime._send_interactive_card = AsyncMock()
+    runtime._send_text = AsyncMock()
+    runtime.sync_agent_surface = AsyncMock()
+    installation = SimpleNamespace(id="install-1", app_id="app-id", agent_id="agent-1")
+    event = SimpleNamespace(
+        header=SimpleNamespace(event_id="evt-menu-new"),
+        event=SimpleNamespace(
+            event_key="session_new",
+            operator=SimpleNamespace(operator_id=SimpleNamespace(open_id="ou-user")),
+        ),
+    )
+
+    await runtime._receive_menu(installation, "secret", event)
+
+    runtime.sync_agent_surface.assert_awaited_once_with(
+        "agent-1", chat_id="oc_chat", session_id="session-new"
     )
