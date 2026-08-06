@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MultiAgentsPage } from "./MultiAgentsPage";
@@ -9,6 +9,7 @@ const hooks = vi.hoisted(() => ({
   remove: { mutateAsync: vi.fn(), isPending: false },
   import: { mutateAsync: vi.fn(), isPending: false },
   list: vi.fn(),
+  feishuConnection: vi.fn(),
 }));
 
 vi.mock("@/hooks/useMultiAgents", () => ({
@@ -16,6 +17,14 @@ vi.mock("@/hooks/useMultiAgents", () => ({
   useCloneMultiAgent: () => hooks.clone,
   useDeleteMultiAgent: () => hooks.remove,
   useImportMultiAgent: () => hooks.import,
+}));
+
+vi.mock("@/hooks/useFeishuInstall", () => ({
+  useAgentFeishuConnection: (agentId: string) => hooks.feishuConnection(agentId),
+}));
+
+vi.mock("@/components/multi-agent/AgentFeishuPairingDialog", () => ({
+  AgentFeishuPairingDialog: () => null,
 }));
 
 const polly = {
@@ -49,6 +58,7 @@ describe("MultiAgentsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hooks.list.mockReturnValue({ data: [polly], isLoading: false, isError: false });
+    hooks.feishuConnection.mockReturnValue({ data: null, isLoading: false, error: null });
   });
 
   it("renders bundle metadata and the read-only Polly template action", () => {
@@ -61,6 +71,7 @@ describe("MultiAgentsPage", () => {
     expect(screen.getByText("Version 4")).toBeVisible();
     expect(screen.getByText("0123456789ab")).toBeVisible();
     expect(screen.getByRole("button", { name: "Use this template" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Connect Feishu" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Create" })).toHaveAttribute(
       "href",
       "/multi-agents/new",
@@ -68,8 +79,74 @@ describe("MultiAgentsPage", () => {
     expect(screen.getByRole("button", { name: "Import" })).toBeVisible();
   });
 
+  it("clones a template with an AgentSpec-safe name", async () => {
+    hooks.clone.mutateAsync.mockResolvedValue({ card: { id: "ag_copy" } });
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use this template" }));
+
+    await waitFor(() =>
+      expect(hooks.clone.mutateAsync).toHaveBeenCalledWith({
+        agent_id: "ag_polly",
+        input: { name: "Polly-copy" },
+      }),
+    );
+  });
+
   it("shows an explicit empty state", () => {
     hooks.list.mockReturnValue({ data: [], isLoading: false, isError: false });
+    renderPage();
+
+    expect(screen.getByText("No Multi-Agent bundles yet")).toBeVisible();
+  });
+
+  it("shows the connected Feishu identity and a clear rebinding action", () => {
+    hooks.feishuConnection.mockReturnValue({
+      data: { status: "connected", bot_name: "Omnigent Assistant" },
+      isLoading: false,
+      error: null,
+    });
+
+    renderPage();
+
+    expect(screen.getByText("Connected to Feishu")).toBeVisible();
+    expect(screen.getByText("Omnigent Assistant")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Change Feishu binding" })).toBeVisible();
+  });
+
+  it("hides zero-worker built-ins without hiding user bundles", () => {
+    hooks.list.mockReturnValue({
+      data: [
+        { ...polly, id: "ag_wrapper", name: "antigravity-native-ui", worker_count: 0 },
+        {
+          ...polly,
+          id: "ag_empty",
+          name: "My future setup",
+          worker_count: 0,
+          builtin: false,
+          readonly: false,
+          editable: true,
+        },
+        polly,
+      ],
+      isLoading: false,
+      isError: false,
+    });
+
+    renderPage();
+
+    expect(screen.queryByRole("heading", { name: "antigravity-native-ui" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "My future setup" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Polly" })).toBeVisible();
+  });
+
+  it("shows the empty state when only internal wrappers were returned", () => {
+    hooks.list.mockReturnValue({
+      data: [{ ...polly, id: "ag_wrapper", name: "kiro-native-ui", worker_count: 0 }],
+      isLoading: false,
+      isError: false,
+    });
+
     renderPage();
 
     expect(screen.getByText("No Multi-Agent bundles yet")).toBeVisible();

@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { BotIcon, CheckCircle2Icon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -15,16 +16,21 @@ import {
   useAgentFeishuConnection,
   useAgentFeishuSurface,
   useBeginAgentFeishu,
-  useBindAgentFeishuWorkspace,
   useDisconnectAgentFeishu,
   useReinitializeAgentFeishuSurface,
+  useAgentDefaultWorkspaceScope,
+  useSetAgentDefaultWorkspaceScope,
 } from "@/hooks/useFeishuInstall";
-import { useWorkspaces } from "@/hooks/useWorkspaces";
+import { useHosts } from "@/hooks/useHosts";
+import { WorkspacePicker } from "@/shell/WorkspacePicker";
 import type { AgentFeishuInstallation, AgentFeishuSurface } from "@/lib/feishuApi";
 
 const ACTIONS = [
+  "newSession",
   "switchWorkspace",
+  "createWorkspace",
   "createTask",
+  "stopSession",
   "currentRun",
   "taskList",
   "logs",
@@ -72,13 +78,17 @@ export function AgentFeishuPairingDialog({
   const connection = useAgentFeishuConnection(agentId, open);
   const begin = useBeginAgentFeishu();
   const disconnect = useDisconnectAgentFeishu();
-  const bindWorkspace = useBindAgentFeishuWorkspace();
-  const workspaces = useWorkspaces(open);
+  const defaultScope = useAgentDefaultWorkspaceScope(agentId, open);
+  const setDefaultScope = useSetAgentDefaultWorkspaceScope();
+  const { data: hosts } = useHosts({ enabled: open });
   const installation = connection.data ?? null;
+  const scopeReady = Boolean(defaultScope.data?.workspace && defaultScope.data?.host_id);
   const connected = installation?.status === "connected";
   const surface = useAgentFeishuSurface(agentId, open && connected);
   const reinitialize = useReinitializeAgentFeishuSurface();
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
+  const [workspacePath, setWorkspacePath] = useState("");
+  const [selectedHostId, setSelectedHostId] = useState("");
+  const [pickingDirectory, setPickingDirectory] = useState(false);
   const [grantClock, setGrantClock] = useState(() => Date.now());
   const session = installation?.session ?? installation?.device_session ?? "";
   const grantDeadline = useMemo(
@@ -97,13 +107,16 @@ export function AgentFeishuPairingDialog({
     if (installation?.status) onStatusChange?.(installation.status);
   }, [installation?.status, onStatusChange]);
   useEffect(() => {
-    if (selectedWorkspaceId) return;
-    setSelectedWorkspaceId(installation?.binding?.workspace_id ?? workspaces.data?.[0]?.id ?? "");
-  }, [installation?.binding?.workspace_id, selectedWorkspaceId, workspaces.data]);
-
-  const selectedWorkspace = workspaces.data?.find(
-    (workspace) => workspace.id === selectedWorkspaceId,
-  );
+    if (!workspacePath && (defaultScope.data?.workspace || installation?.default_workspace)) {
+      setWorkspacePath(defaultScope.data?.workspace ?? installation?.default_workspace ?? "");
+    }
+  }, [defaultScope.data?.workspace, installation?.default_workspace, workspacePath]);
+  useEffect(() => {
+    if (selectedHostId) return;
+    const configured = defaultScope.data?.host_id ?? installation?.default_host_id;
+    const fallback = hosts?.find((host) => host.status === "online")?.host_id;
+    setSelectedHostId(configured ?? fallback ?? "");
+  }, [defaultScope.data?.host_id, hosts, installation?.default_host_id, selectedHostId]);
   const expiresIn = grantDeadline
     ? Math.max(0, Math.ceil((grantDeadline - grantClock) / 1_000))
     : (installation?.expires_in ?? null);
@@ -118,20 +131,11 @@ export function AgentFeishuPairingDialog({
     [installation],
   );
 
-  async function selectWorkspace(workspaceId: string) {
-    setSelectedWorkspaceId(workspaceId);
-    const binding = installation?.binding;
-    if (!installation || !binding?.chat_id) return;
-    await bindWorkspace.mutateAsync({
+  async function saveDefaultScope() {
+    if (!workspacePath.startsWith("/") || !selectedHostId) return;
+    await setDefaultScope.mutateAsync({
       agentId,
-      input: {
-        installation_id: installation.id,
-        chat_id: binding.chat_id,
-        thread_id: binding.thread_id,
-        workspace_id: workspaceId,
-        host_id: binding.host_id,
-        execution_mode: binding.execution_mode ?? "auto",
-      },
+      input: { workspace: workspacePath, host_id: selectedHostId },
     });
   }
 
@@ -141,18 +145,13 @@ export function AgentFeishuPairingDialog({
   }
 
   const operationError =
-    begin.error ??
-    disconnect.error ??
-    bindWorkspace.error ??
-    reinitialize.error ??
-    surface.error ??
-    connection.error;
+    begin.error ?? disconnect.error ?? reinitialize.error ?? surface.error ?? connection.error;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{t("connect")}</DialogTitle>
+          <DialogTitle>{connected ? t("manageConnection") : t("connect")}</DialogTitle>
           <DialogDescription>{t("modalDescription", { agent: agentName })}</DialogDescription>
         </DialogHeader>
 
@@ -161,16 +160,104 @@ export function AgentFeishuPairingDialog({
             <p className="font-medium">{t("coordinatorConnection")}</p>
             <p className="text-xs text-muted-foreground">{t("coordinatorOnly")}</p>
           </div>
-          <Badge variant={installation?.status === "error" ? "destructive" : "outline"}>
-            {t(`states.${installation?.status ?? "disconnected"}`)}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant={installation?.status === "error" ? "destructive" : "outline"}>
+              {t(`states.${installation?.status ?? "disconnected"}`)}
+            </Badge>
+            {connected && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void begin.mutateAsync(agentId)}
+                disabled={begin.isPending || !scopeReady}
+              >
+                <RefreshCwIcon /> 重新绑定飞书
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-3 rounded-lg border p-4">
+          <div>
+            <p className="font-medium">{t("defaultScopeTitle")}</p>
+            <p className="text-xs text-muted-foreground">{t("defaultScopeDescription")}</p>
+          </div>
+          <select
+            aria-label={t("workingDirectoryHost")}
+            className="h-8 w-full rounded-lg border border-input bg-background px-2 text-sm"
+            value={selectedHostId}
+            onChange={(event) => setSelectedHostId(event.target.value)}
+          >
+            <option value="">{t("selectHost")}</option>
+            {hosts
+              ?.filter((host) => host.status === "online")
+              .map((host) => (
+                <option key={host.host_id} value={host.host_id}>
+                  {host.name}
+                </option>
+              ))}
+          </select>
+          <Input
+            aria-label={t("defaultScopeTitle")}
+            value={workspacePath}
+            placeholder="/Users/me/projects"
+            onChange={(event) => setWorkspacePath(event.target.value)}
+          />
+          <Button
+            variant="outline"
+            onClick={() => setPickingDirectory((value) => !value)}
+            disabled={!selectedHostId}
+          >
+            {t("browseDirectory")}
+          </Button>
+          {pickingDirectory && (
+            <WorkspacePicker
+              hostId={selectedHostId || null}
+              initialPath={workspacePath || undefined}
+              onSelect={(path) => {
+                setWorkspacePath(path);
+                setPickingDirectory(false);
+              }}
+              onClose={() => setPickingDirectory(false)}
+            />
+          )}
+          <Button
+            onClick={() => void saveDefaultScope()}
+            disabled={
+              !selectedHostId || !workspacePath.startsWith("/") || setDefaultScope.isPending
+            }
+          >
+            {t("saveDefaultScope")}
+          </Button>
+          {scopeReady && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <p className="text-emerald-600">
+                {t("defaultScopeReady", { workspace: defaultScope.data?.workspace })}
+              </p>
+              {connected && (
+                <span className="text-muted-foreground">
+                  目录已保存；点击上方“重新绑定飞书”获取新二维码。
+                </span>
+              )}
+              {!installation && (
+                <span className="text-muted-foreground">
+                  下一步：点击下方“连接飞书”获取二维码。
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {!installation && !connection.isLoading && (
           <div className="space-y-3 rounded-lg border border-dashed p-5 text-center">
             <BotIcon className="mx-auto size-8 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">{t("notConnected")}</p>
-            <Button onClick={() => void begin.mutateAsync(agentId)} disabled={begin.isPending}>
+            <p className="text-sm text-muted-foreground">
+              {scopeReady ? t("notConnected") : t("defaultScopeRequired")}
+            </p>
+            <Button
+              onClick={() => void begin.mutateAsync(agentId)}
+              disabled={begin.isPending || !scopeReady}
+            >
               {begin.isPending ? t("creatingGrant") : t("createGrant")}
             </Button>
           </div>
@@ -220,7 +307,10 @@ export function AgentFeishuPairingDialog({
             <p role="alert" className="text-sm text-destructive">
               {installation?.error || t(expired ? "grantExpired" : "connectionFailed")}
             </p>
-            <Button onClick={() => void begin.mutateAsync(agentId)} disabled={begin.isPending}>
+            <Button
+              onClick={() => void begin.mutateAsync(agentId)}
+              disabled={begin.isPending || !scopeReady}
+            >
               <RefreshCwIcon /> {t("retryConnection")}
             </Button>
           </div>
@@ -239,40 +329,6 @@ export function AgentFeishuPairingDialog({
               </div>
             </div>
 
-            <div className="space-y-2 rounded-lg border p-4">
-              <label htmlFor="feishu-default-workspace" className="font-medium">
-                {t("defaultWorkspace")}
-              </label>
-              <select
-                id="feishu-default-workspace"
-                className="h-8 w-full rounded-lg border border-input bg-background px-2 text-sm"
-                value={selectedWorkspaceId}
-                onChange={(event) => void selectWorkspace(event.target.value)}
-                disabled={bindWorkspace.isPending}
-              >
-                <option value="">{t("selectWorkspace")}</option>
-                {workspaces.data?.map((workspace) => (
-                  <option key={workspace.id} value={workspace.id}>
-                    {workspace.root_path}
-                  </option>
-                ))}
-              </select>
-              {selectedWorkspace && (
-                <p className="text-xs text-muted-foreground">
-                  {t("repositorySummary", {
-                    count: selectedWorkspace.repositories.length,
-                    repositories:
-                      selectedWorkspace.repositories
-                        .map((repository) => repository.name)
-                        .join(", ") || "—",
-                  })}
-                </p>
-              )}
-              {!installation.binding?.chat_id && (
-                <p className="text-xs text-muted-foreground">{t("bindingPending")}</p>
-              )}
-            </div>
-
             <div className="space-y-3 rounded-lg border p-4">
               <div className="flex items-center justify-between gap-2">
                 <div>
@@ -285,7 +341,15 @@ export function AgentFeishuPairingDialog({
               </div>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {ACTIONS.map((action) => {
-                  const contextual = action === "approve" || action === "deny";
+                  const contextual = [
+                    "approve",
+                    "deny",
+                    "stopSession",
+                    "currentRun",
+                    "taskList",
+                    "logs",
+                    "stopRun",
+                  ].includes(action);
                   const status = contextual ? "contextual" : surfaceState(displayedSurface);
                   return (
                     <div

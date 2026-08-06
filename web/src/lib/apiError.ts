@@ -34,7 +34,7 @@ interface ErrorBody {
     request_id?: string;
   };
   message?: string;
-  detail?: string;
+  detail?: string | { code?: string; message?: string };
   failure_code?: string;
   provision_error?: string;
   request_id?: string;
@@ -49,13 +49,24 @@ export async function throwApiError(response: Response): Promise<never> {
     // Keep the status line when the server did not return JSON.
   }
   const nested = body.error ?? {};
+  const detail = body.detail;
+  const detailMessage =
+    typeof detail === "string"
+      ? detail
+      : detail && typeof detail.message === "string"
+        ? detail.message
+        : undefined;
+  const detailCode =
+    detail && typeof detail !== "string" && typeof detail.code === "string"
+      ? detail.code
+      : undefined;
   const requestId = response.headers.get("X-Request-Id") ?? body.request_id ?? nested.request_id;
-  const failureCode = body.failure_code ?? nested.failure_code ?? nested.code;
+  const failureCode = body.failure_code ?? nested.failure_code ?? nested.code ?? detailCode;
   const provisionError = body.provision_error ?? nested.provision_error;
   const message =
     nested.message ??
     body.message ??
-    body.detail ??
+    detailMessage ??
     provisionError ??
     `${response.status} ${response.statusText}`;
   throw new ApiError(message, {

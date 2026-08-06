@@ -161,7 +161,7 @@ class AgentBundleService:
             return self._card(agent, document)
         except (BundleValidationFailure, ExtractionError, KeyError, TypeError, ValueError):
             digest = agent.bundle_location.rsplit("/", 1)[-1]
-            builtin = agent.id == builtin_agent_id("polly")
+            builtin = self._is_builtin(agent)
             return BundleCard(
                 id=agent.id,
                 name=agent.name,
@@ -584,8 +584,12 @@ class AgentBundleService:
 
     @staticmethod
     def _require_editable(agent: Agent) -> None:
-        if agent.id == builtin_agent_id("polly"):
-            raise PermissionError("built-in Polly is read-only")
+        if AgentBundleService._is_builtin(agent):
+            raise PermissionError("built-in agent bundle is read-only")
+
+    @staticmethod
+    def _is_builtin(agent: Agent) -> bool:
+        return agent.session_id is None and agent.id == builtin_agent_id(agent.name)
 
     def _load_document(self, agent: Agent) -> BundleDocument:
         return BundleDocument.from_bytes(self._artifacts.get(agent.bundle_location))
@@ -728,7 +732,7 @@ class AgentBundleService:
         mcp = config.get("mcp") or config.get("mcp_servers")
         if mcp is None and isinstance(tools, Mapping):
             mcp = tools.get("mcp")
-        builtin = agent.id == builtin_agent_id("polly")
+        builtin = AgentBundleService._is_builtin(agent)
         return BundleCard(
             id=agent.id,
             name=agent.name,

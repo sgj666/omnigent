@@ -8,18 +8,46 @@ import {
   getAgentFeishuSurface,
   pollAgentFeishuInstall,
   pollFeishuInstall,
+  setAgentFeishuWorkspaceScope,
   reinitializeAgentFeishuSurface,
+  getAgentDefaultWorkspaceScope,
+  setAgentDefaultWorkspaceScope,
   type AgentFeishuBinding,
   type AgentFeishuInstallation,
   type AgentFeishuSurface,
   type BindAgentFeishuWorkspaceInput,
   type FeishuInstallSession,
+  type AgentFeishuWorkspaceScopeInput,
+  type AgentDefaultWorkspaceScope,
 } from "@/lib/feishuApi";
 
 export const feishuInstallQueryKey = ["feishu-install"] as const;
 export const agentFeishuQueryKey = (agentId: string) => ["agent-feishu", agentId] as const;
 export const agentFeishuSurfaceQueryKey = (agentId: string) =>
   ["agent-feishu", agentId, "surface"] as const;
+export const agentDefaultWorkspaceQueryKey = (agentId: string) =>
+  ["agent-default-workspace", agentId] as const;
+
+export function useAgentDefaultWorkspaceScope(agentId: string, enabled = true) {
+  return useQuery<AgentDefaultWorkspaceScope | null>({
+    queryKey: agentDefaultWorkspaceQueryKey(agentId),
+    queryFn: () => getAgentDefaultWorkspaceScope(agentId),
+    enabled,
+  });
+}
+
+export function useSetAgentDefaultWorkspaceScope() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    AgentDefaultWorkspaceScope,
+    Error,
+    { agentId: string; input: AgentDefaultWorkspaceScope }
+  >({
+    mutationFn: ({ agentId, input }) => setAgentDefaultWorkspaceScope(agentId, input),
+    onSuccess: (scope, { agentId }) =>
+      queryClient.setQueryData(agentDefaultWorkspaceQueryKey(agentId), scope),
+  });
+}
 
 /** Begin a QR/device-flow installation. */
 export function useFeishuInstall() {
@@ -110,6 +138,20 @@ export function useBindAgentFeishuWorkspace() {
         agentFeishuQueryKey(agentId),
         (current) => (current ? { ...current, binding } : current),
       );
+    },
+  });
+}
+
+export function useSetAgentFeishuWorkspaceScope() {
+  const queryClient = useQueryClient();
+  return useMutation<
+    AgentFeishuInstallation,
+    Error,
+    { agentId: string; input: AgentFeishuWorkspaceScopeInput }
+  >({
+    mutationFn: ({ agentId, input }) => setAgentFeishuWorkspaceScope(agentId, input),
+    onSuccess: (installation, { agentId }) => {
+      queryClient.setQueryData(agentFeishuQueryKey(agentId), installation);
     },
   });
 }

@@ -16,6 +16,7 @@ const hooks = vi.hoisted(() => ({
   options: vi.fn(),
   create: { mutateAsync: vi.fn(), isPending: false, isError: false, error: null },
   update: { mutateAsync: vi.fn(), isPending: false, isError: false, error: null },
+  feishuConnection: vi.fn(),
 }));
 
 vi.mock("@/hooks/useMultiAgents", () => ({
@@ -49,7 +50,7 @@ vi.mock("@/hooks/useHosts", () => ({
 }));
 
 vi.mock("@/hooks/useFeishuInstall", () => ({
-  useAgentFeishuConnection: () => ({ data: null, isLoading: false, error: null }),
+  useAgentFeishuConnection: () => hooks.feishuConnection(),
   useBeginAgentFeishu: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   useDisconnectAgentFeishu: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   useBindAgentFeishuWorkspace: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
@@ -59,6 +60,8 @@ vi.mock("@/hooks/useFeishuInstall", () => ({
     isPending: false,
     error: null,
   }),
+  useAgentDefaultWorkspaceScope: () => ({ data: null, error: null }),
+  useSetAgentDefaultWorkspaceScope: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
 }));
 
 const draft: AgentBundleDraft = {
@@ -152,6 +155,7 @@ describe("MultiAgentDetailPage", () => {
       },
     });
     hooks.update.mutateAsync.mockResolvedValue({ ...data, version: data.version + 1 });
+    hooks.feishuConnection.mockReturnValue({ data: null, isLoading: false, error: null });
   });
 
   it("renders the visual editor without pinning a local-default model", () => {
@@ -159,22 +163,20 @@ describe("MultiAgentDetailPage", () => {
 
     expect(screen.getByRole("heading", { name: "My bundle" })).toBeVisible();
     expect(screen.getByLabelText("Model")).toHaveValue("");
-    expect(screen.getByText("Use local default")).toBeVisible();
+    expect(screen.getAllByText("Use local default")).not.toHaveLength(0);
     expect(screen.getByRole("tab", { name: "Visual" })).toBeVisible();
     expect(screen.getByRole("tab", { name: "Advanced YAML" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Connect Feishu" })).toBeVisible();
     expect(screen.getByText("Not connected")).toBeVisible();
   });
 
-  it("surfaces structured diagnostics and workspace repositories", () => {
+  it("surfaces structured diagnostics without mixing run controls into the editor", () => {
     renderPage();
 
     expect(screen.getByText("config.yaml:9:4 · /guardrails")).toBeVisible();
     expect(screen.getByText("Guardrail is invalid")).toBeVisible();
-    expect(screen.getByText("/work/project")).toBeVisible();
-    expect(screen.getByText("api")).toBeVisible();
-    expect(screen.getByText("web")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Run" })).toBeVisible();
+    expect(screen.queryByText("Workspace & run")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Run" })).toBeNull();
   });
 
   it("opens Agent-scoped Feishu pairing instead of completing from a status-only button", () => {
@@ -184,6 +186,21 @@ describe("MultiAgentDetailPage", () => {
 
     expect(screen.getByRole("dialog", { name: "Connect Feishu" })).toBeVisible();
     expect(screen.getByText("Coordinator connection")).toBeVisible();
+  });
+
+  it("shows the persisted Feishu connection and rebinding action", () => {
+    hooks.feishuConnection.mockReturnValue({
+      data: { status: "connected", bot_name: "Omnigent Assistant" },
+      isLoading: false,
+      error: null,
+    });
+
+    renderPage();
+
+    expect(screen.getByText(/Connected to Feishu/)).toBeVisible();
+    expect(screen.getByText(/Omnigent Assistant/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Change Feishu binding" }));
+    expect(screen.getByRole("dialog", { name: "Manage Feishu connection" })).toBeVisible();
   });
 
   it("renders schema-only fields and preserves tri-state defaults", async () => {
@@ -217,6 +234,8 @@ describe("MultiAgentDetailPage", () => {
     expect(screen.getByLabelText("Async dispatch")).toHaveTextContent("Default");
     expect(screen.getByLabelText("Timers")).toHaveTextContent("Default");
     expect(screen.getByLabelText("Spawn child sessions")).toHaveTextContent("Default");
+    fireEvent.click(screen.getByRole("button", { name: /Advanced properties/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Show unconfigured properties" }));
     fireEvent.change(screen.getByLabelText("/interaction"), {
       target: { value: '{"mode":"chat"}' },
     });
@@ -265,6 +284,7 @@ describe("MultiAgentDetailPage", () => {
     });
 
     renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /Advanced properties/ }));
 
     expect(screen.getByLabelText("/executor/type")).toHaveValue("provider");
     expect(screen.getByLabelText("/executor/context_window")).toHaveValue("128000");
@@ -371,6 +391,40 @@ describe("MultiAgentDetailPage", () => {
 
     expect(screen.getByText("Provider Harness")).toBeVisible();
     expect(screen.queryByText("opencode-native")).toBeNull();
+  });
+
+  it("lets a new worker be configured before the bundle is saved", async () => {
+    const created = copyDraft();
+    created.version = 4;
+    created.card.version = 4;
+    created.workers.push({
+      path: "agents/writer/config.yaml",
+      content: "name: writer\n",
+      data: { name: "writer" },
+    });
+    hooks.update.mutateAsync.mockReset();
+    hooks.update.mutateAsync.mockResolvedValueOnce(created).mockResolvedValueOnce(created);
+
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Add worker" }));
+
+    expect(screen.getByLabelText("Name")).toBeEnabled();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "writer" } });
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Writes the final answer" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(hooks.update.mutateAsync).toHaveBeenCalledTimes(2));
+    expect(hooks.update.mutateAsync.mock.calls[0][0].request.worker_operations).toEqual([
+      { op: "add", name: "writer", source: "minimal" },
+    ]);
+    expect(hooks.update.mutateAsync.mock.calls[1][0].request.patches).toContainEqual({
+      file: "agents/writer/config.yaml",
+      op: "add",
+      path: "/description",
+      value: "Writes the final answer",
+    });
   });
 
   it("does not let an Advanced YAML edit overwrite an unsaved Visual edit", async () => {
@@ -509,8 +563,10 @@ describe("MultiAgentDetailPage", () => {
     );
     await waitFor(() => {
       const workerButtons = screen.getAllByRole("button", { name: /worker-2|reviewer/ });
-      expect(workerButtons.findIndex((button) => button.textContent === "worker-2")).toBeLessThan(
-        workerButtons.findIndex((button) => button.textContent === "reviewer"),
+      expect(
+        workerButtons.findIndex((button) => button.getAttribute("aria-label") === "worker-2"),
+      ).toBeLessThan(
+        workerButtons.findIndex((button) => button.getAttribute("aria-label") === "reviewer"),
       );
     });
   });
@@ -568,7 +624,7 @@ describe("MultiAgentDetailPage", () => {
       expect(
         screen
           .getAllByRole("button", { name: /^(worker-2|reviewer)$/ })
-          .map((button) => button.textContent),
+          .map((button) => button.getAttribute("aria-label")),
       ).toEqual(["worker-2", "reviewer"]),
     );
 
@@ -647,7 +703,7 @@ describe("MultiAgentDetailPage", () => {
     expect(
       screen
         .getAllByRole("button", { name: /^(worker-2|reviewer)$/ })
-        .map((button) => button.textContent),
+        .map((button) => button.getAttribute("aria-label")),
     ).toEqual(["worker-2", "reviewer"]);
 
     fireEvent.click(screen.getByRole("button", { name: "Reload server version" }));
@@ -656,7 +712,7 @@ describe("MultiAgentDetailPage", () => {
       expect(
         screen
           .getAllByRole("button", { name: /^(worker-2|reviewer)$/ })
-          .map((button) => button.textContent),
+          .map((button) => button.getAttribute("aria-label")),
       ).toEqual(["reviewer", "worker-2"]),
     );
     expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();

@@ -13,7 +13,6 @@ import {
 import { AgentConfigEditor } from "@/components/multi-agent/AgentConfigEditor";
 import { AgentFeishuPairingDialog } from "@/components/multi-agent/AgentFeishuPairingDialog";
 import { BundleDiagnostics } from "@/components/multi-agent/BundleDiagnostics";
-import { WorkspaceRunPanel } from "@/components/multi-agent/WorkspaceRunPanel";
 import { PageScroll } from "@/components/PageScroll";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,6 +27,7 @@ import {
   useMultiAgent,
   useUpdateMultiAgent,
 } from "@/hooks/useMultiAgents";
+import { useAgentFeishuConnection } from "@/hooks/useFeishuInstall";
 import {
   buildConfigPatches,
   DraftJsonError,
@@ -74,8 +74,7 @@ interface RawTextFile {
 interface PendingOrderPatch {
   agentId: string;
   expectedVersion: number;
-  file: string;
-  order: string[];
+  patches: AgentBundlePatch[];
 }
 
 interface PendingOrderConflict {
@@ -127,6 +126,10 @@ function workerOrderPatch(
     path: "/tools/agents",
     value: next,
   };
+}
+
+function draftWorkerName(worker: EditableFile): string {
+  return worker.pending ? worker.visual.name.trim() || worker.name : worker.name;
 }
 
 function CreateBundleForm() {
@@ -207,6 +210,7 @@ export function MultiAgentDetailPage() {
   const bundle = useMultiAgent(isNew ? null : agentId);
   const formSchema = useAgentFormSchema(!isNew);
   const bundleOptions = useAgentBundleOptions(!isNew);
+  const feishuConnection = useAgentFeishuConnection(agentId ?? "", !isNew && Boolean(agentId));
   const update = useUpdateMultiAgent();
   const [mode, setMode] = useState("visual");
   const [coordinator, setCoordinator] = useState<EditableFile | null>(null);
@@ -224,7 +228,6 @@ export function MultiAgentDetailPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [pendingWorkerDelete, setPendingWorkerDelete] = useState<PendingWorkerDelete | null>(null);
   const [initializedVersion, setInitializedVersion] = useState<string | null>(null);
-  const [feishuStatus, setFeishuStatus] = useState<string | null>(null);
   const [feishuOpen, setFeishuOpen] = useState(false);
 
   function rememberPendingOrderPatch(pending: PendingOrderPatch) {
@@ -283,7 +286,6 @@ export function MultiAgentDetailPage() {
     );
     setSelectedPath(bundle.data.coordinator?.path ?? bundle.data.workers[0]?.path ?? "config.yaml");
     setDiagnostics(bundle.data.diagnostics);
-    setFeishuStatus("disconnected");
     setWorkerOperations([]);
     setPendingWorkerDelete(null);
   }, [bundle.data, formSchema.data, initializedVersion, pendingOrderPatch]);
@@ -307,6 +309,9 @@ export function MultiAgentDetailPage() {
     (selectedRaw ? undefined : (coordinator ?? workers[0]));
   const readonly = bundle.data?.card.readonly === true || bundle.data?.card.editable === false;
   const hasInvalidYaml = allFiles.some((file) => file.yamlDiagnostic !== null);
+  const feishuStatus = feishuConnection.data?.status ?? "disconnected";
+  const feishuConnected = feishuStatus === "connected";
+  const feishuIdentity = feishuConnection.data?.bot_name || feishuConnection.data?.tenant_name;
 
   function updateSelected(transform: (file: EditableFile) => EditableFile) {
     if (!selected) return;
@@ -423,14 +428,7 @@ export function MultiAgentDetailPage() {
           agent_id: agentId,
           request: {
             expected_version: pendingOrder.expectedVersion,
-            patches: [
-              {
-                file: pendingOrder.file,
-                op: "replace",
-                path: "/tools/agents",
-                value: pendingOrder.order,
-              },
-            ],
+            patches: pendingOrder.patches,
           },
         });
         setDiagnostics(saved.diagnostics);
@@ -465,13 +463,20 @@ export function MultiAgentDetailPage() {
           patches.push({ file: file.path, op: "replace_file", value: file.yaml });
         }
       }
-      const operations = confirmedDelete
+      const requestedOperations = confirmedDelete
         ? workerOperations.map((operation) =>
             operation.op === "delete" && operation.name === confirmedDelete.name
               ? { ...operation, confirmed_references: confirmedDelete.references }
               : operation,
           )
         : workerOperations;
+      const operations = requestedOperations.map((operation) => {
+        if (operation.op !== "add") return operation;
+        const pendingWorker = workers.find(
+          (worker) => worker.pending && worker.name === operation.name,
+        );
+        return pendingWorker ? { ...operation, name: draftWorkerName(pendingWorker) } : operation;
+      });
       if (confirmedDelete) setWorkerOperations(operations);
       const requiresPostOperationOrder = operations.length > 0;
       const order = requiresPostOperationOrder
@@ -491,28 +496,42 @@ export function MultiAgentDetailPage() {
       });
       if (requiresPostOperationOrder) {
         setWorkerOperations([]);
-        const desiredOrder = workers.map((worker) => worker.name);
+        const desiredOrder = workers.map(draftWorkerName);
         const savedOrder = saved.workers.map((worker) => workerName(worker.path, worker.data));
+        const postOperationPatches: AgentBundlePatch[] = [];
+        for (const pendingWorker of workers.filter((worker) => worker.pending)) {
+          const name = draftWorkerName(pendingWorker);
+          const savedWorker = saved.workers.find(
+            (worker) => workerName(worker.path, worker.data) === name,
+          );
+          if (!savedWorker?.data) continue;
+          postOperationPatches.push(
+            ...buildConfigPatches(savedWorker.path, savedWorker.data, {
+              ...pendingWorker.visual,
+              name,
+            }),
+          );
+        }
         if (JSON.stringify(savedOrder) !== JSON.stringify(desiredOrder)) {
+          postOperationPatches.push({
+            file: saved.coordinator?.path ?? coordinator.path,
+            op: "replace",
+            path: "/tools/agents",
+            value: desiredOrder,
+          });
+        }
+        if (postOperationPatches.length > 0) {
           const nextOrderPatch: PendingOrderPatch = {
             agentId,
             expectedVersion: saved.version,
-            file: saved.coordinator?.path ?? coordinator.path,
-            order: desiredOrder,
+            patches: postOperationPatches,
           };
           rememberPendingOrderPatch(nextOrderPatch);
           saved = await update.mutateAsync({
             agent_id: agentId,
             request: {
               expected_version: nextOrderPatch.expectedVersion,
-              patches: [
-                {
-                  file: nextOrderPatch.file,
-                  op: "replace",
-                  path: "/tools/agents",
-                  value: nextOrderPatch.order,
-                },
-              ],
+              patches: nextOrderPatch.patches,
             },
           });
           setInitializedVersion(`${bundle.data.card.id}:${bundle.data.version}`);
@@ -611,11 +630,31 @@ export function MultiAgentDetailPage() {
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant={feishuStatus === "error" ? "destructive" : "outline"}>
-                  {t(`status.${feishuStatus ?? "disconnected"}`)}
+                <Badge
+                  variant={feishuStatus === "error" ? "destructive" : "outline"}
+                  className={
+                    feishuConnected
+                      ? "gap-1.5 border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                      : undefined
+                  }
+                >
+                  {feishuConnected && (
+                    <span aria-hidden className="size-2 rounded-full bg-emerald-500" />
+                  )}
+                  {feishuConnection.isLoading
+                    ? t("feishu.checkingConnection")
+                    : feishuConnected
+                      ? t("feishu.connected")
+                      : t(`status.${feishuStatus}`, { defaultValue: feishuStatus })}
+                  {feishuConnected && feishuIdentity && ` · ${feishuIdentity}`}
                 </Badge>
-                <Button variant="outline" onClick={() => setFeishuOpen(true)}>
-                  <LinkIcon /> {t("feishu.connect")}
+                <Button
+                  variant="outline"
+                  onClick={() => setFeishuOpen(true)}
+                  disabled={feishuConnection.isLoading}
+                >
+                  <LinkIcon />
+                  {feishuConnected ? t("feishu.changeBinding") : t("feishu.connect")}
                 </Button>
                 {!readonly && (
                   <Button
@@ -678,92 +717,148 @@ export function MultiAgentDetailPage() {
               </div>
             )}
 
-            <div className="grid gap-6 lg:grid-cols-[14rem_minmax(0,1fr)]">
-              <Card className="self-start">
-                <CardHeader>
-                  <CardTitle>{t("editor.coordinator")}</CardTitle>
+            <div className="grid items-start gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
+              <Card className="self-start lg:sticky lg:top-6">
+                <CardHeader className="border-b">
+                  <CardTitle>{t("editor.teamMembers")}</CardTitle>
+                  <CardDescription>{t("editor.teamMembersHelp")}</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-2">
+                <CardContent className="space-y-4 p-3">
                   {coordinator && (
-                    <Button
-                      className="w-full justify-start"
-                      variant={selected?.path === coordinator.path ? "secondary" : "ghost"}
-                      onClick={() => setSelectedPath(coordinator.path)}
-                    >
-                      <BotIcon />
-                      {coordinator.name || t("editor.coordinator")}
-                    </Button>
-                  )}
-                  <div className="flex items-center justify-between pt-3">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      {t("editor.workers")}
-                    </span>
-                    {!readonly && (
+                    <div className="space-y-1">
+                      <span className="px-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                        {t("editor.coordinator")}
+                      </span>
                       <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label={t("actions.addWorker")}
-                        onClick={addWorker}
+                        className="h-auto w-full justify-start gap-3 px-3 py-2.5 text-left"
+                        variant={selected?.path === coordinator.path ? "secondary" : "ghost"}
+                        aria-label={
+                          coordinator.visual.name || coordinator.name || t("editor.coordinator")
+                        }
+                        onClick={() => setSelectedPath(coordinator.path)}
                       >
-                        <PlusIcon />
+                        <BotIcon className="size-4 shrink-0" />
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">
+                            {coordinator.visual.name || coordinator.name || t("editor.coordinator")}
+                          </span>
+                          <span className="block truncate text-[11px] font-normal text-muted-foreground">
+                            {coordinator.visual.harness || t("fields.localDefault")}
+                            {coordinator.visual.model ? ` · ${coordinator.visual.model}` : ""}
+                          </span>
+                        </span>
                       </Button>
-                    )}
-                  </div>
-                  {workers.length === 0 && (
-                    <p className="text-xs text-muted-foreground">{t("workers.empty")}</p>
+                    </div>
                   )}
-                  {workers.map((worker, index) => (
-                    <div key={worker.path} className="flex items-center gap-1">
-                      <Button
-                        className="min-w-0 flex-1 justify-start truncate"
-                        variant={selected?.path === worker.path ? "secondary" : "ghost"}
-                        onClick={() => setSelectedPath(worker.path)}
-                      >
-                        {worker.name}
-                      </Button>
+                  <div className="space-y-2 border-t pt-4">
+                    <div className="flex items-center justify-between px-2">
+                      <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                        {t("editor.workers")}
+                      </span>
                       {!readonly && (
-                        <>
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            aria-label={`${t("actions.moveUp")} ${worker.name}`}
-                            disabled={index === 0}
-                            onClick={() => moveWorker(index, -1)}
-                          >
-                            <ArrowUpIcon />
-                          </Button>
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            aria-label={`${t("actions.moveDown")} ${worker.name}`}
-                            disabled={index === workers.length - 1}
-                            onClick={() => moveWorker(index, 1)}
-                          >
-                            <ArrowDownIcon />
-                          </Button>
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            aria-label={`${t("actions.removeWorker")} ${worker.name}`}
-                            onClick={() => removeWorker(index)}
-                          >
-                            <Trash2Icon />
-                          </Button>
-                        </>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2 text-xs"
+                          aria-label={t("actions.addWorker")}
+                          onClick={addWorker}
+                        >
+                          <PlusIcon />
+                          {t("actions.addWorker")}
+                        </Button>
                       )}
                     </div>
-                  ))}
+                    {workers.length === 0 && (
+                      <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+                        {t("workers.empty")}
+                      </p>
+                    )}
+                    {workers.map((worker, index) => {
+                      const displayName = draftWorkerName(worker);
+                      return (
+                        <div key={worker.path} className="flex items-center gap-1">
+                          <Button
+                            className="h-auto min-w-0 flex-1 justify-start px-3 py-2.5 text-left"
+                            variant={selected?.path === worker.path ? "secondary" : "ghost"}
+                            aria-label={displayName}
+                            onClick={() => setSelectedPath(worker.path)}
+                          >
+                            <span className="min-w-0">
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate font-medium">{displayName}</span>
+                                {worker.pending && (
+                                  <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
+                                    {t("status.pending")}
+                                  </Badge>
+                                )}
+                              </span>
+                              <span className="block truncate text-[11px] font-normal text-muted-foreground">
+                                {worker.visual.harness || t("fields.localDefault")}
+                                {worker.visual.model ? ` · ${worker.visual.model}` : ""}
+                              </span>
+                            </span>
+                          </Button>
+                          {!readonly && (
+                            <div className="flex shrink-0 flex-col">
+                              <Button
+                                size="icon-sm"
+                                variant="ghost"
+                                aria-label={`${t("actions.moveUp")} ${worker.name}`}
+                                disabled={index === 0}
+                                onClick={() => moveWorker(index, -1)}
+                              >
+                                <ArrowUpIcon />
+                              </Button>
+                              <Button
+                                size="icon-sm"
+                                variant="ghost"
+                                aria-label={`${t("actions.moveDown")} ${worker.name}`}
+                                disabled={index === workers.length - 1}
+                                onClick={() => moveWorker(index, 1)}
+                              >
+                                <ArrowDownIcon />
+                              </Button>
+                              <Button
+                                size="icon-sm"
+                                variant="ghost"
+                                aria-label={`${t("actions.removeWorker")} ${worker.name}`}
+                                onClick={() => removeWorker(index)}
+                              >
+                                <Trash2Icon />
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </CardContent>
               </Card>
 
               <Card>
-                <CardHeader>
-                  <CardTitle>
-                    {selected?.name ?? selectedRaw?.path ?? t("editor.configuration")}
-                  </CardTitle>
-                  <CardDescription>{selected?.path ?? selectedRaw?.path}</CardDescription>
+                <CardHeader className="border-b">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <CardTitle>
+                        {selected?.visual.name ||
+                          selected?.name ||
+                          selectedRaw?.path ||
+                          t("editor.configuration")}
+                      </CardTitle>
+                      <CardDescription className="mt-1">
+                        {selected?.path ?? selectedRaw?.path}
+                      </CardDescription>
+                    </div>
+                    {selected && (
+                      <Badge variant="secondary">
+                        {selected.path === coordinator?.path
+                          ? t("editor.coordinator")
+                          : t("editor.worker")}
+                      </Badge>
+                    )}
+                  </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="pt-5">
                   <Tabs value={mode} onValueChange={setMode}>
                     <TabsList>
                       <TabsTrigger value="visual">{t("editor.visual")}</TabsTrigger>
@@ -772,13 +867,14 @@ export function MultiAgentDetailPage() {
                     <TabsContent value="visual" className="mt-5">
                       {selected ? (
                         <AgentConfigEditor
+                          key={selected.path}
                           schema={formSchema.data}
                           harnesses={bundleOptions.data?.harnesses}
                           value={selected.visual}
                           onChange={(visual) =>
                             updateSelected((file) => ({ ...file, visual, visualDirty: true }))
                           }
-                          disabled={readonly || selected.pending}
+                          disabled={readonly}
                         />
                       ) : selectedRaw ? (
                         <p className="text-sm text-muted-foreground">
@@ -788,11 +884,6 @@ export function MultiAgentDetailPage() {
                         </p>
                       ) : (
                         <p>{t("errors.noCoordinator")}</p>
-                      )}
-                      {selected?.pending && (
-                        <p className="mt-3 text-xs text-muted-foreground">
-                          {t("workers.saveBeforeEditing")}
-                        </p>
                       )}
                     </TabsContent>
                     <TabsContent value="yaml" className="mt-5 space-y-3">
@@ -856,9 +947,7 @@ export function MultiAgentDetailPage() {
               agentName={bundle.data.card.name}
               open={feishuOpen}
               onOpenChange={setFeishuOpen}
-              onStatusChange={setFeishuStatus}
             />
-            <WorkspaceRunPanel agentId={bundle.data.card.id} />
           </div>
         )
       )}

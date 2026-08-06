@@ -211,6 +211,24 @@ def test_builtin_polly_is_read_only_but_can_be_cloned() -> None:
     assert service.get(cloned.id).coordinator.config["name"] == "my-polly"
 
 
+def test_native_wrapper_is_classified_as_builtin_even_when_bundle_is_unknown() -> None:
+    service, agents, artifacts = _service()
+    wrapper_name = "antigravity-native-ui"
+    wrapper_id = builtin_agent_id(wrapper_name)
+    location = f"{wrapper_id}/invalid"
+    artifacts.put(location, b"not an agent bundle")
+    agents.create(wrapper_id, wrapper_name, location)
+
+    card = service.list().data[0]
+
+    assert card.validation_status == "unknown"
+    assert card.builtin
+    assert card.readonly
+    assert not card.editable
+    with pytest.raises(PermissionError, match="read-only"):
+        service.delete(wrapper_id)
+
+
 def test_worker_operations_use_agent_version_cas_and_preserve_source() -> None:
     service, agents, _ = _service()
     created = service.import_bundle(_bundle(worker=True), name="editable")

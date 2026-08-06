@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   surface: { data: undefined as Record<string, unknown> | undefined, error: null },
   begin: { mutateAsync: vi.fn(), isPending: false, error: null },
   disconnect: { mutateAsync: vi.fn(), isPending: false, error: null },
-  bind: { mutateAsync: vi.fn(), isPending: false, error: null },
+  defaultScope: { data: null as Record<string, unknown> | null, isLoading: false, error: null },
+  setDefaultScope: { mutateAsync: vi.fn(), isPending: false, error: null },
   reinitialize: { mutateAsync: vi.fn(), isPending: false, error: null },
 }));
 
@@ -17,8 +18,21 @@ vi.mock("@/hooks/useFeishuInstall", () => ({
   useAgentFeishuSurface: () => mocks.surface,
   useBeginAgentFeishu: () => mocks.begin,
   useDisconnectAgentFeishu: () => mocks.disconnect,
-  useBindAgentFeishuWorkspace: () => mocks.bind,
+  useAgentDefaultWorkspaceScope: () => mocks.defaultScope,
+  useSetAgentDefaultWorkspaceScope: () => mocks.setDefaultScope,
   useReinitializeAgentFeishuSurface: () => mocks.reinitialize,
+}));
+
+vi.mock("@/hooks/useHosts", () => ({
+  useHosts: () => ({ data: [{ host_id: "host-1", name: "Local Mac", status: "online" }] }),
+}));
+
+vi.mock("@/shell/WorkspacePicker", () => ({
+  WorkspacePicker: ({ onSelect }: { onSelect: (path: string) => void }) => (
+    <button type="button" onClick={() => onSelect("/Users/me/chosen")}>
+      Choose folder in picker
+    </button>
+  ),
 }));
 
 vi.mock("@/hooks/useWorkspaces", () => ({
@@ -54,6 +68,7 @@ describe("AgentFeishuPairingDialog", () => {
     vi.clearAllMocks();
     mocks.connection.data = null;
     mocks.surface.data = undefined;
+    mocks.defaultScope.data = null;
     await i18n.changeLanguage("en");
   });
 
@@ -82,7 +97,7 @@ describe("AgentFeishuPairingDialog", () => {
     expect(screen.getByText("PAIR-123")).toBeVisible();
   });
 
-  it("shows connected tenant, bot, workspace repositories, and persistent actions", () => {
+  it("shows connected tenant, bot, scope guidance, and persistent actions", () => {
     mocks.connection.data = {
       id: "installation-1",
       agent_id: "agent-1",
@@ -96,23 +111,17 @@ describe("AgentFeishuPairingDialog", () => {
 
     expect(screen.getByText("Acme tenant")).toBeVisible();
     expect(screen.getByText("Polly bot")).toBeVisible();
-    expect(screen.getByText("1 repositories: api")).toBeVisible();
+    expect(screen.getByText(/guide card is sent after connection/)).toBeVisible();
     expect(screen.getByText("Switch workspace")).toBeVisible();
     expect(screen.getByText("Approve necessary approval")).toBeVisible();
     expect(screen.getByText("Logs / failure reason")).toBeVisible();
   });
 
-  it("retries partial surface provisioning and switches the bound workspace", () => {
+  it("retries partial surface provisioning", () => {
     mocks.connection.data = {
       id: "installation-1",
       agent_id: "agent-1",
       status: "connected",
-      binding: {
-        installation_id: "installation-1",
-        chat_id: "chat-1",
-        workspace_id: "ws-1",
-        execution_mode: "auto",
-      },
     };
     mocks.surface.data = {
       status: "partial",
@@ -122,21 +131,37 @@ describe("AgentFeishuPairingDialog", () => {
     renderDialog();
 
     fireEvent.click(screen.getByRole("button", { name: "Retry provisioning" }));
-    fireEvent.change(screen.getByLabelText("Default workspace"), {
-      target: { value: "ws-2" },
-    });
 
     expect(mocks.reinitialize.mutateAsync).toHaveBeenCalledWith("agent-1");
-    expect(mocks.bind.mutateAsync).toHaveBeenCalledWith({
-      agentId: "agent-1",
-      input: {
-        installation_id: "installation-1",
-        chat_id: "chat-1",
-        workspace_id: "ws-2",
-        execution_mode: "auto",
-      },
+  });
+
+  it("saves an absolute non-Git container directory as the Feishu default scope", () => {
+    mocks.connection.data = {
+      id: "installation-1",
+      agent_id: "agent-1",
+      status: "connected",
+    };
+    renderDialog();
+
+    fireEvent.change(screen.getByLabelText("Default start directory"), {
+      target: { value: "/Users/me/projects" },
     });
-    expect(screen.getByText("2 repositories: web, docs")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Save default start directory" }));
+
+    expect(mocks.setDefaultScope.mutateAsync).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      input: { host_id: "host-1", workspace: "/Users/me/projects" },
+    });
+  });
+
+  it("lets the operator choose the working directory from the selected host", () => {
+    mocks.connection.data = { id: "installation-1", agent_id: "agent-1", status: "connected" };
+    renderDialog();
+
+    fireEvent.click(screen.getByRole("button", { name: "Browse directories" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder in picker" }));
+
+    expect(screen.getByLabelText("Default start directory")).toHaveValue("/Users/me/chosen");
   });
 
   it("shows a failed surface reason and offers the same idempotent retry", () => {
@@ -164,6 +189,7 @@ describe("AgentFeishuPairingDialog", () => {
       agent_id: "agent-1",
       status: "expired",
     };
+    mocks.defaultScope.data = { workspace: "/Users/me/projects", host_id: "host-1" };
     renderDialog();
 
     expect(screen.getByRole("alert")).toHaveTextContent("expired");

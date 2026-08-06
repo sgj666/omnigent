@@ -4,6 +4,7 @@ import {
   CopyIcon,
   DownloadIcon,
   FileUpIcon,
+  LinkIcon,
   PencilIcon,
   PlusIcon,
   Trash2Icon,
@@ -22,12 +23,14 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
+import { AgentFeishuPairingDialog } from "@/components/multi-agent/AgentFeishuPairingDialog";
 import {
   useCloneMultiAgent,
   useDeleteMultiAgent,
   useImportMultiAgent,
   useMultiAgents,
 } from "@/hooks/useMultiAgents";
+import { useAgentFeishuConnection } from "@/hooks/useFeishuInstall";
 import { exportAgentBundle, type MultiAgentSummary } from "@/lib/multiAgentApi";
 import { Link, useNavigate } from "@/lib/routing";
 
@@ -49,6 +52,39 @@ function downloadBundle(agent: MultiAgentSummary, blob: Blob) {
   URL.revokeObjectURL(url);
 }
 
+function AgentFeishuConnection({
+  agent,
+  onManage,
+}: {
+  agent: MultiAgentSummary;
+  onManage: () => void;
+}) {
+  const { t } = useTranslation("agents", { keyPrefix: "multiAgent" });
+  const connection = useAgentFeishuConnection(agent.id);
+  const connected = connection.data?.status === "connected";
+  const identity = connection.data?.bot_name || connection.data?.tenant_name;
+
+  return (
+    <>
+      {connected && (
+        <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+          <span aria-hidden className="size-2 rounded-full bg-emerald-500" />
+          <span>{t("feishu.connected")}</span>
+          {identity && <span className="text-muted-foreground">{identity}</span>}
+        </span>
+      )}
+      <Button size="sm" variant="outline" onClick={onManage} disabled={connection.isLoading}>
+        <LinkIcon />
+        {connection.isLoading
+          ? t("feishu.checkingConnection")
+          : connected
+            ? t("feishu.changeBinding")
+            : t("feishu.connect")}
+      </Button>
+    </>
+  );
+}
+
 export function MultiAgentsPage() {
   const { t, i18n } = useTranslation("agents", { keyPrefix: "multiAgent" });
   const navigate = useNavigate();
@@ -58,13 +94,16 @@ export function MultiAgentsPage() {
   const importBundle = useImportMultiAgent();
   const fileInput = useRef<HTMLInputElement>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [feishuAgent, setFeishuAgent] = useState<MultiAgentSummary | null>(null);
+  const visibleAgents =
+    catalog.data?.filter((agent) => !agent.builtin || agent.worker_count > 0) ?? [];
 
   async function cloneTemplate(agent: MultiAgentSummary) {
     setActionError(null);
     try {
       const draft = await clone.mutateAsync({
         agent_id: agent.id,
-        input: { name: `${agent.name} copy` },
+        input: { name: `${agent.name}-copy` },
       });
       navigate(`/multi-agents/${draft.card.id}`);
     } catch (error) {
@@ -147,7 +186,7 @@ export function MultiAgentsPage() {
           {t("catalog.error")}: {catalog.error.message}
         </div>
       )}
-      {!catalog.isLoading && !catalog.isError && catalog.data?.length === 0 && (
+      {!catalog.isLoading && !catalog.isError && visibleAgents.length === 0 && (
         <Card className="mt-6 border-dashed text-center shadow-none">
           <CardContent className="py-10">
             <UsersIcon className="mx-auto mb-3 size-8 text-muted-foreground" />
@@ -156,9 +195,9 @@ export function MultiAgentsPage() {
           </CardContent>
         </Card>
       )}
-      {!!catalog.data?.length && (
+      {visibleAgents.length > 0 && (
         <div className="mt-6 grid gap-4 md:grid-cols-2">
-          {catalog.data.map((agent) => (
+          {visibleAgents.map((agent) => (
             <Card key={agent.id}>
               <CardHeader>
                 <CardTitle>
@@ -218,6 +257,7 @@ export function MultiAgentsPage() {
                 >
                   <CopyIcon /> {t("actions.useTemplate")}
                 </Button>
+                <AgentFeishuConnection agent={agent} onManage={() => setFeishuAgent(agent)} />
                 {!agent.readonly && agent.editable !== false && (
                   <Button asChild size="sm" variant="outline">
                     <Link to={`/multi-agents/${agent.id}`}>
@@ -252,6 +292,16 @@ export function MultiAgentsPage() {
             </Card>
           ))}
         </div>
+      )}
+      {feishuAgent && (
+        <AgentFeishuPairingDialog
+          agentId={feishuAgent.id}
+          agentName={feishuAgent.name}
+          open
+          onOpenChange={(open) => {
+            if (!open) setFeishuAgent(null);
+          }}
+        />
       )}
     </PageScroll>
   );

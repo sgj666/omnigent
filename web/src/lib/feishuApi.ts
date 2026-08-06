@@ -40,6 +40,8 @@ export interface AgentFeishuInstallation {
   installer_open_id?: string | null;
   bot_open_id?: string | null;
   bot_name?: string | null;
+  default_workspace?: string | null;
+  default_host_id?: string | null;
   error?: string | null;
   created_at?: number | null;
   updated_at?: number | null;
@@ -69,6 +71,12 @@ export interface BindAgentFeishuWorkspaceInput {
   execution_mode?: string;
   allowed_members?: string[];
 }
+
+export interface AgentFeishuWorkspaceScopeInput {
+  workspace: string;
+  host_id: string;
+}
+export interface AgentDefaultWorkspaceScope extends AgentFeishuWorkspaceScopeInput {}
 
 function agentFeishuPath(agentId: string, suffix = ""): string {
   return `/v1/agents/${encodeURIComponent(agentId)}/feishu${suffix}`;
@@ -115,6 +123,40 @@ export async function bindAgentFeishuWorkspace(
 ): Promise<AgentFeishuBinding> {
   return readAgentJson<AgentFeishuBinding>(
     await authenticatedFetch(agentFeishuPath(agentId, "/binding"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function setAgentFeishuWorkspaceScope(
+  agentId: string,
+  input: AgentFeishuWorkspaceScopeInput,
+): Promise<AgentFeishuInstallation> {
+  return readAgentJson<AgentFeishuInstallation>(
+    await authenticatedFetch(agentFeishuPath(agentId, "/workspace-scope"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function getAgentDefaultWorkspaceScope(
+  agentId: string,
+): Promise<AgentDefaultWorkspaceScope | null> {
+  const response = await authenticatedFetch(agentFeishuPath(agentId, "/default-workspace"));
+  if (response.status === 404) return null;
+  return readAgentJson<AgentDefaultWorkspaceScope>(response);
+}
+
+export async function setAgentDefaultWorkspaceScope(
+  agentId: string,
+  input: AgentDefaultWorkspaceScope,
+): Promise<AgentDefaultWorkspaceScope> {
+  return readAgentJson<AgentDefaultWorkspaceScope>(
+    await authenticatedFetch(agentFeishuPath(agentId, "/default-workspace"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
