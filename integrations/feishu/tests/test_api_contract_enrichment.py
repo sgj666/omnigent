@@ -67,6 +67,7 @@ async def test_pending_installation_survives_restart_with_complete_pairing_state
     path = tmp_path / "provider.db"
     first_store = FeishuStore(path, clock=lambda: now[0])
     await first_store.initialize()
+    await first_store.set_agent_default_scope("ag", workspace="/tmp/workspace", host_id="local")
     first_device = Device()
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=_app(first_store, first_device)),

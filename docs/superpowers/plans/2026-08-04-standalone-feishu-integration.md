@@ -574,7 +574,7 @@ git commit -m "refactor(feishu): cut over to the standalone agent integration"
 **Files:**
 - Create: `tests/e2e/test_feishu_agent_runtime_e2e.py`
 - Modify: `tests/e2e/test_subagent_autowake_e2e.py`
-- Modify: `web/e2e/multi-agent.spec.ts`
+- Verify: Multi-Agent/Feishu flow with the Codex in-app browser
 - Modify: `docs/superpowers/plans/2026-08-04-multi-agent-feishu-runtime.md`
 
 - [ ] **Step 1: Write failing cross-process E2E**
@@ -594,21 +594,33 @@ Add a notification-failure case that still requires the core Run to remain compl
 
 - [ ] **Step 2: Verify RED**
 
-Run: `.venv/bin/pytest tests/e2e/test_feishu_agent_runtime_e2e.py -q --count=1`
+Run: `.venv/bin/pytest tests/e2e/test_feishu_agent_runtime_e2e.py -q`
 
 Expected: FAIL until both process boundaries and cutover are complete.
 
-- [ ] **Step 3: Complete browser coverage**
+- [ ] **Step 3: Complete browser acceptance with Codex**
 
-Playwright must clone Polly, open its Multi-Agent detail, start Agent-scoped QR pairing, retain the QR while pending, show connected state, switch the next Run's Workspace, submit a task, inspect the root/worker Session tree, and verify a finished product without any Team route.
+Use the Codex in-app browser against the running local application; do not add a
+Playwright spec solely for this acceptance step. Clone Polly, open its
+Multi-Agent detail, start Agent-scoped QR pairing, retain the QR while pending,
+show connected state (or the supported fixture-backed pending/error state when
+external authorization is unavailable), switch the next Run's Workspace,
+submit a task, inspect the root/worker Session tree, and verify a finished
+product without navigating through any Team route. Repeat the visible flow in
+English and Simplified Chinese without clearing application state. Record the
+URL, observed bundle version/digest, immutable Workspace, root/worker Session
+IDs, and screenshots as acceptance evidence.
 
 - [ ] **Step 4: Run the complete gate**
 
 ```bash
 uv sync --extra feishu --extra dev
-.venv/bin/pytest integrations/feishu/tests tests/cli/test_integration_feishu.py tests/e2e/test_feishu_agent_runtime_e2e.py -q --count=1
-.venv/bin/pytest tests/runs tests/server/test_runs_routes.py tests/server/integration/test_run_projection.py -q
+.venv/bin/pytest integrations/feishu/tests tests/cli/test_integration_feishu.py tests/e2e/test_feishu_agent_runtime_e2e.py -q
+.venv/bin/pytest tests/runs -q
 .venv/bin/python scripts/update_versions.py check
+# The web gates require Node >=22.13 (see package.json engines).
+# If you use nvm and your shell defaults to an older release, select it first:
+#   nvm use 22
 pnpm --dir web test --run
 pnpm --dir web type-check
 pnpm --dir web build
@@ -620,7 +632,7 @@ Expected: every command PASS with no provider import in core and no Team-scoped 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/e2e web/e2e docs/superpowers/plans/2026-08-04-multi-agent-feishu-runtime.md
+git add tests/e2e docs/superpowers/plans/2026-08-04-standalone-feishu-integration.md docs/superpowers/plans/2026-08-04-multi-agent-feishu-runtime.md
 git commit -m "test(feishu): prove standalone agent-scoped integration"
 ```
 
@@ -637,4 +649,4 @@ git commit -m "test(feishu): prove standalone agent-scoped integration"
 - [ ] Feishu delivery failure does not change the Run terminal state.
 - [ ] Legacy import is repeatable and performs no dual writes.
 - [ ] Agent-scoped pairing and Workspace selection pass English and Simplified Chinese browser flows.
-- [ ] Team-scoped Feishu routes, bindings, UI entry points, and embedded lifecycle are absent.
+- [ ] No executable/mounted Team-scoped Feishu production path or embedded lifecycle remains; deprecated 410 wrappers and `/teams` redirects may remain as compatibility shells.

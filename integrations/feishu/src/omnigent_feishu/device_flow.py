@@ -199,8 +199,8 @@ class FeishuPersonalAgentDeviceFlow:
             None,
             {"Authorization": f"Bearer {token}"},
         )
-        data = response.get("data", {})
-        bot = data.get("bot") if isinstance(data, Mapping) else None
+        data = response.get("data")
+        bot = data.get("bot") if isinstance(data, Mapping) else response.get("bot")
         if not isinstance(bot, Mapping) or _text(bot.get("open_id")) is None:
             raise FeishuDeviceFlowError("protocol", "Feishu returned invalid bot info")
         return dict(bot)

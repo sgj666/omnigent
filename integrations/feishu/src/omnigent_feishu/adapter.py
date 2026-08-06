@@ -85,7 +85,7 @@ class FeishuAdapter:
         else:
             routed = await self._router.route(event, installation_id)
         return AdapterResult(
-            {"event_id": routed.event_id, "run_id": routed.run_id},
+            {"event_id": routed.event_id, "run_id": routed.run_id, "run": routed.payload},
             duplicate=routed.duplicate,
         )
 

@@ -79,14 +79,21 @@ def _identity(value: object) -> str | None:
 
 def _content_text(value: object) -> str:
     if isinstance(value, Mapping):
-        return str(value.get("text", ""))
+        direct = value.get("text")
+        if isinstance(direct, str):
+            return direct
+        parts = [_content_text(item) for item in value.values()]
+        return "\n".join(part for part in parts if part)
+    if isinstance(value, list):
+        parts = [_content_text(item) for item in value]
+        return "".join(parts)
     if not isinstance(value, str):
         return ""
     try:
         decoded = json.loads(value)
     except ValueError:
         return value
-    return str(decoded.get("text", "")) if isinstance(decoded, Mapping) else value
+    return _content_text(decoded)
 
 
 def decode_message(payload: Mapping[str, Any]) -> FeishuMessage:

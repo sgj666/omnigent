@@ -11,7 +11,8 @@ from omnigent_feishu.surface import BotSurfaceProvisioner
 from pydantic import ValidationError
 
 
-def test_config_requires_core_url_and_encryption_secrets(monkeypatch) -> None:
+def test_config_requires_core_url_and_encryption_secrets(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OMNIGENT_DATA_DIR", str(tmp_path))
     for name in (
         "OMNIGENT_SERVER_URL",
         "OMNIGENT_FEISHU_CREDENTIAL_KEY",

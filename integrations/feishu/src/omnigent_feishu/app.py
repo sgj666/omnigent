@@ -14,6 +14,7 @@ from omnigent_feishu.config import FeishuConfig
 from omnigent_feishu.core_client import CoreClient
 from omnigent_feishu.credentials import FeishuCredentialCipher
 from omnigent_feishu.device_flow import FeishuPersonalAgentDeviceFlow
+from omnigent_feishu.realtime import FeishuRealtimeRuntime
 from omnigent_feishu.router import FeishuRouter
 from omnigent_feishu.routes import create_feishu_router
 from omnigent_feishu.store import FeishuStore
@@ -39,20 +40,30 @@ def create_app(
         verification_token=config.verification_token,
         signature_secret=config.encrypt_key,
     )
+    cipher = FeishuCredentialCipher(config.credential_key)
+    realtime = FeishuRealtimeRuntime(
+        provider_store, cipher, adapter, core, action_secret=config.action_secret
+    )
     app = FastAPI(title="Omnigent Feishu", version="1")
     app.include_router(
         create_feishu_router(
             provider_store,
             device_flow or FeishuPersonalAgentDeviceFlow(),
-            FeishuCredentialCipher(config.credential_key),
+            cipher,
             adapter,
             surface_provisioner=surface_provisioner,
+            installation_connected=realtime.start_installation,
         )
     )
 
     @app.on_event("startup")
     async def startup() -> None:
         await provider_store.initialize()
+        for key, value in config.runtime_settings().items():
+            await provider_store.set_meta(f"feishu.runtime.{key}", value)
+        config.database_path.parent.chmod(0o700)
+        config.database_path.chmod(0o600)
+        await realtime.start()
 
     @app.on_event("shutdown")
     async def shutdown() -> None:

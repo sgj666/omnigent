@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from omnigent_feishu.core_client import CoreClient, RunCreateCommand
+from omnigent_feishu.core_client import CoreClient, SessionCreateCommand
 
 
 class Bearer:
@@ -18,7 +18,7 @@ class Bearer:
 
 
 @pytest.mark.asyncio
-async def test_create_run_is_http_only_refreshes_once_and_has_no_source_actor() -> None:
+async def test_create_session_posts_to_supported_sessions_api() -> None:
     requests = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -29,12 +29,10 @@ async def test_create_run_is_http_only_refreshes_once_and_has_no_source_actor() 
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     client = CoreClient("https://core.example", Bearer(), client=http)
-    result = await client.create_run(
-        RunCreateCommand("ag", "ws", "work", "feishu:event", execution_mode="auto")
-    )
+    result = await client.create_session(SessionCreateCommand("ag", "/workspace", "host-1"))
     body = __import__("json").loads(requests[-1].content)
     assert result["id"] == "run"
     assert len(requests) == 2
-    assert body["source"] == "integration:feishu"
-    assert "source_actor" not in body
+    assert requests[-1].url.path == "/v1/sessions"
+    assert body == {"agent_id": "ag", "workspace": "/workspace", "host_id": "host-1"}
     await http.aclose()

@@ -18,23 +18,16 @@ class CoreApiError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class RunCreateCommand:
+class SessionCreateCommand:
     agent_id: str
-    workspace_id: str | None
-    input: str
-    source_event_id: str
-    host_id: str | None = None
-    execution_mode: str = "auto"
+    workspace: str
+    host_id: str
 
     def payload(self) -> dict[str, object]:
         return {
             "agent_id": self.agent_id,
-            "workspace_id": self.workspace_id,
-            "input": self.input,
-            "source": "integration:feishu",
-            "source_event_id": self.source_event_id,
+            "workspace": self.workspace,
             "host_id": self.host_id,
-            "execution_mode": self.execution_mode,
         }
 
 
@@ -99,10 +92,8 @@ class CoreClient:
             json={"thread_id": thread_id},
         )
 
-    async def create_run(self, command: RunCreateCommand | None = None, **kwargs: Any) -> Any:
-        if command is None:
-            command = RunCreateCommand(**kwargs)
-        return await self._request("POST", "/v1/runs", json=command.payload())
+    async def create_session(self, command: SessionCreateCommand) -> Any:
+        return await self._request("POST", "/v1/sessions", json=command.payload())
 
     async def get_run(self, run_id: str) -> Any:
         return await self._request("GET", f"/v1/runs/{run_id}")
@@ -115,6 +106,56 @@ class CoreClient:
     async def get_run_inspector(self, run_id: str) -> Any:
         return await self._request("GET", f"/v1/runs/{run_id}/inspector")
 
+    async def get_session(self, session_id: str) -> Any:
+        return await self._request(
+            "GET",
+            f"/v1/sessions/{session_id}",
+            params={"include_items": "false", "include_liveness": "true"},
+        )
+
+    async def get_session_items(self, session_id: str) -> Any:
+        return await self._request(
+            "GET",
+            f"/v1/sessions/{session_id}/items",
+            params={"limit": 100, "order": "asc"},
+        )
+
+    async def get_child_sessions(self, session_id: str) -> Any:
+        return await self._request(
+            "GET",
+            f"/v1/sessions/{session_id}/child_sessions",
+            params={"limit": 100, "order": "desc"},
+        )
+
+    async def send_session_input(self, session_id: str, text: str) -> Any:
+        return await self._request(
+            "POST",
+            f"/v1/sessions/{session_id}/events",
+            json={
+                "type": "message",
+                "data": {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": text}],
+                },
+            },
+        )
+
+    async def stop_session(self, session_id: str) -> Any:
+        return await self._request(
+            "POST",
+            f"/v1/sessions/{session_id}/events",
+            json={"type": "stop_session", "data": {}},
+        )
+
+    async def resolve_elicitation(
+        self, session_id: str, elicitation_id: str, *, content: dict[str, object]
+    ) -> Any:
+        return await self._request(
+            "POST",
+            f"/v1/sessions/{session_id}/elicitations/{elicitation_id}/resolve",
+            json={"action": "accept", "content": content},
+        )
+
     async def stop_run(self, run_id: str) -> Any:
         return await self._request("POST", f"/v1/runs/{run_id}/stop")
 
@@ -125,4 +166,4 @@ class CoreClient:
 
 OmnigentCoreClient = CoreClient
 
-__all__ = ["CoreApiError", "CoreClient", "OmnigentCoreClient", "RunCreateCommand"]
+__all__ = ["CoreApiError", "CoreClient", "OmnigentCoreClient", "SessionCreateCommand"]

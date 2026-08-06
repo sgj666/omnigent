@@ -26,6 +26,9 @@ class Adapter:
 def test_installation_routes_are_agent_scoped_and_keep_qr(tmp_path) -> None:
     store = FeishuStore(tmp_path / "provider.db")
     asyncio.run(store.initialize())
+    asyncio.run(
+        store.set_agent_default_scope("ag_polly", workspace="/tmp/workspace", host_id="local")
+    )
     app = FastAPI()
     app.include_router(
         create_feishu_router(

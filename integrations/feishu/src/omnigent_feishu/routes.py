@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict
 from typing import Any
 from urllib.parse import quote
@@ -33,6 +33,11 @@ class BindingRequest(BaseModel):
     host_id: str | None = None
     execution_mode: str = "auto"
     allowed_members: list[str] = Field(default_factory=list)
+
+
+class WorkspaceScopeRequest(BaseModel):
+    workspace: str = Field(min_length=1)
+    host_id: str = Field(min_length=1)
 
 
 def _installation(value: Any, *, now: int) -> dict[str, object]:
@@ -101,6 +106,7 @@ def create_feishu_router(
     adapter: FeishuAdapter,
     *,
     surface_provisioner: BotSurfaceProvisioner | None = None,
+    installation_connected: Callable[[Any], Awaitable[None]] | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -125,6 +131,11 @@ def create_feishu_router(
         status_code=201,
     )
     async def begin_install(agent_id: str) -> dict[str, object]:
+        if await store.get_agent_default_scope(agent_id) is None:
+            raise HTTPException(
+                409,
+                {"code": "default_workspace_required", "message": "请先选择本地默认工作目录"},
+            )
         try:
             session = await device_flow.begin()
             installation = await store.create_pending_installation(
@@ -141,6 +152,21 @@ def create_feishu_router(
         return {
             **(await installation_payload(installation)),
         }
+
+    @router.get("/v1/agents/{agent_id}/feishu/default-workspace")
+    async def get_default_workspace(agent_id: str) -> dict[str, str]:
+        scope = await store.get_agent_default_scope(agent_id)
+        if scope is None:
+            raise HTTPException(404, {"code": "not_configured"})
+        return {"workspace": scope[0], "host_id": scope[1]}
+
+    @router.put("/v1/agents/{agent_id}/feishu/default-workspace")
+    async def set_default_workspace(agent_id: str, body: WorkspaceScopeRequest) -> dict[str, str]:
+        workspace = body.workspace.strip()
+        if not workspace.startswith("/"):
+            raise HTTPException(422, {"code": "workspace_must_be_absolute"})
+        await store.set_agent_default_scope(agent_id, workspace=workspace, host_id=body.host_id)
+        return {"workspace": workspace, "host_id": body.host_id}
 
     @router.get("/v1/agents/{agent_id}/feishu/installations/{session}")
     async def poll_install(agent_id: str, session: str) -> dict[str, object]:
@@ -171,6 +197,13 @@ def create_feishu_router(
                 bot_open_id=bot_open_id,
                 **metadata,
             )
+            scope = await store.get_agent_default_scope(agent_id)
+            if scope is not None:
+                installation = await store.set_installation_workspace_scope(
+                    installation.id, workspace=scope[0], host_id=scope[1]
+                )
+            if installation_connected is not None:
+                await installation_connected(installation)
             surface = None
             if surface_provisioner is not None:
                 surface = (
@@ -201,6 +234,19 @@ def create_feishu_router(
             raise HTTPException(404, {"code": "not_found"})
         return Response(status_code=204)
 
+    @router.put("/v1/agents/{agent_id}/feishu/workspace-scope")
+    async def set_workspace_scope(agent_id: str, body: WorkspaceScopeRequest) -> dict[str, object]:
+        installation = await store.get_agent_installation(agent_id)
+        if installation is None:
+            raise HTTPException(404, {"code": "not_found"})
+        workspace = body.workspace.strip()
+        if not workspace.startswith("/"):
+            raise HTTPException(422, {"code": "workspace_must_be_absolute"})
+        installation = await store.set_installation_workspace_scope(
+            installation.id, workspace=workspace, host_id=body.host_id
+        )
+        return await installation_payload(installation)
+
     @router.put("/v1/agents/{agent_id}/feishu/binding")
     async def bind(agent_id: str, body: BindingRequest) -> dict[str, object]:
         installation = await store.get_installation(body.installation_id)
@@ -225,7 +271,11 @@ def create_feishu_router(
             raise HTTPException(404, {"code": "not_found"})
         surface = await store.get_surface(installation.id)
         if surface is None:
-            return enrich_surface({"status": "pending", "installation_id": installation.id})
+            return {
+                "status": "contextual",
+                "surface_type": "none",
+                "installation_id": installation.id,
+            }
         return enrich_surface(surface)
 
     @router.post("/v1/agents/{agent_id}/feishu/surface/reinitialize")

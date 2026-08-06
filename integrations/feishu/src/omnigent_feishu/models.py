@@ -28,6 +28,8 @@ class Installation:
     tenant_name: str | None
     bot_name: str | None
     bot_avatar_url: str | None
+    default_workspace: str | None
+    default_host_id: str | None
 
 
 @dataclass(frozen=True)

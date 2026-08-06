@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
-from omnigent_feishu.cards import verify_action_value
-from omnigent_feishu.core_client import CoreClient, RunCreateCommand
+from omnigent_feishu.cards import (
+    build_guide_card,
+    build_workspace_picker_card,
+    verify_action_value,
+)
+from omnigent_feishu.core_client import CoreApiError, CoreClient, SessionCreateCommand
+from omnigent_feishu.models import ThreadBinding
 from omnigent_feishu.protocol import FeishuCardAction, FeishuMessage
 from omnigent_feishu.store import FeishuStore
 
@@ -37,6 +43,43 @@ class FeishuRouter:
         self._store = store
         self._core = core
         self._action_secret = action_secret
+        self._binding_locks: dict[str, asyncio.Lock] = {}
+
+    async def _continue_session(
+        self, binding_id: str, session_id: str, text: str
+    ) -> tuple[object, str | None]:
+        lock = self._binding_locks.setdefault(binding_id, asyncio.Lock())
+        async with lock:
+            while True:
+                session = await self._core.get_session(session_id)
+                status = session.get("status") if isinstance(session, dict) else None
+                if status not in {"launching", "running", "waiting"}:
+                    break
+                await asyncio.sleep(1)
+            items = await self._core.get_session_items(session_id)
+            baseline_id = _latest_assistant_id(items)
+            response = await self._core.send_session_input(session_id, text)
+            return response, baseline_id
+
+    async def _begin_new_session(self, binding: ThreadBinding) -> ThreadBinding:
+        """Create an empty Core session so a user-visible new chat takes effect now."""
+        if not binding.workspace_id or not binding.host_id:
+            return binding
+        response = await self._core.create_session(
+            SessionCreateCommand(
+                agent_id=binding.agent_id,
+                workspace=binding.workspace_id,
+                host_id=binding.host_id,
+            )
+        )
+        session_id = str(response["id"])
+        await self._store.set_binding_run(binding.id, session_id)
+        await self._store.set_binding_root_session(binding.id, session_id)
+        refreshed = await self._store.get_binding(
+            binding.installation_id, binding.chat_id, binding.thread_id
+        )
+        assert refreshed is not None
+        return refreshed
 
     async def route(self, event: FeishuMessage, installation_id: str | None = None) -> RouteResult:
         installation_id = installation_id or str(event.raw.get("installation_id", ""))
@@ -49,25 +92,124 @@ class FeishuRouter:
             return RouteResult(event.event_id, record.run_id, duplicate=True)
         binding = await self._store.get_binding(installation_id, event.chat_id, event.thread_id)
         if binding is None:
-            await self._store.fail_event(event.event_id, "unknown_binding")
-            raise FeishuRoutingError("unknown_binding", "Chat is not bound to an Agent")
-        if binding.allowed_members and event.sender_id not in binding.allowed_members:
-            await self._store.fail_event(event.event_id, "forbidden")
-            raise FeishuRoutingError("forbidden", "Sender is not allowed")
-        response = await self._core.create_run(
-            RunCreateCommand(
+            installation = await self._store.get_installation(installation_id)
+            if installation is None or installation.status != "connected":
+                await self._store.fail_event(event.event_id, "unknown_binding")
+                raise FeishuRoutingError("unknown_binding", "Chat is not bound to an Agent")
+            binding = await self._store.bind_thread(
+                installation_id=installation_id,
+                chat_id=event.chat_id,
+                thread_id=event.thread_id,
+                agent_id=installation.agent_id,
+                workspace_id=installation.default_workspace,
+                host_id=installation.default_host_id,
+                # A binding represents one Feishu conversation (and optional topic),
+                # not its first speaker. Every group member therefore continues the
+                # same shared conversation.
+                allowed_members=(),
+            )
+        if not binding.workspace_id or not binding.host_id:
+            installation = await self._store.get_installation(installation_id)
+            if installation and installation.default_workspace and installation.default_host_id:
+                await self._store.set_binding_workspace_scope(
+                    binding.id,
+                    workspace=installation.default_workspace,
+                    host_id=installation.default_host_id,
+                )
+                binding = await self._store.get_binding(
+                    installation_id, event.chat_id, event.thread_id
+                )
+                assert binding is not None
+        root_session_id = await self._store.get_binding_root_session(binding.id)
+        command = event.text.strip().lower()
+        if command in {"/stop", "/new", "/reset"}:
+            if root_session_id:
+                try:
+                    await self._core.stop_session(root_session_id)
+                except CoreApiError as exc:
+                    if exc.status_code != 404:
+                        raise
+            if command in {"/new", "/reset"}:
+                await self._store.reset_binding_session(binding.id)
+            if command in {"/new", "/reset"}:
+                binding = await self._store.get_binding(
+                    installation_id, event.chat_id, event.thread_id
+                )
+                assert binding is not None
+                binding = await self._begin_new_session(binding)
+                await self._store.complete_event(event.event_id, binding.run_id or "command")
+                return RouteResult(
+                    event.event_id,
+                    binding.run_id,
+                    payload=self._guide_payload(binding, message="已新建会话。请直接发送任务。"),
+                )
+            await self._store.complete_event(event.event_id, binding.run_id or "command")
+            return RouteResult(
+                event.event_id,
+                binding.run_id,
+                payload={
+                    "command": command,
+                    "message": (
+                        "当前会话已停止。下一条消息仍会继续当前上下文。"
+                        if command == "/stop"
+                        else "已新建会话。下一条消息将从全新上下文开始。"
+                    ),
+                },
+            )
+        if _is_greeting(event.text):
+            await self._store.complete_event(event.event_id, binding.run_id or "guide")
+            return RouteResult(
+                event.event_id, binding.run_id, payload=self._guide_payload(binding)
+            )
+        if not binding.workspace_id or not binding.host_id:
+            await self._store.complete_event(event.event_id, "workspace_required")
+            return RouteResult(
+                event.event_id,
+                None,
+                payload={"setup_required": True, "code": "workspace_required"},
+            )
+        if root_session_id and binding.run_id:
+            try:
+                response, baseline_id = await self._continue_session(
+                    binding.id, root_session_id, event.text
+                )
+            except CoreApiError as exc:
+                if exc.status_code != 404:
+                    await self._store.fail_event(event.event_id, "session_input_failed")
+                    raise
+            else:
+                await self._store.complete_event(event.event_id, binding.run_id)
+                return RouteResult(
+                    event.event_id,
+                    binding.run_id,
+                    duplicate=not claimed,
+                    payload={
+                        "id": binding.run_id,
+                        "root_session_id": root_session_id,
+                        "continued": True,
+                        "baseline_assistant_id": baseline_id,
+                        "event": response,
+                    },
+                )
+
+        response = await self._core.create_session(
+            SessionCreateCommand(
                 agent_id=binding.agent_id,
-                workspace_id=binding.workspace_id,
-                input=event.text,
-                source_event_id=f"feishu:{event.event_id}",
+                workspace=binding.workspace_id,
                 host_id=binding.host_id,
-                execution_mode=binding.execution_mode,
             )
         )
-        run_id = str(response["id"])
-        await self._store.set_binding_run(binding.id, run_id)
-        await self._store.complete_event(event.event_id, run_id)
-        return RouteResult(event.event_id, run_id, duplicate=not claimed, payload=response)
+        session_id = str(response["id"])
+        await self._core.send_session_input(session_id, event.text)
+        await self._store.set_binding_run(binding.id, session_id)
+        await self._store.set_binding_root_session(binding.id, session_id)
+        await self._store.complete_event(event.event_id, session_id)
+        return RouteResult(
+            event.event_id,
+            session_id,
+            duplicate=not claimed,
+            payload={"id": session_id, "root_session_id": session_id, "event": response},
+        )
 
     async def route_action(self, event: FeishuCardAction, installation_id: str) -> RouteResult:
         claimed, record = await self._store.claim_event(
@@ -80,22 +222,94 @@ class FeishuRouter:
             raise FeishuRoutingError("invalid_action_signature", "Action is invalid")
         binding = await self._store.get_binding(installation_id, event.chat_id, event.thread_id)
         if binding is None:
-            raise FeishuRoutingError("unknown_binding", "Chat is not bound")
-        if binding.allowed_members and event.sender_id not in binding.allowed_members:
-            raise FeishuRoutingError("forbidden", "Sender is not allowed")
+            installation = await self._store.get_installation(installation_id)
+            if installation is None or installation.status != "connected":
+                raise FeishuRoutingError("unknown_binding", "Chat is not bound")
+            binding = await self._store.bind_thread(
+                installation_id=installation_id,
+                chat_id=event.chat_id,
+                thread_id=event.thread_id,
+                agent_id=installation.agent_id,
+                workspace_id=installation.default_workspace,
+                host_id=installation.default_host_id,
+                allowed_members=(),
+            )
         value = event.value
         if value.get("agent_id") not in (None, binding.agent_id):
             raise FeishuRoutingError("binding_mismatch", "Agent binding mismatch")
         action = event.action_id
         run_id = str(value.get("run_id") or binding.run_id or "")
         payload: object
-        if action == "switch_workspace":
+        if action == "elicitation_choice":
+            elicitation_id = value.get("elicitation_id")
+            choice = value.get("choice")
+            if not isinstance(elicitation_id, str) or not isinstance(choice, str):
+                raise FeishuRoutingError("invalid_elicitation", "Elicitation choice is incomplete")
+            if not binding.run_id:
+                raise FeishuRoutingError("no_current_run", "No current session")
+            payload = await self._core.resolve_elicitation(
+                binding.run_id, elicitation_id, content={"answer": choice, "choice": choice}
+            )
+        elif action == "new_session" or action == "create_run":
+            root_session_id = await self._store.get_binding_root_session(binding.id)
+            if root_session_id:
+                try:
+                    await self._core.stop_session(root_session_id)
+                except CoreApiError as exc:
+                    if exc.status_code != 404:
+                        raise
+            await self._store.reset_binding_session(binding.id)
+            binding = await self._store.get_binding(
+                installation_id, event.chat_id, event.thread_id
+            )
+            assert binding is not None
+            binding = await self._begin_new_session(binding)
+            run_id = binding.run_id or ""
+            payload = self._guide_payload(binding, message="已准备好新会话。请直接发送任务。")
+        elif action == "stop_session":
+            root_session_id = await self._store.get_binding_root_session(binding.id)
+            if not root_session_id:
+                payload = self._guide_payload(binding, message="当前没有正在进行的会话。")
+            else:
+                try:
+                    await self._core.stop_session(root_session_id)
+                except CoreApiError as exc:
+                    if exc.status_code != 404:
+                        raise
+                await self._store.reset_binding_session(binding.id)
+                binding = await self._store.get_binding(
+                    installation_id, event.chat_id, event.thread_id
+                )
+                assert binding is not None
+                payload = self._guide_payload(binding, message="当前会话已终止。")
+        elif action == "switch_workspace":
             workspace_id = value.get("workspace_id")
             if not isinstance(workspace_id, str) or not workspace_id:
-                payload = await self._core.list_workspaces()
+                payload = self._workspace_picker_payload(
+                    binding, await self._core.list_workspaces()
+                )
             else:
                 await self._store.set_binding_workspace(binding.id, workspace_id)
-                payload = {"workspace_id": workspace_id}
+                binding = await self._store.get_binding(
+                    installation_id, event.chat_id, event.thread_id
+                )
+                assert binding is not None
+                payload = self._guide_payload(binding, message=f"已切换到：{workspace_id}")
+        elif action == "create_workspace":
+            if not binding.host_id:
+                payload = self._guide_payload(binding, setup_required=True)
+            else:
+                payload = {
+                    "message": "请在 Omnigent 的飞书连接设置中选择在线主机和本地工作目录。",
+                    "guide_card": self._guide_card(binding, setup_required=True),
+                }
+        elif action == "create_task":
+            payload = {
+                "message": "请直接发送任务描述。我会在当前 Workspace 中创建并持续更新这次 Run。",
+                "guide_card": self._guide_card(
+                    binding, setup_required=not bool(binding.workspace_id)
+                ),
+            }
         elif action in {"current_run", "run_logs"}:
             if not run_id:
                 raise FeishuRoutingError("no_current_run", "No current Run")
@@ -115,15 +329,74 @@ class FeishuRouter:
             payload = await self._core.decide_approval(
                 run_id, approval_id, approved=action == "approve"
             )
-        elif action in {"list_runs", "create_run", "help"}:
+        elif action == "help":
+            payload = self._guide_payload(binding)
+        elif action == "list_runs":
             payload = {"action": action}
         else:
             raise FeishuRoutingError("action_forbidden", "Action is not allowed")
         await self._store.complete_event(event.event_id, run_id)
         return RouteResult(event.event_id, run_id or None, duplicate=not claimed, payload=payload)
 
+    def _guide_card(
+        self, binding: ThreadBinding, *, setup_required: bool = False
+    ) -> dict[str, object]:
+        return build_guide_card(
+            signing_secret=self._action_secret,
+            agent_id=binding.agent_id,
+            workspace_id=binding.workspace_id,
+            has_active_session=bool(binding.run_id),
+            setup_required=setup_required,
+        )
+
+    def _guide_payload(
+        self,
+        binding: ThreadBinding,
+        *,
+        message: str | None = None,
+        setup_required: bool = False,
+    ) -> dict[str, object]:
+        return {
+            "guide_card": self._guide_card(binding, setup_required=setup_required),
+            "message": message,
+        }
+
+    def _workspace_picker_payload(
+        self, binding: ThreadBinding, payload: object
+    ) -> dict[str, object]:
+        rows = payload.get("data", []) if isinstance(payload, dict) else []
+        paths = [
+            row.get("root_path")
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get("root_path"), str)
+        ]
+        return {
+            "guide_card": build_workspace_picker_card(
+                paths, signing_secret=self._action_secret, agent_id=binding.agent_id
+            )
+        }
+
 
 LarkRouter = FeishuRouter
 LarkRoutingError = FeishuRoutingError
 
 __all__ = ["FeishuRouter", "FeishuRoutingError", "RouteResult"]
+
+
+def _latest_assistant_id(payload: object) -> str | None:
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        return None
+    for item in reversed(payload["data"]):
+        if (
+            isinstance(item, dict)
+            and item.get("type") == "message"
+            and item.get("role") == "assistant"
+        ):
+            item_id = item.get("id")
+            return item_id if isinstance(item_id, str) else None
+    return None
+
+
+def _is_greeting(text: str) -> bool:
+    normalized = "".join(text.strip().lower().split())
+    return normalized in {"你好", "您好", "嗨", "哈喽", "在吗", "hi", "hello", "hey"}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 
 from pydantic import Field, field_validator
@@ -14,10 +15,43 @@ def _data_dir() -> Path:
     return Path(configured).expanduser() if configured else Path.home() / ".omnigent"
 
 
+_RUNTIME_KEYS = (
+    "OMNIGENT_SERVER_URL",
+    "OMNIGENT_FEISHU_CREDENTIAL_KEY",
+    "OMNIGENT_FEISHU_DATABASE_PATH",
+    "OMNIGENT_FEISHU_HOST",
+    "OMNIGENT_FEISHU_PORT",
+    "OMNIGENT_FEISHU_ACTION_SECRET",
+    "OMNIGENT_FEISHU_CORE_BEARER",
+)
+
+
+def _load_runtime_settings() -> None:
+    """Restore service settings before pydantic reads the process environment."""
+    database = Path(
+        os.environ.get("OMNIGENT_FEISHU_DATABASE_PATH", _data_dir() / "omnigent_feishu.sqlite3")
+    ).expanduser()
+    try:
+        with sqlite3.connect(database) as db:
+            rows = db.execute(
+                "SELECT key, value FROM schema_meta WHERE key LIKE 'feishu.runtime.%'"
+            ).fetchall()
+    except sqlite3.Error:
+        return
+    for key, value in rows:
+        name = str(key).removeprefix("feishu.runtime.")
+        if name in _RUNTIME_KEYS and name not in os.environ:
+            os.environ[name] = str(value)
+
+
 class FeishuConfig(BaseSettings):
     """Settings for exactly one standalone Feishu service process."""
 
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
+
+    def __init__(self, **values: object) -> None:
+        _load_runtime_settings()
+        super().__init__(**values)
 
     server_url: str = Field(validation_alias="OMNIGENT_SERVER_URL")
     credential_key: str = Field(validation_alias="OMNIGENT_FEISHU_CREDENTIAL_KEY")
@@ -49,6 +83,19 @@ class FeishuConfig(BaseSettings):
         if len(value) < 16:
             raise ValueError("secret must contain at least 16 characters")
         return value
+
+    def runtime_settings(self) -> dict[str, str]:
+        values = {
+            "OMNIGENT_SERVER_URL": self.server_url,
+            "OMNIGENT_FEISHU_CREDENTIAL_KEY": self.credential_key,
+            "OMNIGENT_FEISHU_DATABASE_PATH": str(self.database_path),
+            "OMNIGENT_FEISHU_HOST": self.host,
+            "OMNIGENT_FEISHU_PORT": str(self.port),
+            "OMNIGENT_FEISHU_ACTION_SECRET": self.action_secret,
+        }
+        if self.core_bearer:
+            values["OMNIGENT_FEISHU_CORE_BEARER"] = self.core_bearer
+        return values
 
 
 __all__ = ["FeishuConfig"]

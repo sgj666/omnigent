@@ -11,8 +11,11 @@ from collections.abc import Callable, Mapping
 NonceFactory = Callable[[str], str]
 
 PERSISTENT_ACTIONS: tuple[tuple[str, str], ...] = (
+    ("new_session", "新建会话"),
     ("switch_workspace", "切换工作区"),
-    ("create_run", "创建任务"),
+    ("create_workspace", "添加工作目录"),
+    ("create_task", "创建任务"),
+    ("stop_session", "终止会话"),
     ("current_run", "当前 Run"),
     ("list_runs", "任务列表/状态"),
     ("run_logs", "日志/失败原因"),
@@ -23,7 +26,14 @@ APPROVAL_ACTIONS: tuple[tuple[str, str], ...] = (
     ("approve", "批准"),
     ("deny", "拒绝"),
 )
-ALLOWED_ACTIONS = frozenset(action for action, _ in PERSISTENT_ACTIONS + APPROVAL_ACTIONS)
+# ``create_run`` is accepted for cards issued by older installations.
+ALLOWED_ACTIONS = frozenset(
+    [
+        *(action for action, _ in PERSISTENT_ACTIONS + APPROVAL_ACTIONS),
+        "create_run",
+        "elicitation_choice",
+    ]
+)
 
 
 def sign_action_payload(payload: Mapping[str, object], secret: str) -> str:
@@ -40,6 +50,8 @@ def action_value(
     workspace_id: str | None = None,
     run_id: str | None = None,
     approval_id: str | None = None,
+    elicitation_id: str | None = None,
+    choice: str | None = None,
 ) -> dict[str, object]:
     if action_id not in ALLOWED_ACTIONS:
         raise ValueError("action is not allowed")
@@ -49,6 +61,8 @@ def action_value(
         "workspace_id": workspace_id,
         "run_id": run_id,
         "approval_id": approval_id,
+        "elicitation_id": elicitation_id,
+        "choice": choice,
         "nonce": nonce,
     }
     return {**payload, "signature": sign_action_payload(payload, signing_secret)}
@@ -99,6 +113,138 @@ def build_workspace_card(
     }
 
 
+def build_guide_card(
+    *,
+    signing_secret: str,
+    agent_id: str,
+    workspace_id: str | None,
+    has_active_session: bool = False,
+    setup_required: bool = False,
+    nonce_factory: NonceFactory | None = None,
+) -> dict[str, object]:
+    """Return the repeatable entry card for one Feishu chat."""
+    nonce = nonce_factory or (lambda _action: secrets.token_urlsafe(18))
+
+    def button(action: str, label: str, *, primary: bool = False) -> dict[str, object]:
+        result: dict[str, object] = {
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": label},
+            "value": action_value(
+                action,
+                signing_secret=signing_secret,
+                nonce=nonce(action),
+                agent_id=agent_id,
+                workspace_id=workspace_id,
+            ),
+        }
+        if primary:
+            result["type"] = "primary"
+        return result
+
+    workspace_note = (
+        "尚未配置工作目录。请先添加在线主机上的工作目录，再创建任务。"
+        if setup_required
+        else f"当前工作目录：{workspace_id}"
+        if workspace_id
+        else "尚未选择工作目录。"
+    )
+    return {
+        "config": {"wide_screen_mode": True, "update_multi": True, "enable_forward": True},
+        "header": {
+            "template": "blue",
+            "title": {"tag": "plain_text", "content": "Omnigent · 开始工作"},
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": "**你好，我是你的开发协作助手。**\n"
+                "我可以在当前目录中分析项目、推进开发、排查问题，并持续汇报进度。",
+            },
+            {"tag": "hr"},
+            {
+                "tag": "markdown",
+                "content": f"**工作位置**\n{workspace_note}",
+            },
+            {
+                "tag": "markdown",
+                "content": "**我能帮你推进**\n"
+                "• 理解当前项目、定位入口和改动影响\n"
+                "• 实现功能、修复问题、运行测试和审查代码\n"
+                "• 拆分任务、协调多个 Agent，并在需要拍板时找你确认",
+            },
+            {"tag": "hr"},
+            {
+                "tag": "markdown",
+                "content": "**试试这样对我说**\n"
+                "`先熟悉一下当前项目，告诉我入口、模块和怎么启动`\n"
+                "`检查当前分支改了什么，帮我做一次代码审查`\n"
+                "`跑相关测试；失败的话定位原因并尝试修复`",
+            },
+            {
+                "tag": "markdown",
+                "content": "**快捷指令**\n• `/new` 开启全新会话\n• `/stop` 停止当前会话",
+            },
+            {"tag": "hr"},
+            {
+                "tag": "action",
+                "actions": [
+                    button("new_session", "新建会话", primary=True),
+                    button("create_task", "创建任务", primary=True),
+                    button("switch_workspace", "切换 Workspace"),
+                    button("create_workspace", "添加工作目录"),
+                    button("help", "帮助"),
+                ],
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    button("create_workspace", "添加工作目录"),
+                    button("create_task", "创建任务", primary=True),
+                ],
+            },
+            *(
+                [{"tag": "action", "actions": [button("stop_session", "终止当前会话")]}]
+                if has_active_session
+                else []
+            ),
+        ],
+    }
+
+
+def build_workspace_picker_card(
+    workspaces: list[str],
+    *,
+    signing_secret: str,
+    agent_id: str,
+    nonce_factory: NonceFactory | None = None,
+) -> dict[str, object]:
+    nonce = nonce_factory or (lambda _action: secrets.token_urlsafe(18))
+    actions = [
+        {
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": workspace},
+            "value": action_value(
+                "switch_workspace",
+                signing_secret=signing_secret,
+                nonce=nonce(workspace),
+                agent_id=agent_id,
+                workspace_id=workspace,
+            ),
+        }
+        for workspace in workspaces[:12]
+    ]
+    return {
+        "config": {"wide_screen_mode": True, "update_multi": True},
+        "header": {"title": {"tag": "plain_text", "content": "切换 Workspace"}},
+        "elements": [
+            {"tag": "markdown", "content": "选择后，新任务会在该目录运行。"},
+            {"tag": "action", "actions": actions}
+            if actions
+            else {"tag": "markdown", "content": "还没有可切换的 Workspace。"},
+        ],
+    }
+
+
 def build_run_card(
     run: Mapping[str, object], *, signing_secret: str, approval_required: bool = False
 ) -> dict[str, object]:
@@ -133,14 +279,57 @@ def build_run_card(
     }
 
 
+def build_elicitation_card(
+    prompt: str,
+    options: list[str],
+    *,
+    signing_secret: str,
+    elicitation_id: str,
+    agent_id: str | None = None,
+    workspace_id: str | None = None,
+) -> dict[str, object]:
+    """Render an Inbox-style single-choice question as native Feishu buttons."""
+    actions = []
+    for index, option in enumerate(options[:10], start=1):
+        actions.append(
+            {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": f"{index}. {option}"},
+                "value": action_value(
+                    "elicitation_choice",
+                    signing_secret=signing_secret,
+                    nonce=secrets.token_urlsafe(18),
+                    agent_id=agent_id,
+                    workspace_id=workspace_id,
+                    elicitation_id=elicitation_id,
+                    choice=option,
+                ),
+            }
+        )
+    return {
+        "schema": "2.0",
+        "config": {"wide_screen_mode": True, "update_multi": True},
+        "header": {"title": {"tag": "plain_text", "content": "需要你的选择"}},
+        "body": {
+            "elements": [
+                {"tag": "markdown", "content": prompt[:4000]},
+                {"tag": "action", "actions": actions},
+            ]
+        },
+    }
+
+
 __all__ = [
     "ALLOWED_ACTIONS",
     "APPROVAL_ACTIONS",
     "PERSISTENT_ACTIONS",
     "action_value",
+    "build_elicitation_card",
+    "build_guide_card",
     "build_run_card",
     "build_workspace_card",
     "build_workspace_menu",
+    "build_workspace_picker_card",
     "sign_action_payload",
     "verify_action_value",
 ]

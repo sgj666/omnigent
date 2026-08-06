@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS installations (
   error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
   verification_uri_base TEXT, user_code TEXT, interval INTEGER,
   expires_at INTEGER, expires_in INTEGER, tenant_key TEXT, tenant_name TEXT,
-  bot_name TEXT, bot_avatar_url TEXT
+  bot_name TEXT, bot_avatar_url TEXT, default_workspace TEXT, default_host_id TEXT
 );
 CREATE INDEX IF NOT EXISTS installations_agent ON installations(agent_id, updated_at);
 CREATE TABLE IF NOT EXISTS thread_bindings (
@@ -58,6 +58,10 @@ CREATE TABLE IF NOT EXISTS auth_grants (
   access_ciphertext TEXT NOT NULL, refresh_ciphertext TEXT, expires_at INTEGER,
   updated_at INTEGER NOT NULL, PRIMARY KEY(installation_id, provider_user_id)
 );
+CREATE TABLE IF NOT EXISTS agent_default_scopes (
+  agent_id TEXT PRIMARY KEY, workspace TEXT NOT NULL, host_id TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 """
 
 _INSTALLATION_COLUMNS = {
@@ -70,6 +74,8 @@ _INSTALLATION_COLUMNS = {
     "tenant_name": "TEXT",
     "bot_name": "TEXT",
     "bot_avatar_url": "TEXT",
+    "default_workspace": "TEXT",
+    "default_host_id": "TEXT",
 }
 
 
@@ -123,6 +129,24 @@ class FeishuStore:
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
                 "INSERT OR REPLACE INTO schema_meta(key,value) VALUES(?,?)", (key, value)
+            )
+            await db.commit()
+
+    async def get_binding_root_session(self, binding_id: str) -> str | None:
+        return await self.get_meta(f"binding_root_session:{binding_id}")
+
+    async def set_binding_root_session(self, binding_id: str, session_id: str) -> None:
+        await self.set_meta(f"binding_root_session:{binding_id}", session_id)
+
+    async def reset_binding_session(self, binding_id: str) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "DELETE FROM schema_meta WHERE key=?",
+                (f"binding_root_session:{binding_id}",),
+            )
+            await db.execute(
+                "UPDATE thread_bindings SET run_id=NULL,updated_at=? WHERE id=?",
+                (self._clock(), binding_id),
             )
             await db.commit()
 
@@ -272,13 +296,27 @@ class FeishuStore:
             "agent_id=? ORDER BY updated_at DESC LIMIT 1", (agent_id,)
         )
 
+    async def connected_installations(self) -> list[Installation]:
+        async with aiosqlite.connect(self.path) as db:
+            rows = await (
+                await db.execute(
+                    """SELECT id,agent_id,app_id,app_secret_ciphertext,installer_open_id,
+                    bot_open_id,status,device_session,verification_uri,error,created_at,updated_at,
+                    verification_uri_base,user_code,interval,expires_at,expires_in,tenant_key,
+                    tenant_name,bot_name,bot_avatar_url,default_workspace,
+                    default_host_id FROM installations
+                    WHERE status='connected' ORDER BY updated_at DESC"""
+                )
+            ).fetchall()
+        return [Installation(*row) for row in rows]
+
     async def _one_installation(
         self, where: str, params: tuple[object, ...]
     ) -> Installation | None:
         sql = f"""SELECT id,agent_id,app_id,app_secret_ciphertext,installer_open_id,
         bot_open_id,status,device_session,verification_uri,error,created_at,updated_at,
         verification_uri_base,user_code,interval,expires_at,expires_in,tenant_key,
-        tenant_name,bot_name,bot_avatar_url
+        tenant_name,bot_name,bot_avatar_url,default_workspace,default_host_id
         FROM installations WHERE {where}"""
         async with aiosqlite.connect(self.path) as db:
             row = await (await db.execute(sql, params)).fetchone()
@@ -300,6 +338,42 @@ class FeishuStore:
                 }
             )
         return installation
+
+    async def set_installation_workspace_scope(
+        self, installation_id: str, *, workspace: str, host_id: str
+    ) -> Installation:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """UPDATE installations SET default_workspace=?,default_host_id=?,updated_at=?
+                WHERE id=?""",
+                (workspace, host_id, self._clock(), installation_id),
+            )
+            await db.commit()
+        installation = await self.get_installation(installation_id)
+        if installation is None:
+            raise KeyError("installation not found")
+        return installation
+
+    async def get_agent_default_scope(self, agent_id: str) -> tuple[str, str] | None:
+        async with aiosqlite.connect(self.path) as db:
+            row = await (
+                await db.execute(
+                    "SELECT workspace,host_id FROM agent_default_scopes WHERE agent_id=?",
+                    (agent_id,),
+                )
+            ).fetchone()
+        return (str(row[0]), str(row[1])) if row else None
+
+    async def set_agent_default_scope(
+        self, agent_id: str, *, workspace: str, host_id: str
+    ) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                """INSERT OR REPLACE INTO agent_default_scopes
+                (agent_id,workspace,host_id,updated_at) VALUES(?,?,?,?)""",
+                (agent_id, workspace, host_id, self._clock()),
+            )
+            await db.commit()
 
     async def delete_agent_installation(self, agent_id: str) -> bool:
         async with aiosqlite.connect(self.path) as db:
@@ -409,6 +483,16 @@ class FeishuStore:
             await db.execute(
                 "UPDATE thread_bindings SET workspace_id=?,updated_at=? WHERE id=?",
                 (workspace_id, self._clock(), binding_id),
+            )
+            await db.commit()
+
+    async def set_binding_workspace_scope(
+        self, binding_id: str, *, workspace: str, host_id: str
+    ) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute(
+                "UPDATE thread_bindings SET workspace_id=?,host_id=?,updated_at=? WHERE id=?",
+                (workspace, host_id, self._clock(), binding_id),
             )
             await db.commit()
 
