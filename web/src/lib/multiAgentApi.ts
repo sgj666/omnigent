@@ -51,6 +51,48 @@ export interface MultiAgentRunRecord {
   [key: string]: unknown;
 }
 
+export interface AgentActivityRun {
+  id: string;
+  task_id: string;
+  task_title: string;
+  state: string;
+  queued_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  session_id: string | null;
+  runtime_id: string | null;
+  workspace: string | null;
+  project_id: string | null;
+  project_name: string | null;
+  waiting_reason: string | null;
+  failure_code: string | null;
+  failure_message: string | null;
+}
+
+export interface AgentActivityProject {
+  id: string;
+  name: string;
+  run_count: number;
+}
+
+export interface AgentActivitySkill {
+  name: string;
+  uses: number;
+}
+
+export interface AgentActivity {
+  agent_id: string;
+  total_runs: number;
+  active_runs: number;
+  waiting_runs: number;
+  failed_runs: number;
+  success_rate: number | null;
+  recent_runs: AgentActivityRun[];
+  projects: AgentActivityProject[];
+  skills: AgentActivitySkill[];
+  skill_usage_source: "observed_load_skill_calls";
+}
+
 export interface AgentBundleFile {
   path: string;
   content: string | null;
@@ -366,6 +408,17 @@ export async function getAgentBundle(
     ? await authenticatedFetch(url, { signal })
     : await authenticatedFetch(url);
   return readJson<AgentBundleDraft>(response);
+}
+
+export async function getAgentActivity(
+  agent_id: string,
+  signal?: AbortSignal,
+): Promise<AgentActivity> {
+  const url = `/v1/agent-bundles/${encodeURIComponent(agent_id)}/activity`;
+  const response = signal
+    ? await authenticatedFetch(url, { signal })
+    : await authenticatedFetch(url);
+  return readJson<AgentActivity>(response);
 }
 
 export async function getAgentFormSchema(signal?: AbortSignal): Promise<AgentFormSchema> {

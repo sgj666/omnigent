@@ -612,7 +612,7 @@ export function WorkspacePanel({
   return (
     <aside
       aria-label={t("workspace")}
-      inert={inert}
+      inert={(inert ? "" : undefined) as unknown as boolean | undefined}
       // Floating desktop surface: 8px from every edge. AppShell reserves the
       // panel width from ChatHeader, so the pane can extend to the top without
       // sitting underneath the existing session action cluster.

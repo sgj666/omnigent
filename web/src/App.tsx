@@ -4,6 +4,7 @@ import { ChatPage } from "@/pages/ChatPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 import { RunInspectorPage } from "@/pages/RunInspectorPage";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
+import { APP_ROUTES } from "@/lib/navigation";
 import { AppShell } from "@/shell/AppShell";
 
 // Lazy-load the accounts pages so the bundle a header / OIDC
@@ -23,9 +24,34 @@ const ApprovePage = lazy(() =>
   import("@/pages/ApprovePage").then((m) => ({ default: m.ApprovePage })),
 );
 const InboxPage = lazy(() => import("@/pages/InboxPage").then((m) => ({ default: m.InboxPage })));
+const AutomationsPage = lazy(() =>
+  import("@/pages/AutomationsPage").then((m) => ({ default: m.AutomationsPage })),
+);
 const TasksPage = lazy(() => import("@/pages/TasksPage").then((m) => ({ default: m.TasksPage })));
+const TaskDetailPage = lazy(() =>
+  import("@/pages/TaskDetailPage").then((m) => ({ default: m.TaskDetailPage })),
+);
 const MultiAgentsPage = lazy(() =>
   import("@/pages/MultiAgentsPage").then((m) => ({ default: m.MultiAgentsPage })),
+);
+const ProjectsPage = lazy(() =>
+  import("@/pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })),
+);
+const ProjectDetailPage = lazy(() =>
+  import("@/pages/ProjectDetailPage").then((m) => ({ default: m.ProjectDetailPage })),
+);
+const UsagePage = lazy(() => import("@/pages/UsagePage").then((m) => ({ default: m.UsagePage })));
+const RuntimePage = lazy(() =>
+  import("@/pages/RuntimePage").then((m) => ({ default: m.RuntimePage })),
+);
+const RuntimeDetailPage = lazy(() =>
+  import("@/pages/RuntimeDetailPage").then((m) => ({ default: m.RuntimeDetailPage })),
+);
+const SkillsPage = lazy(() =>
+  import("@/pages/SkillsPage").then((m) => ({ default: m.SkillsPage })),
+);
+const SkillDetailPage = lazy(() =>
+  import("@/pages/SkillDetailPage").then((m) => ({ default: m.SkillDetailPage })),
 );
 const MultiAgentDetailPage = lazy(() =>
   import("@/pages/MultiAgentDetailPage").then((m) => ({ default: m.MultiAgentDetailPage })),
@@ -126,9 +152,21 @@ function App({ basename }: AppProps = {}) {
         <Route element={<AppShell />}>
           <Route path={prefix || "/"} element={<ChatPage />} />
           <Route path={`${prefix}/c/:conversationId`} element={<ChatPage />} />
-          <Route path={`${prefix}/inbox`} element={<InboxPage />} />
-          <Route path={`${prefix}/tasks`} element={<TasksPage />} />
-          <Route path={`${prefix}/multi-agents`} element={<MultiAgentsPage />} />
+          <Route path={`${prefix}${APP_ROUTES.inbox}`} element={<InboxPage />} />
+          <Route path={`${prefix}${APP_ROUTES.automations}`} element={<AutomationsPage />} />
+          <Route path={`${prefix}${APP_ROUTES.tasks}`} element={<TasksPage />} />
+          <Route path={`${prefix}${APP_ROUTES.tasks}/:taskId`} element={<TaskDetailPage />} />
+          <Route path={`${prefix}${APP_ROUTES.projects}`} element={<ProjectsPage />} />
+          <Route
+            path={`${prefix}${APP_ROUTES.projects}/:projectId`}
+            element={<ProjectDetailPage />}
+          />
+          <Route path={`${prefix}${APP_ROUTES.usage}`} element={<UsagePage />} />
+          <Route path={`${prefix}${APP_ROUTES.runtime}`} element={<RuntimePage />} />
+          <Route path={`${prefix}${APP_ROUTES.runtime}/:hostId`} element={<RuntimeDetailPage />} />
+          <Route path={`${prefix}${APP_ROUTES.multiAgents}`} element={<MultiAgentsPage />} />
+          <Route path={`${prefix}${APP_ROUTES.skills}`} element={<SkillsPage />} />
+          <Route path={`${prefix}${APP_ROUTES.skills}/:skillId`} element={<SkillDetailPage />} />
           <Route path={`${prefix}/multi-agents/new`} element={<MultiAgentDetailPage />} />
           <Route path={`${prefix}/multi-agents/:agentId`} element={<MultiAgentDetailPage />} />
           <Route path={`${prefix}/runs/:runId`} element={<RunInspectorPage />} />

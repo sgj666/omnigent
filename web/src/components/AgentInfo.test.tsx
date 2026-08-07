@@ -139,6 +139,19 @@ const AGENT_WITH_BOTH: Agent = {
 };
 
 describe("AgentInfoButton", () => {
+  it("composes the tooltip and popover triggers without dropping a Radix ref", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    renderButton(AGENT_WITH_BOTH);
+
+    expect(
+      consoleError.mock.calls.some(([message]) =>
+        String(message).includes("Function components cannot be given refs"),
+      ),
+    ).toBe(false);
+    consoleError.mockRestore();
+  });
+
   it("renders nothing when the agent has no tools and no policies", () => {
     // An inert info icon over an empty popover is pure header noise — the
     // button must self-hide when there is nothing to surface.

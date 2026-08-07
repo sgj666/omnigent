@@ -65,6 +65,7 @@ from omnigent.server.performance_metrics import (
     set_request_session_id_for_access_log,
     set_request_user_agent_for_access_log,
 )
+from omnigent.server.routes.agent_activity import create_agent_activity_router
 from omnigent.server.routes.agent_bundles import create_agent_bundles_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
@@ -73,6 +74,7 @@ from omnigent.server.routes.dictation import create_dictation_router
 from omnigent.server.routes.feishu_proxy import create_feishu_proxy_router
 from omnigent.server.routes.harnesses import create_harnesses_router
 from omnigent.server.routes.imports import create_imports_router
+from omnigent.server.routes.inbox_items import create_inbox_items_router
 from omnigent.server.routes.policy_registry import create_policy_registry_router
 from omnigent.server.routes.projects import create_projects_router
 from omnigent.server.routes.run_evaluations import create_run_evaluations_router
@@ -94,6 +96,7 @@ from omnigent.server.routes.sessions import (
     set_server_runner_router,
 )
 from omnigent.server.routes.sharing import create_sharing_router
+from omnigent.server.routes.skills import create_skills_router
 from omnigent.server.routes.teams import (
     SqlAlchemyTeamWorkspaceStore,
     TeamMemoryStore,
@@ -101,10 +104,12 @@ from omnigent.server.routes.teams import (
 )
 from omnigent.server.routes.terminal_attach import create_terminal_attach_router
 from omnigent.server.routes.usage import create_usage_router
+from omnigent.server.routes.work_items import create_work_items_router
 from omnigent.server.routes.workspaces import create_workspaces_router
 from omnigent.server.runner_session_init import RunnerSessionInitializer
 from omnigent.server.scheduled import ScheduledTaskScheduler
 from omnigent.server.ws_origin import WebSocketOriginMiddleware
+from omnigent.skills import GitSkillRepositoryReader, SkillRepositoryReader
 from omnigent.stores import (
     AgentStore,
     ArtifactStore,
@@ -115,11 +120,14 @@ from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import SessionConnectivity, runner_seen_is_fresh
 from omnigent.stores.evaluation_store.sqlalchemy_store import SqlAlchemyEvaluationStore
 from omnigent.stores.host_store import HostStore
+from omnigent.stores.inbox_item_store import InboxItemStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.policy_store import PolicyStore
 from omnigent.stores.project_store import ProjectStore
 from omnigent.stores.run_store.sqlalchemy_store import SqlAlchemyRunStore
 from omnigent.stores.scheduled_task_store import ScheduledTaskStore
+from omnigent.stores.work_item_run_store import WorkItemRunStore
+from omnigent.stores.work_item_store import WorkItemStore
 from omnigent.workspaces.registry import WorkspaceRegistry
 
 _logger = logging.getLogger(__name__)
@@ -768,6 +776,10 @@ def create_app(
     permission_store: PermissionStore | None = None,
     scheduled_task_store: ScheduledTaskStore | None = None,
     project_store: ProjectStore | None = None,
+    work_item_store: WorkItemStore | None = None,
+    work_item_run_store: WorkItemRunStore | None = None,
+    inbox_item_store: InboxItemStore | None = None,
+    skills_reader: SkillRepositoryReader | None = None,
     team_store: TeamMemoryStore | None = None,
     auth_provider: AuthProvider | None = None,
     host_store: HostStore | None = None,
@@ -817,6 +829,16 @@ def create_app(
     :param project_store: Store for first-class projects (owner-private
         containers that group sessions). ``None`` disables the
         ``/v1/projects`` CRUD endpoints.
+    :param work_item_store: Store for owner-private product Tasks. ``None``
+        disables the ``/v1/work-items`` CRUD endpoints.
+    :param work_item_run_store: Store for product TaskRun history and Session
+        lifecycle projection. ``None`` leaves Task CRUD available without
+        execution endpoints.
+    :param inbox_item_store: Store for owner-private persistent Inbox items.
+        ``None`` disables lifecycle notification persistence and its API.
+    :param skills_reader: Read-only Git-backed Skills inventory reader. When
+        omitted, configuration is resolved from ``ORVIA_SKILLS_GIT_*``
+        environment variables without performing network I/O at startup.
     :param auth_provider: Pre-constructed auth provider for
         identity resolution. ``None`` disables auth (anonymous
         access). **Required** when ``permission_store`` is
@@ -1361,8 +1383,16 @@ def create_app(
     # scheduled-task store additionally enables the event-driven
     # run-completion hook (persist_scheduled_run_completion) fired from
     # _publish_status when a fired conversation's turn reaches terminal.
-    session_live_state.configure(conversation_store, scheduled_task_store)
+    session_live_state.configure(
+        conversation_store,
+        scheduled_task_store,
+        work_item_run_store,
+        work_item_store,
+        inbox_item_store,
+        file_store,
+    )
     pending_elicitations.set_count_persist_hook(session_live_state.persist_pending_count)
+    pending_elicitations.set_event_persist_hook(session_live_state.persist_inbox_elicitation)
 
     @app.middleware("http")
     async def _record_server_metrics(
@@ -2103,10 +2133,23 @@ def create_app(
     app.include_router(
         create_usage_router(
             conversation_store,
+            work_item_store=work_item_store,
+            work_item_run_store=work_item_run_store,
+            project_store=project_store,
+            agent_store=agent_store,
+            host_store=host_store,
             auth_provider=auth_provider,
         ),
         prefix="/v1",
         tags=["usage"],
+    )
+    app.include_router(
+        create_skills_router(
+            skills_reader or GitSkillRepositoryReader.from_environment(),
+            auth_provider=auth_provider,
+        ),
+        prefix="/v1",
+        tags=["skills"],
     )
     # Read-only built-in agent discovery (designs/BUILTIN_AGENTS.md).
     # Successor to the removed GET /api/agents list; lists only
@@ -2128,6 +2171,19 @@ def create_app(
         prefix="/v1",
         tags=["agent_bundles"],
     )
+    if work_item_store is not None and work_item_run_store is not None:
+        app.include_router(
+            create_agent_activity_router(
+                agent_store=agent_store,
+                conversation_store=conversation_store,
+                work_item_store=work_item_store,
+                work_item_run_store=work_item_run_store,
+                project_store=project_store,
+                auth_provider=auth_provider,
+            ),
+            prefix="/v1",
+            tags=["agent_activity"],
+        )
     app.include_router(
         create_harnesses_router(auth_provider=auth_provider),
         prefix="/v1",
@@ -2281,10 +2337,38 @@ def create_app(
         app.include_router(
             create_projects_router(
                 project_store=project_store,
+                file_store=file_store,
+                work_item_store=work_item_store,
+                work_item_run_store=work_item_run_store,
                 auth_provider=auth_provider,
             ),
             prefix="/v1",
             tags=["projects"],
+        )
+    if work_item_store is not None:
+        app.include_router(
+            create_work_items_router(
+                work_item_store,
+                work_item_run_store=work_item_run_store,
+                agent_store=agent_store,
+                conversation_store=conversation_store,
+                project_store=project_store,
+                auth_provider=auth_provider,
+                session_gateway_factory=ASGISessionGateway,
+            ),
+            prefix="/v1",
+            tags=["work_items"],
+        )
+    if inbox_item_store is not None:
+        app.include_router(
+            create_inbox_items_router(
+                inbox_item_store,
+                work_item_store=work_item_store,
+                work_item_run_store=work_item_run_store,
+                auth_provider=auth_provider,
+            ),
+            prefix="/v1",
+            tags=["inbox"],
         )
 
     # ── Tunnel lifecycle callbacks (Step 8.5 crash recovery) ───

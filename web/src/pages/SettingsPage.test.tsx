@@ -323,12 +323,12 @@ describe("SettingsPage", () => {
     expect(screen.getByTestId("terminal-theme-auto")).toHaveAttribute("aria-checked", "false");
   });
 
-  it("renders the color theme dropdown, defaults to Omnigent, and applies a palette on change", () => {
+  it("renders the color theme dropdown, defaults to Orvia, and applies a palette on change", () => {
     localStorage.clear();
     renderPage("/settings/appearance");
 
     const select = screen.getByTestId("color-theme-select") as HTMLSelectElement;
-    // Nothing stored → the default (Omnigent) palette is selected and no
+    // Nothing stored → the default (Orvia) palette is selected and no
     // data-theme override is applied to the document.
     expect(select.value).toBe("omni");
     expect(document.documentElement.getAttribute("data-theme")).toBeNull();
@@ -510,7 +510,7 @@ describe("SettingsPage", () => {
     expect(localStorage.getItem("omnigent:ui-font-size")).toBeNull();
     expect(localStorage.getItem("omnigent:code-font-size")).toBeNull();
 
-    // Color theme is back to Omnigent.
+    // Color theme is back to Orvia.
     expect((screen.getByTestId("color-theme-select") as HTMLSelectElement).value).toBe("omni");
     expect(document.documentElement.getAttribute("data-theme")).toBeNull();
 

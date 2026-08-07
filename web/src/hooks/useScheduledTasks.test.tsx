@@ -42,6 +42,7 @@ const TASK: api.ScheduledTask = {
   state: "active",
   lastRunAt: null,
   lastRunStatus: null,
+  lastRunErrorCode: null,
   lastRunConversationId: null,
   nextRunAt: null,
 };

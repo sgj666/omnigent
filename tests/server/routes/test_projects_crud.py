@@ -111,6 +111,23 @@ async def test_list_projects(project_client: httpx.AsyncClient) -> None:
     body = resp.json()
     assert body["object"] == "list"
     assert {p["name"] for p in body["data"]} == {"A", "B"}
+    assert {p["session_count"] for p in body["data"]} == {0}
+
+
+async def test_list_projects_reports_exact_session_counts(
+    project_client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Collection rows include exact first-class member counts."""
+    counted = (await project_client.post("/v1/projects", json={"name": "Counted"})).json()
+    empty = (await project_client.post("/v1/projects", json={"name": "Empty"})).json()
+    store = SqlAlchemyConversationStore(db_uri)
+    store.create_conversation(project_id=counted["id"])
+    store.create_conversation(project_id=counted["id"])
+
+    rows = (await project_client.get("/v1/projects")).json()["data"]
+    counts = {row["id"]: row["session_count"] for row in rows}
+    assert counts == {counted["id"]: 2, empty["id"]: 0}
 
 
 async def test_get_project(project_client: httpx.AsyncClient) -> None:
@@ -202,6 +219,23 @@ async def test_delete_project(project_client: httpx.AsyncClient) -> None:
 
     second_delete = await project_client.delete(f"/v1/projects/{created['id']}")
     assert second_delete.status_code == 404
+
+
+async def test_delete_project_unfiles_member_sessions(
+    project_client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Deleting the container preserves its sessions and clears membership."""
+    project = (await project_client.post("/v1/projects", json={"name": "Doomed"})).json()
+    store = SqlAlchemyConversationStore(db_uri)
+    session = store.create_conversation(project_id=project["id"])
+
+    resp = await project_client.delete(f"/v1/projects/{project['id']}")
+
+    assert resp.status_code == 200
+    preserved = store.get_conversation(session.id)
+    assert preserved is not None
+    assert preserved.project_id is None
 
 
 async def test_session_projects_unions_first_class_and_labels(

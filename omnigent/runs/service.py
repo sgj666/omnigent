@@ -54,6 +54,18 @@ class RootSessionRequest:
     bundle_location: str
 
 
+@dataclass(frozen=True)
+class TaskSessionRequest:
+    """Input for creating a product TaskRun's real Session."""
+
+    agent_id: str
+    title: str
+    project_id: str | None
+    runtime_id: str
+    workspace: str
+    labels: dict[str, str]
+
+
 SessionCreator = Callable[[RootSessionRequest, str], Awaitable[str]]
 SessionInputSender = Callable[[str, SessionEventInput, str], Awaitable[None]]
 SessionCleaner = Callable[[str, str], Awaitable[None]]

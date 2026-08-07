@@ -3,7 +3,7 @@
   "title": "账户",
   "auth": {
     "signIn": "登录",
-    "welcome": "欢迎使用 Omnigent。",
+    "welcome": "欢迎使用 Orvia。",
     "username": "用户名",
     "password": "密码",
     "machineUsernameHint": "首次安装时，用户名默认使用当前机器登录名（{{command}} 的输出），除非管理员另行设置。",
@@ -12,7 +12,7 @@
     "signingIn": "正在登录…",
     "firstAdminHint": "首次安装时，请自行设置首个管理员的密码，系统不会自动生成凭据。全新实例会显示“创建管理员”表单；也可以通过 {{envVar}} 预置密码。",
     "createAccount": "创建账户",
-    "invitedDescription": "你受邀加入此 Omnigent 服务器。",
+    "invitedDescription": "你受邀加入此 Orvia 服务器。",
     "inviteTokenMissing": "此页面需要 URL 中包含邀请 Token，请确认打开的是管理员发送给你的链接。",
     "usernameRule": "小写字母、数字、点号、连字符、下划线（或小写邮箱地址）",
     "usernameHint": "可使用小写字母、数字、点号、连字符、下划线，或小写邮箱地址。",

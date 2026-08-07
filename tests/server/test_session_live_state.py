@@ -283,6 +283,65 @@ class _FakeScheduledTaskStore:
         return type("_Run", (), {"id": run_id, "status": status})()
 
 
+class _FakeWorkItemRunStore:
+    """TaskRun-store stand-in recording Session lifecycle projections."""
+
+    def __init__(self) -> None:
+        self.transitions: list[tuple[str, str, str | None, str | None, bool]] = []
+
+    def transition_for_session(
+        self,
+        session_id: str,
+        *,
+        state: str,
+        failure_code: str | None = None,
+        failure_message: str | None = None,
+        failure_retryable: bool = False,
+    ) -> None:
+        self.transitions.append(
+            (session_id, state, failure_code, failure_message, failure_retryable)
+        )
+
+
+def test_work_item_run_status_projects_waiting_and_failure() -> None:
+    run_store = _FakeWorkItemRunStore()
+    session_live_state.configure(
+        _RecordingStore(),
+        work_item_run_store=run_store,  # type: ignore[arg-type]
+    )
+    try:
+        session_live_state.persist_work_item_run_status("conv_1", "waiting")
+        session_live_state.persist_work_item_run_status(
+            "conv_1",
+            "failed",
+            error_code="runner_unavailable",
+            error_message="offline",
+        )
+        _wait_until(lambda: len(run_store.transitions) == 2)
+    finally:
+        session_live_state.configure(None)
+
+    assert run_store.transitions == [
+        ("conv_1", "waiting", None, None, False),
+        ("conv_1", "failed", "runner_unavailable", "offline", True),
+    ]
+
+
+def test_work_item_run_explicit_stop_projects_cancelled() -> None:
+    run_store = _FakeWorkItemRunStore()
+    session_live_state.configure(
+        _RecordingStore(),
+        work_item_run_store=run_store,  # type: ignore[arg-type]
+    )
+    try:
+        session_live_state.persist_work_item_run_cancelled("conv_1")
+        _wait_until(lambda: bool(run_store.transitions))
+    finally:
+        session_live_state.configure(None)
+
+    assert run_store.transitions == [("conv_1", "cancelled", None, None, False)]
+
+
 def test_scheduled_run_completion_idle_transitions_to_succeeded() -> None:
     """A terminal ``idle`` edge flips the conversation's running run to succeeded."""
     sched = _FakeScheduledTaskStore({"conv_1": "run_1"})

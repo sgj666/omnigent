@@ -835,6 +835,157 @@ class SqlProject(OmnigentBase):
     )
 
 
+class SqlWorkItem(OmnigentBase):
+    """A durable product Task shown in the Orvia Task board."""
+
+    __tablename__ = "work_items"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    project_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="2")
+    assignee_agent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    due_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    creator_kind: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    created_by_agent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2, 3, 4, 5, 6, 7, 8)", name="ck_work_items_state"),
+        CheckConstraint("priority IN (1, 2, 3, 4)", name="ck_work_items_priority"),
+        CheckConstraint("creator_kind IN (1, 2, 3)", name="ck_work_items_creator_kind"),
+        CheckConstraint("version >= 1", name="ck_work_items_version"),
+        Index(
+            "ix_work_items_owner_state",
+            "workspace_id",
+            "owner_user_id",
+            "state",
+            "updated_at",
+            "id",
+        ),
+        Index(
+            "ix_work_items_project",
+            "workspace_id",
+            "project_id",
+            "state",
+            "id",
+        ),
+    )
+
+
+class SqlWorkItemRun(OmnigentBase):
+    """An auditable execution attempt for a product Task."""
+
+    __tablename__ = "work_item_runs"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    work_item_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    agent_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    runtime_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    workspace: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    trigger: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
+    retry_of_run_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    queued_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    started_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    finished_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failure_retryable: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
+    artifact_refs: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
+    usage_refs: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
+
+    __table_args__ = (
+        CheckConstraint("state IN (1, 2, 3, 4, 5, 6)", name="ck_work_item_runs_state"),
+        CheckConstraint("trigger IN (1, 2)", name="ck_work_item_runs_trigger"),
+        Index(
+            "ix_work_item_runs_task",
+            "workspace_id",
+            "owner_user_id",
+            "work_item_id",
+            "queued_at",
+            "id",
+        ),
+        Index(
+            "ix_work_item_runs_session",
+            "workspace_id",
+            "session_id",
+            unique=True,
+        ),
+    )
+
+
+class SqlInboxItem(OmnigentBase):
+    """A durable owner-private product Inbox notification."""
+
+    __tablename__ = "inbox_items"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    kind: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    dedupe_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    work_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    work_item_run_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    source_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_url: Mapped[str] = mapped_column(Text, nullable=False)
+    action_required: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    read_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resolved_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("kind IN (1, 2, 3, 4, 5, 6, 7, 8)", name="ck_inbox_items_kind"),
+        Index(
+            "ix_inbox_items_owner_created",
+            "workspace_id",
+            "owner_user_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_inbox_items_dedupe",
+            "workspace_id",
+            "dedupe_key",
+            unique=True,
+        ),
+    )
+
+
 class SqlConversation(ConversationBase):
     """
     SQLAlchemy model for the ``conversations`` table.

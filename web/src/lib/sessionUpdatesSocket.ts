@@ -25,6 +25,8 @@ export type SessionUpdatesFrame =
   | { type: "changed"; items: SessionListWireItem[] }
   | { type: "removed"; ids: string[] }
   | { type: "hosts_changed" }
+  | { type: "inbox_changed" }
+  | { type: "work_items_changed" }
   | { type: "heartbeat" };
 
 type FrameListener = (frame: SessionUpdatesFrame) => void;

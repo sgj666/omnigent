@@ -36,6 +36,7 @@ import {
 } from "@/lib/sessionListCache";
 import { setLegacyPinnedConversationId } from "@/shell/sidebarNav";
 import { stopSession } from "@/lib/sessionsApi";
+import { projectQueryKeys } from "@/lib/projectQueries";
 import {
   createProject as apiCreateProject,
   deleteProject as apiDeleteProject,
@@ -63,7 +64,7 @@ export const DISCONNECTED_STREAM_REFETCH_INTERVAL_MS = 45_000;
  * mutations that actually change archived membership or a project label
  * invalidate this key explicitly instead.
  */
-const ARCHIVED_PROJECT_NAMES_KEY = ["archived-project-names"] as const;
+const ARCHIVED_PROJECT_NAMES_KEY = projectQueryKeys.archivedNames;
 
 export interface UseConversationsOptions {
   reconcileWhileConnected?: boolean;
@@ -1112,7 +1113,7 @@ export interface ProjectSummary {
  */
 export function useProjects() {
   return useQuery<ProjectSummary[]>({
-    queryKey: ["projects"],
+    queryKey: projectQueryKeys.all,
     queryFn: async () => {
       const res = await authenticatedFetch("/v1/sessions/projects");
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -1195,7 +1196,7 @@ export function useArchivedProjectNames() {
  * see no existing project and both POST; the second gets a 409. Treat that as
  * benign — re-list and return the id the winner created.
  */
-async function resolveOrCreateProjectId(name: string): Promise<string> {
+export async function resolveOrCreateProjectId(name: string): Promise<string> {
   const projects = await apiListProjects();
   const existing = projects.find((p) => p.name === name);
   if (existing) return existing.id;
@@ -1299,7 +1300,7 @@ export function useMoveToProject() {
     // insert a deep row (outside the flat window) into the first page.
     let visibleOutsideOldFolders = inWindow;
     if (targetProjectName !== null) {
-      const targetKey = ["project-sessions", targetProjectName];
+      const targetKey = projectQueryKeys.sessions(targetProjectName);
       const targetData = queryClient.getQueryData<ConversationsInfiniteData>(targetKey);
       if (targetData) {
         const { data: merged, found } = mergeItemsIntoPages(
@@ -1348,7 +1349,7 @@ export function useMoveToProject() {
         project === ""
           ? null
           : (queryClient
-              .getQueryData<ProjectSummary[]>(["projects"])
+              .getQueryData<ProjectSummary[]>(projectQueryKeys.all)
               ?.find((p) => p.name === project)?.id ?? undefined);
       if (target === undefined) return undefined;
       // Cancel in-flight list refetches so a response that started before the
@@ -1480,7 +1481,7 @@ async function fetchProjectSessionsPage(
  */
 export function useProjectSessions(project: string, enabled: boolean) {
   return useInfiniteQuery({
-    queryKey: ["project-sessions", project],
+    queryKey: projectQueryKeys.sessions(project),
     queryFn: ({ pageParam }) => fetchProjectSessionsPage(project, pageParam as string | undefined),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) =>
@@ -1645,7 +1646,7 @@ export function useRenameProject() {
  */
 export function useProjectConfig(id: string | null) {
   return useQuery<ProjectConfig>({
-    queryKey: ["project-config", id],
+    queryKey: projectQueryKeys.config(id),
     queryFn: async () => (await apiGetProject(id as string)).config ?? {},
     enabled: id !== null,
     staleTime: 30_000,
@@ -1679,20 +1680,23 @@ export function useUpdateProjectConfig() {
       // — the prefill settles once and would otherwise latch onto the stale
       // cached value during the 30s staleTime window while a refetch is still
       // in flight.
-      queryClient.setQueryData<ProjectConfig>(["project-config", project.id], project.config ?? {});
+      queryClient.setQueryData<ProjectConfig>(
+        projectQueryKeys.config(project.id),
+        project.config ?? {},
+      );
       // Upsert the projects list too, so a just-promoted label-only folder
       // resolves to its NEW first-class id immediately (name → id is how the
       // composer keys the config lookup); a stale `id: null` would resolve the
       // config to `{}` and drop the saved defaults on that first visit.
-      queryClient.setQueryData<ProjectSummary[]>(["projects"], (prev) => {
+      queryClient.setQueryData<ProjectSummary[]>(projectQueryKeys.all, (prev) => {
         if (!prev) return prev;
         const summary = { id: project.id, name: project.name };
         return prev.some((p) => p.name === project.name)
           ? prev.map((p) => (p.name === project.name ? summary : p))
           : [...prev, summary];
       });
-      void queryClient.invalidateQueries({ queryKey: ["project-config"] });
-      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      void queryClient.invalidateQueries({ queryKey: projectQueryKeys.configRoot });
+      void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
     },
   });
 }

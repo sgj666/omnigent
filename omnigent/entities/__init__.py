@@ -30,6 +30,7 @@ from omnigent.entities.feishu import (
     FeishuPairing,
 )
 from omnigent.entities.file import StoredFile
+from omnigent.entities.inbox_item import InboxItem, InboxItemKind
 from omnigent.entities.pagination import PagedList
 from omnigent.entities.permission import ResolvedAccess, SessionPermission
 from omnigent.entities.policy import Policy
@@ -51,6 +52,8 @@ from omnigent.entities.session_resources import (
     resolve_terminal_entry_by_resource_id,
 )
 from omnigent.entities.team import AgentProfile, AgentRole, Team, TeamStatus
+from omnigent.entities.work_item import WorkItem
+from omnigent.entities.work_item_run import WorkItemRun
 from omnigent.entities.workspace_bundle import RepositorySpec, WorkspaceBundle
 
 __all__ = [
@@ -76,6 +79,8 @@ __all__ = [
     "FeishuPairing",
     "FunctionCallData",
     "FunctionCallOutputData",
+    "InboxItem",
+    "InboxItemKind",
     "ItemData",
     "LoadedAgent",
     "MessageData",
@@ -102,6 +107,8 @@ __all__ = [
     "Team",
     "TeamStatus",
     "TerminalCommandData",
+    "WorkItem",
+    "WorkItemRun",
     "WorkspaceBundle",
     "filter_resources_by_type",
     "get_resource_by_id",

@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  getHost,
   useDetectedCredentials,
   useHostModelOptions,
   useHosts,
@@ -41,6 +42,21 @@ afterEach(() => {
 });
 
 describe("useHosts", () => {
+  it("fetches one runtime host by encoded id", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockResponse({
+        host_id: "host/one",
+        name: "Laptop",
+        owner: "alice",
+        status: "online",
+        configured_harnesses: { "codex-native": true },
+      }),
+    );
+
+    await expect(getHost("host/one")).resolves.toMatchObject({ name: "Laptop" });
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/hosts/host%2Fone");
+  });
+
   it("does not fetch while disabled", async () => {
     renderHook(() => useHosts({ enabled: false }), { wrapper });
     await Promise.resolve();

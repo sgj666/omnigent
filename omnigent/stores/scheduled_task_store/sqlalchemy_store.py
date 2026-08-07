@@ -480,26 +480,26 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
             rows = session.execute(stmt).scalars().all()
             return [_run_to_entity(r) for r in rows]
 
-    def list_latest_run_status_for_tasks(
+    def list_latest_runs_for_tasks(
         self,
         scheduled_task_ids: builtins.list[str],
-    ) -> dict[str, str]:
-        """Return ``{task_id: latest_run_status}`` for the given tasks.
+    ) -> dict[str, ScheduledTaskRun]:
+        """Return ``{task_id: latest_run}`` for the given tasks.
 
         One windowed query: ``row_number()`` partitioned by ``scheduled_task_id``
         and ordered ``scheduled_at DESC, id DESC`` (the same order as
-        :meth:`list_runs`) picks each task's single most-recent run, decoded to
-        its status name. Tasks with no runs are absent from the map. Both SQLite
-        (>= 3.25) and PostgreSQL support window functions, matching the
-        conversation store's ``row_number()`` usage.
+        :meth:`list_runs`) picks each task's single most-recent run. Tasks with
+        no runs are absent from the map. Both SQLite (>= 3.25) and PostgreSQL
+        support window functions, matching the conversation store's
+        ``row_number()`` usage.
         """
         if not scheduled_task_ids:
             return {}
         with self._session() as session:
             ranked = (
                 select(
+                    SqlScheduledTaskRun.id.label("run_id"),
                     SqlScheduledTaskRun.scheduled_task_id.label("task_id"),
-                    SqlScheduledTaskRun.status.label("status"),
                     func.row_number()
                     .over(
                         partition_by=SqlScheduledTaskRun.scheduled_task_id,
@@ -514,6 +514,10 @@ class SqlAlchemyScheduledTaskStore(ScheduledTaskStore):
                 .where(SqlScheduledTaskRun.scheduled_task_id.in_(scheduled_task_ids))
                 .subquery()
             )
-            stmt = select(ranked.c.task_id, ranked.c.status).where(ranked.c.row_num == 1)
-            rows = session.execute(stmt).all()
-            return {task_id: decode_scheduled_task_run_status(status) for task_id, status in rows}
+            stmt = (
+                select(SqlScheduledTaskRun)
+                .join(ranked, SqlScheduledTaskRun.id == ranked.c.run_id)
+                .where(ranked.c.row_num == 1)
+            )
+            rows = session.execute(stmt).scalars().all()
+            return {row.scheduled_task_id: _run_to_entity(row) for row in rows}

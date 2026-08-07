@@ -23,7 +23,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from omnigent.entities import MessageData, NewConversationItem
+from omnigent.entities import Conversation, MessageData, NewConversationItem
 from omnigent.errors import OmnigentError
 from omnigent.server.auth import (
     LEVEL_EDIT,
@@ -44,6 +44,8 @@ from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStor
 ALICE = "alice@example.com"
 BOB = "bob@example.com"
 AGENT_ID = "087b7cb7ac30abf4debfaa578d052ec6"
+BUNDLE_DIGEST = "a" * 64
+BUNDLE_LOCATION = f"{AGENT_ID}/{BUNDLE_DIGEST}"
 
 
 def _ensure_agent(db_uri: str) -> None:
@@ -52,8 +54,18 @@ def _ensure_agent(db_uri: str) -> None:
         agent_store.create(
             agent_id=AGENT_ID,
             name="test-agent",
-            bundle_location=f"{AGENT_ID}/bundle",
+            bundle_location=BUNDLE_LOCATION,
         )
+
+
+def _create_session_row(db_uri: str, *, title: str) -> Conversation:
+    return SqlAlchemyConversationStore(db_uri).create_conversation(
+        title=title,
+        agent_id=AGENT_ID,
+        agent_bundle_version=1,
+        agent_bundle_digest=BUNDLE_DIGEST,
+        agent_bundle_location=BUNDLE_LOCATION,
+    )
 
 
 # ── Single-user mode (no auth) ───────────────────────────────────────────
@@ -87,7 +99,7 @@ def _single_user_app(db_uri: str) -> FastAPI:
 def test_file_and_unfile_session_single_user(db_uri: str) -> None:
     """PATCH project_id files the session; project_id="" unfiles it."""
     _ensure_agent(db_uri)
-    conv = SqlAlchemyConversationStore(db_uri).create_conversation(title="s", agent_id=AGENT_ID)
+    conv = _create_session_row(db_uri, title="s")
     client = TestClient(_single_user_app(db_uri))
 
     project = client.post("/v1/projects", json={"name": "Work"}).json()
@@ -112,10 +124,41 @@ def test_file_and_unfile_session_single_user(db_uri: str) -> None:
     assert conv.id in [s["id"] for s in unfiled.json()["data"]]
 
 
+def test_create_session_with_project_membership(db_uri: str) -> None:
+    """POST persists project membership with the initial session metadata."""
+    _ensure_agent(db_uri)
+    client = TestClient(_single_user_app(db_uri))
+    project = client.post("/v1/projects", json={"name": "Work"}).json()
+
+    resp = client.post(
+        "/v1/sessions",
+        json={"agent_id": AGENT_ID, "project_id": project["id"]},
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["project_id"] == project["id"]
+    persisted = SqlAlchemyConversationStore(db_uri).get_conversation(resp.json()["id"])
+    assert persisted is not None
+    assert persisted.project_id == project["id"]
+
+
+def test_create_session_rejects_unknown_project(db_uri: str) -> None:
+    """POST validates project ownership/existence before creating a session."""
+    _ensure_agent(db_uri)
+    client = TestClient(_single_user_app(db_uri))
+
+    resp = client.post(
+        "/v1/sessions",
+        json={"agent_id": AGENT_ID, "project_id": "f" * 32},
+    )
+
+    assert resp.status_code == 404
+
+
 def test_omitting_project_id_leaves_membership_unchanged(db_uri: str) -> None:
     """A PATCH that doesn't mention project_id must not clear the filing."""
     _ensure_agent(db_uri)
-    conv = SqlAlchemyConversationStore(db_uri).create_conversation(title="s", agent_id=AGENT_ID)
+    conv = _create_session_row(db_uri, title="s")
     client = TestClient(_single_user_app(db_uri))
     project = client.post("/v1/projects", json={"name": "Work"}).json()
     client.patch(f"/v1/sessions/{conv.id}", json={"project_id": project["id"]})
@@ -130,7 +173,7 @@ def test_patch_response_omits_items(db_uri: str) -> None:
     """PATCH returns a slim snapshot: items stay empty even when the session has some."""
     _ensure_agent(db_uri)
     store = SqlAlchemyConversationStore(db_uri)
-    conv = store.create_conversation(title="s", agent_id=AGENT_ID)
+    conv = _create_session_row(db_uri, title="s")
     store.append(
         conv.id,
         [
@@ -158,7 +201,7 @@ def test_patch_response_omits_items(db_uri: str) -> None:
 def test_file_into_nonexistent_project_404(db_uri: str) -> None:
     """Filing into a project id that doesn't exist is rejected (404)."""
     _ensure_agent(db_uri)
-    conv = SqlAlchemyConversationStore(db_uri).create_conversation(title="s", agent_id=AGENT_ID)
+    conv = _create_session_row(db_uri, title="s")
     client = TestClient(_single_user_app(db_uri))
     resp = client.patch(
         f"/v1/sessions/{conv.id}", json={"project_id": "ffffffffffffffffffffffffffffffff"}
@@ -170,7 +213,7 @@ def test_explicit_null_project_id_is_rejected(db_uri: str) -> None:
     """A present-but-null project_id is invalid: only "" unfiles, and omitting
     the field leaves membership unchanged — so null must not silently unfile."""
     _ensure_agent(db_uri)
-    conv = SqlAlchemyConversationStore(db_uri).create_conversation(title="s", agent_id=AGENT_ID)
+    conv = _create_session_row(db_uri, title="s")
     client = TestClient(_single_user_app(db_uri))
     project = client.post("/v1/projects", json={"name": "Work"}).json()
     client.patch(f"/v1/sessions/{conv.id}", json={"project_id": project["id"]})
@@ -195,8 +238,8 @@ def test_project_filter_excludes_other_projects(db_uri: str) -> None:
     """?project=<name> returns only that project's members, not another's."""
     _ensure_agent(db_uri)
     conv_store = SqlAlchemyConversationStore(db_uri)
-    a = conv_store.create_conversation(title="a", agent_id=AGENT_ID)
-    b = conv_store.create_conversation(title="b", agent_id=AGENT_ID)
+    a = _create_session_row(db_uri, title="a")
+    b = _create_session_row(db_uri, title="b")
     client = TestClient(_single_user_app(db_uri))
     p1 = client.post("/v1/projects", json={"name": "P1"}).json()
     client.post("/v1/projects", json={"name": "P2"})
@@ -214,8 +257,8 @@ def test_project_filter_dual_reads_label_and_entity(db_uri: str) -> None:
     label member surface together (the dual-read OR)."""
     _ensure_agent(db_uri)
     conv_store = SqlAlchemyConversationStore(db_uri)
-    entity_member = conv_store.create_conversation(title="entity", agent_id=AGENT_ID)
-    label_member = conv_store.create_conversation(title="label", agent_id=AGENT_ID)
+    entity_member = _create_session_row(db_uri, title="entity")
+    label_member = _create_session_row(db_uri, title="label")
     client = TestClient(_single_user_app(db_uri))
     project = client.post("/v1/projects", json={"name": "Work"}).json()
     client.patch(f"/v1/sessions/{entity_member.id}", json={"project_id": project["id"]})
@@ -261,7 +304,7 @@ def _multi_user_app(db_uri: str) -> FastAPI:
 
 def _seed_owned_session(db_uri: str, owner: str, title: str = "s") -> str:
     """Create a session owned by ``owner`` (owner-level grant). Returns its id."""
-    conv = SqlAlchemyConversationStore(db_uri).create_conversation(title=title, agent_id=AGENT_ID)
+    conv = _create_session_row(db_uri, title=title)
     perms = SqlAlchemyPermissionStore(db_uri)
     perms.ensure_user(owner)
     perms.grant(owner, conv.id, LEVEL_OWNER)
@@ -305,6 +348,21 @@ def test_cannot_file_into_another_owners_project(db_uri: str) -> None:
     # Still unfiled — the rejected filing had no side effect.
     snap = client.get(f"/v1/sessions/{conv_id}", headers=_hdr(ALICE))
     assert snap.json()["project_id"] is None
+
+
+def test_cannot_create_session_in_another_owners_project(db_uri: str) -> None:
+    """Create-time membership uses the same owner boundary as PATCH."""
+    _ensure_agent(db_uri)
+    client = TestClient(_multi_user_app(db_uri))
+    bob_project = client.post("/v1/projects", json={"name": "Bob"}, headers=_hdr(BOB)).json()
+
+    resp = client.post(
+        "/v1/sessions",
+        json={"agent_id": AGENT_ID, "project_id": bob_project["id"]},
+        headers=_hdr(ALICE),
+    )
+
+    assert resp.status_code == 404
 
 
 def test_editor_cannot_file_shared_session(db_uri: str) -> None:

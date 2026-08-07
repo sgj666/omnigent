@@ -18,6 +18,8 @@ import {
   AlertTriangleIcon,
   ArchiveIcon,
   ArchiveRestoreIcon,
+  BarChart3Icon,
+  BookOpenIcon,
   CheckIcon,
   CheckIcon as CheckMarkIcon,
   ChevronLeftIcon,
@@ -68,7 +70,7 @@ import {
 } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate, useParams, useRebasePath } from "@/lib/routing";
-import omnigentWordmark from "@/assets/omnigent-wordmark.svg";
+import orviaMark from "@/assets/orvia-mark.svg";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -135,6 +137,7 @@ import { useSessionRunnerOnline } from "@/hooks/RunnerHealthProvider";
 import { useActiveRootSessionId } from "@/hooks/useSession";
 import { useCommentInbox } from "@/hooks/useCommentInbox";
 import { sumPendingApprovals } from "@/lib/inbox";
+import { usePersistentInboxItems } from "@/lib/inboxApi";
 import { isSessionStoppable } from "@/lib/sessionStop";
 import { getCurrentUserId, resolveIdentity } from "@/lib/identity";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
@@ -154,6 +157,7 @@ import { usePinnedSessionHotkeys } from "@/hooks/usePinnedSessionHotkeys";
 import { useTranslation } from "react-i18next";
 import "@/i18n";
 import { isCurrentServerLocal } from "@/lib/serverOrigin";
+import { APP_ROUTES, getGlobalNavigationItem } from "@/lib/navigation";
 import { NewProjectButton } from "./NewProjectButton";
 import { SettingsSidebarBody, useSettingsRoute, useTrackSettingsReturn } from "./settingsNav";
 import {
@@ -263,20 +267,32 @@ interface SidebarProps {
 function useActiveNavItem(): {
   isNewChatPage: boolean;
   isInboxPage: boolean;
+  isAutomationsPage: boolean;
   isTasksPage: boolean;
   isMultiAgentsPage: boolean;
+  isSkillsPage: boolean;
+  isProjectsPage: boolean;
+  isRuntimePage: boolean;
+  isUsagePage: boolean;
 } {
   const { conversationId: activeConversationId } = useParams<{ conversationId: string }>();
   const pathname = useLocation().pathname.replace(/\/+$/, "") || "/";
   const rebasePath = useRebasePath();
   const appRoot = rebasePath("/").replace(/\/+$/, "");
-  const multiAgentsPath = `${appRoot}/multi-agents`;
+  const multiAgentsPath = `${appRoot}${APP_ROUTES.multiAgents}`;
   const hasOneDescendantSegment = (root: string) => {
     const descendant = pathname.slice(root.length + 1);
     return pathname.startsWith(`${root}/`) && descendant !== "" && !descendant.includes("/");
   };
-  const isInboxPage = pathname === `${appRoot}/inbox`;
-  const isTasksPage = pathname === `${appRoot}/tasks`;
+  const isInboxPage = pathname === `${appRoot}${APP_ROUTES.inbox}`;
+  const isAutomationsPage = pathname === `${appRoot}${APP_ROUTES.automations}`;
+  const tasksPath = `${appRoot}${APP_ROUTES.tasks}`;
+  const isTasksPage = pathname === tasksPath || hasOneDescendantSegment(tasksPath);
+  const isProjectsPage = pathname === `${appRoot}${APP_ROUTES.projects}`;
+  const isRuntimePage = pathname === `${appRoot}${APP_ROUTES.runtime}`;
+  const isUsagePage = pathname === `${appRoot}${APP_ROUTES.usage}`;
+  const skillsPath = `${appRoot}${APP_ROUTES.skills}`;
+  const isSkillsPage = pathname === skillsPath || hasOneDescendantSegment(skillsPath);
   const isMultiAgentsPage =
     pathname === multiAgentsPath ||
     hasOneDescendantSegment(multiAgentsPath) ||
@@ -284,8 +300,26 @@ function useActiveNavItem(): {
   // Exclude top-level tools: they also have no `:conversationId`, so they
   // would otherwise light up the "New session" button.
   const isNewChatPage =
-    activeConversationId == null && !isInboxPage && !isTasksPage && !isMultiAgentsPage;
-  return { isNewChatPage, isInboxPage, isTasksPage, isMultiAgentsPage };
+    activeConversationId == null &&
+    !isInboxPage &&
+    !isAutomationsPage &&
+    !isTasksPage &&
+    !isMultiAgentsPage &&
+    !isSkillsPage &&
+    !isProjectsPage &&
+    !isRuntimePage &&
+    !isUsagePage;
+  return {
+    isNewChatPage,
+    isInboxPage,
+    isAutomationsPage,
+    isTasksPage,
+    isMultiAgentsPage,
+    isSkillsPage,
+    isProjectsPage,
+    isRuntimePage,
+    isUsagePage,
+  };
 }
 
 /**
@@ -525,7 +559,9 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
   // page lists. Comment queries are shared with the page/FileViewer
   // (same ["comments", id] keys), so this adds no duplicate fetches.
   const unseenComments = useCommentInbox(loadedRows).items.length;
-  const inboxCount = pendingApprovals + unseenComments;
+  const persistentInbox = usePersistentInboxItems();
+  const inboxCount =
+    Math.max(persistentInbox.data?.unread_count ?? 0, pendingApprovals) + unseenComments;
 
   // Click handler for conversation-row Links in the sidebar. The Link
   // handles navigation natively, so cmd/ctrl/middle-click opens new
@@ -540,7 +576,17 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
   }
 
   // Which top-level nav button to highlight for the current route.
-  const { isNewChatPage, isInboxPage, isTasksPage, isMultiAgentsPage } = useActiveNavItem();
+  const {
+    isNewChatPage,
+    isInboxPage,
+    isAutomationsPage,
+    isTasksPage,
+    isMultiAgentsPage,
+    isSkillsPage,
+    isProjectsPage,
+    isRuntimePage,
+    isUsagePage,
+  } = useActiveNavItem();
 
   // On /settings the card keeps its chrome but swaps the conversation list
   // for the settings section nav (see settingsNav.tsx) — entering settings
@@ -674,7 +720,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
       data-collapsed={!effectiveOpen || undefined}
       // Match the keyboard-focus story: when closed, the sidebar's
       // children shouldn't receive tabs.
-      inert={!effectiveOpen}
+      inert={(!effectiveOpen ? "" : undefined) as unknown as boolean | undefined}
     >
       {/* Right-edge resize handle (desktop only), mirroring the right rail's
           left-edge handle. Hidden on mobile, where the sidebar is a
@@ -698,14 +744,15 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
             <Link
               to="/"
               onClick={onNavClick}
-              className="rounded-none transition-opacity duration-200 ease-[var(--ease-otto)] hover:opacity-70"
+              className="flex items-center gap-2 rounded-sm transition-opacity duration-200 ease-[var(--ease-otto)] hover:opacity-70"
             >
               <img
-                src={omnigentWordmark}
-                alt="Omnigent"
+                src={orviaMark}
+                alt="Orvia"
                 data-testid="sidebar-wordmark"
-                className="h-[15px] w-auto shrink-0 translate-y-px dark:invert"
+                className="size-7 shrink-0"
               />
+              <span className="text-[15px] font-semibold tracking-[-0.02em]">Orvia</span>
             </Link>
             <div className="flex items-center gap-1" data-testid="sidebar-header-actions">
               <Tooltip>
@@ -799,6 +846,21 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                 {t("shell.newSession")}
               </Link>
             </Button>
+            <Button
+              asChild
+              className={cn(
+                "sidebar-compact-text h-7 w-full justify-start gap-2 rounded-[var(--radius-otto-button)] border-0 px-2 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isTasksPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              variant="ghost"
+              data-testid="tasks-nav"
+            >
+              <Link to={APP_ROUTES.tasks} onClick={onNavClick}>
+                <ListChecksIcon className="size-3.5 text-muted-foreground" />
+                {t(getGlobalNavigationItem("tasks").labelKey)}
+              </Link>
+            </Button>
             {/* Keep Scheduled in the primary nav group with the same row treatment as New session. */}
             <Button
               asChild
@@ -808,14 +870,29 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                 // all match post-refactor.
                 "sidebar-compact-text h-7 w-full justify-start gap-2 rounded-[var(--radius-otto-button)] border-0 px-2 font-normal",
                 SIDEBAR_HOVER_HIGHLIGHT,
-                isTasksPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+                isAutomationsPage && SIDEBAR_ACTIVE_HIGHLIGHT,
               )}
               variant="ghost"
               data-testid="scheduled-tasks-nav"
             >
-              <Link to="/tasks" onClick={onNavClick}>
+              <Link to={APP_ROUTES.automations} onClick={onNavClick}>
                 <ClockIcon className="size-3.5 text-muted-foreground" />
-                {t("shell.automations")}
+                {t(getGlobalNavigationItem("automations").labelKey)}
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className={cn(
+                "sidebar-compact-text h-7 w-full justify-start gap-2 rounded-[var(--radius-otto-button)] border-0 px-2 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isProjectsPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              data-testid="projects-nav"
+            >
+              <Link to={APP_ROUTES.projects} onClick={onNavClick}>
+                <FolderIcon className="size-3.5 text-muted-foreground" />
+                {t(getGlobalNavigationItem("projects").labelKey)}
               </Link>
             </Button>
             <Button
@@ -828,9 +905,9 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
               )}
               data-testid="inbox-button"
             >
-              <Link to="/inbox" onClick={onNavClick}>
+              <Link to={APP_ROUTES.inbox} onClick={onNavClick}>
                 <InboxIcon className="size-3.5 text-muted-foreground" />
-                {t("shell.inbox")}
+                {t(getGlobalNavigationItem("inbox").labelKey)}
                 {inboxCount > 0 && (
                   <span
                     aria-label={
@@ -855,9 +932,54 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
               )}
               data-testid="multi-agents-nav"
             >
-              <Link to="/multi-agents" onClick={onNavClick}>
+              <Link to={APP_ROUTES.multiAgents} onClick={onNavClick}>
                 <UsersIcon className="size-3.5 text-muted-foreground" />
-                Multi-Agent
+                {t(getGlobalNavigationItem("multiAgents").labelKey)}
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className={cn(
+                "sidebar-compact-text h-7 w-full justify-start gap-2 rounded-[var(--radius-otto-button)] border-0 px-2 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isSkillsPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              data-testid="skills-nav"
+            >
+              <Link to={APP_ROUTES.skills} onClick={onNavClick}>
+                <BookOpenIcon className="size-3.5 text-muted-foreground" />
+                {t(getGlobalNavigationItem("skills").labelKey)}
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className={cn(
+                "sidebar-compact-text h-7 w-full justify-start gap-2 rounded-[var(--radius-otto-button)] border-0 px-2 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isRuntimePage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              data-testid="runtime-nav"
+            >
+              <Link to={APP_ROUTES.runtime} onClick={onNavClick}>
+                <LaptopIcon className="size-3.5 text-muted-foreground" />
+                {t(getGlobalNavigationItem("runtime").labelKey)}
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className={cn(
+                "sidebar-compact-text h-7 w-full justify-start gap-2 rounded-[var(--radius-otto-button)] border-0 px-2 font-normal",
+                SIDEBAR_HOVER_HIGHLIGHT,
+                isUsagePage && SIDEBAR_ACTIVE_HIGHLIGHT,
+              )}
+              data-testid="usage-nav"
+            >
+              <Link to={APP_ROUTES.usage} onClick={onNavClick}>
+                <BarChart3Icon className="size-3.5 text-muted-foreground" />
+                {t(getGlobalNavigationItem("usage").labelKey)}
               </Link>
             </Button>
           </div>

@@ -3,7 +3,7 @@
   "title": "Account",
   "auth": {
     "signIn": "Sign in",
-    "welcome": "Welcome to Omnigent.",
+    "welcome": "Welcome to Orvia.",
     "username": "Username",
     "password": "Password",
     "machineUsernameHint": "On a fresh install your username is your machine login (the output of {{command}}), unless an admin set a different one.",
@@ -12,7 +12,7 @@
     "signingIn": "Signing in…",
     "firstAdminHint": "On a fresh install you set the first admin's password yourself — no credential is auto-generated. A brand-new instance shows a Create-admin form instead of this one; the password can also be pre-seeded with {{envVar}}.",
     "createAccount": "Create your account",
-    "invitedDescription": "You were invited to join this Omnigent server.",
+    "invitedDescription": "You were invited to join this Orvia server.",
     "inviteTokenMissing": "This page needs an invite token in the URL — make sure you opened the link your admin sent you.",
     "usernameRule": "Lowercase letters, digits, dots, hyphens, underscores (or a lowercase email)",
     "usernameHint": "Lowercase letters, digits, dots, hyphens, underscores — or a lowercase email.",

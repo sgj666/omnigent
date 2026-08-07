@@ -65,7 +65,7 @@ export function MobilePanelDrawer({
       )}
       aria-hidden={!open}
       data-collapsed={!open || undefined}
-      inert={!open}
+      inert={(!open ? "" : undefined) as unknown as boolean | undefined}
     >
       <header className="flex shrink-0 items-center justify-between border-border border-b px-4 py-2">
         <h2 className="font-medium text-sm">{title}</h2>

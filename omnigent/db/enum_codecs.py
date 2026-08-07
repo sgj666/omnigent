@@ -127,6 +127,55 @@ SCHEDULED_TASK_RUN_STATUS: dict[str, int] = {
     "skipped": 5,
 }
 
+WORK_ITEM_STATE: dict[str, int] = {
+    "backlog": 1,
+    "todo": 2,
+    "in_progress": 3,
+    "review": 4,
+    "done": 5,
+    "cancelled": 6,
+    "blocked": 7,
+    "failed": 8,
+}
+
+WORK_ITEM_CREATOR_KIND: dict[str, int] = {
+    "user": 1,
+    "agent": 2,
+    "automation": 3,
+}
+
+WORK_ITEM_PRIORITY: dict[str, int] = {
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "urgent": 4,
+}
+
+WORK_ITEM_RUN_STATE: dict[str, int] = {
+    "queued": 1,
+    "running": 2,
+    "waiting": 3,
+    "succeeded": 4,
+    "failed": 5,
+    "cancelled": 6,
+}
+
+WORK_ITEM_RUN_TRIGGER: dict[str, int] = {
+    "manual": 1,
+    "retry": 2,
+}
+
+INBOX_ITEM_KIND: dict[str, int] = {
+    "approval_required": 1,
+    "session_completed": 2,
+    "session_failed": 3,
+    "task_waiting": 4,
+    "task_succeeded": 5,
+    "task_failed": 6,
+    "task_cancelled": 7,
+    "task_completed": 8,
+}
+
 
 def _assert_item_type_codes_cover_data_classes() -> None:
     """
@@ -338,3 +387,63 @@ def encode_scheduled_task_run_status(name: str) -> int:
 def decode_scheduled_task_run_status(code: int) -> str:
     """Decode a ``scheduled_task_runs.status`` int code to its name."""
     return _decode(SCHEDULED_TASK_RUN_STATUS, code, field="scheduled_task_runs.status")
+
+
+def encode_work_item_state(name: str) -> int:
+    """Encode a ``work_items.state`` name to its stable int code."""
+    return _encode(WORK_ITEM_STATE, name, field="work_items.state")
+
+
+def decode_work_item_state(code: int) -> str:
+    """Decode a ``work_items.state`` int code to its name."""
+    return _decode(WORK_ITEM_STATE, code, field="work_items.state")
+
+
+def encode_work_item_creator_kind(name: str) -> int:
+    """Encode a ``work_items.creator_kind`` name to its stable int code."""
+    return _encode(WORK_ITEM_CREATOR_KIND, name, field="work_items.creator_kind")
+
+
+def decode_work_item_creator_kind(code: int) -> str:
+    """Decode a ``work_items.creator_kind`` int code to its public name."""
+    return _decode(WORK_ITEM_CREATOR_KIND, code, field="work_items.creator_kind")
+
+
+def encode_work_item_priority(name: str) -> int:
+    """Encode a ``work_items.priority`` name to its stable int code."""
+    return _encode(WORK_ITEM_PRIORITY, name, field="work_items.priority")
+
+
+def decode_work_item_priority(code: int) -> str:
+    """Decode a ``work_items.priority`` int code to its name."""
+    return _decode(WORK_ITEM_PRIORITY, code, field="work_items.priority")
+
+
+def encode_work_item_run_state(name: str) -> int:
+    """Encode a ``work_item_runs.state`` name to its stable int code."""
+    return _encode(WORK_ITEM_RUN_STATE, name, field="work_item_runs.state")
+
+
+def decode_work_item_run_state(code: int) -> str:
+    """Decode a ``work_item_runs.state`` int code to its name."""
+    return _decode(WORK_ITEM_RUN_STATE, code, field="work_item_runs.state")
+
+
+def encode_work_item_run_trigger(name: str) -> int:
+    """Encode a ``work_item_runs.trigger`` name to its stable int code."""
+    return _encode(WORK_ITEM_RUN_TRIGGER, name, field="work_item_runs.trigger")
+
+
+def decode_work_item_run_trigger(code: int) -> str:
+    """Decode a ``work_item_runs.trigger`` int code to its name."""
+    return _decode(WORK_ITEM_RUN_TRIGGER, code, field="work_item_runs.trigger")
+
+
+def encode_inbox_item_kind(name: str) -> int:
+    """Encode an ``inbox_items.kind`` name to its stable int code."""
+    return _encode(INBOX_ITEM_KIND, name, field="inbox_items.kind")
+
+
+def decode_inbox_item_kind(code: int) -> str:
+    """Decode an ``inbox_items.kind`` int code to its name."""
+    return _decode(INBOX_ITEM_KIND, code, field="inbox_items.kind")

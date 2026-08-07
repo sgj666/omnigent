@@ -140,14 +140,74 @@
     }
   },
   "multiAgent": {
+    "title": "Multi-Agent",
     "catalog": {
       "description": "Build, inspect, and run Agent Bundles. Polly is the built-in multi-agent template.",
+      "search": "Search Multi-Agent bundles",
+      "searchPlaceholder": "Search bundles, descriptions, or runtimes…",
+      "filterLabel": "Filter bundle validation",
+      "filters": { "all": "All", "valid": "Valid", "issues": "Needs attention" },
+      "tableCaption": "Multi-Agent bundles",
+      "columns": {
+        "agent": "Agent Bundle",
+        "composition": "Composition",
+        "runtime": "Runtime",
+        "version": "Version",
+        "updated": "Updated",
+        "status": "Validation",
+        "feishu": "Feishu",
+        "actions": "Actions"
+      },
       "loading": "Loading bundles…",
       "error": "Could not load Multi-Agent bundles",
       "emptyTitle": "No Multi-Agent bundles yet",
       "emptyDescription": "Create a bundle or import an existing .tar.gz archive.",
       "noDescription": "No description",
+      "noMatches": "No bundles match these filters",
       "builtinReadonly": "Built-in · Read only"
+    },
+    "activity": {
+      "title": "Agent activity",
+      "description": "Operational history from Tasks and TaskRuns assigned to this Agent.",
+      "loading": "Loading Agent activity…",
+      "error": "Could not load Agent activity.",
+      "retry": "Retry",
+      "metrics": {
+        "totalRuns": "Total Runs",
+        "activeRuns": "Currently occupied",
+        "successRate": "Success rate",
+        "waitingRuns": "Waiting",
+        "failedRuns": "Failed"
+      },
+      "noTerminalSample": "No sample",
+      "recentRuns": "Recent Runs",
+      "recentRunsDescription": "The newest 20 TaskRuns, with direct links back to their Task and Session.",
+      "emptyRuns": "This Agent has no assigned TaskRuns yet.",
+      "columns": {
+        "taskRun": "Task / Run",
+        "state": "State",
+        "project": "Project",
+        "reason": "Waiting / failure reason",
+        "queuedAt": "Queued",
+        "session": "Session"
+      },
+      "runId": "Run {{id}}",
+      "sessionId": "Session {{id}}",
+      "projects": "Related Projects",
+      "emptyProjects": "No related Projects.",
+      "runCount": "{{count}} Runs",
+      "skills": "Observed Skills",
+      "skillsDescription": "Counted only when a TaskRun Session actually calls load_skill.",
+      "emptySkills": "No load_skill calls were observed in these Runs.",
+      "useCount": "{{count}} uses",
+      "states": {
+        "queued": "Queued",
+        "running": "Running",
+        "waiting": "Waiting",
+        "succeeded": "Succeeded",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
+      }
     },
     "actions": {
       "create": "Create",
@@ -178,6 +238,8 @@
       "workers": "Workers",
       "workerCount_one": "{{count}} worker",
       "workerCount_other": "{{count}} workers",
+      "skillCount_one": "{{count}} skill",
+      "skillCount_other": "{{count}} skills",
       "version": "Version",
       "versionValue": "Version {{version}}",
       "digest": "Digest",
@@ -361,7 +423,7 @@
     },
     "feishu": {
       "title": "Feishu",
-      "description": "Connect this bundle's coordinator surface. Run state remains in Omnigent.",
+      "description": "Connect this bundle's coordinator surface. Run state remains in Orvia.",
       "connect": "Connect Feishu",
       "connected": "Connected to Feishu",
       "changeBinding": "Change Feishu binding",
@@ -380,7 +442,7 @@
       "localDetailsWarning": "This address only works on this computer. Use an intranet or public address for Feishu on your phone.",
       "quickEntries": "Agent Feishu capabilities",
       "quickEntriesHelp": "Controls which menu events and interactive-card actions this Agent accepts. Every Agent can use a different combination.",
-      "nativeMenuLimit": "Capability switches do not add or remove the floating menu in Feishu. Omnigent rejects menu events for capabilities that are not enabled.",
+      "nativeMenuLimit": "Capability switches do not add or remove the floating menu in Feishu. Orvia rejects menu events for capabilities that are not enabled.",
       "floatingMenuTitle": "Feishu floating menu",
       "manualPublish": "Manual publish",
       "floatingMenuDescription": "In the Feishu developer console, enable the bot custom menu, choose the floating style, and configure each menu item to push an event.",
@@ -449,7 +511,7 @@
       "defaultScopeRequired": "Save a default local directory on an online host before connecting Feishu.",
       "retryProvisioning": "Retry provisioning",
       "provisioning": "Provisioning…",
-      "stateSource": "Feishu is only an entry, notification, and necessary-approval surface; Omnigent remains the state source.",
+      "stateSource": "Feishu is only an entry, notification, and necessary-approval surface; Orvia remains the state source.",
       "disconnect": "Disconnect Feishu",
       "disconnecting": "Disconnecting…",
       "states": {

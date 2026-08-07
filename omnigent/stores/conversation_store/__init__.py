@@ -339,6 +339,7 @@ class ConversationStore(ABC):
         git_branch: str | None = None,
         terminal_launch_args: list[str] | None = None,
         conversation_id: str | None = None,
+        project_id: str | None = None,
         agent_bundle_version: int | None = None,
         agent_bundle_digest: str | None = None,
         agent_bundle_location: str | None = None,
@@ -397,6 +398,8 @@ class ConversationStore(ABC):
         :param conversation_id: Optional caller-supplied identifier.
             ``None`` generates a new random id. Reserved for flows that
             require database-enforced idempotency.
+        :param project_id: Optional first-class project membership to persist
+            with the new session metadata row.
         :param agent_bundle_version: Captured Agent Bundle version. Required
             with the other Bundle fields for a new top-level Agent-bound
             conversation. Children inherit it from their parent.
@@ -1096,6 +1099,11 @@ class ConversationStore(ABC):
         ...
 
     @abstractmethod
+    def list_daily_costs(self, user_id: str, since_day_utc: str) -> list[tuple[str, float]]:
+        """Return chronological daily spend rows on or after the inclusive day."""
+        ...
+
+    @abstractmethod
     def get_daily_cost_state(self, user_id: str, day_utc: str) -> dict[str, float]:
         """
         Return a user's daily cost rollup state for one UTC day.
@@ -1559,6 +1567,7 @@ class ConversationStore(ABC):
         terminal_launch_args: list[str] | None = None,
         parent_conversation_id: str | None = None,
         runner_id: str | None = None,
+        project_id: str | None = None,
     ) -> CreatedSession:
         """
         Atomically create a session and its session-scoped agent.
@@ -1597,6 +1606,8 @@ class ConversationStore(ABC):
         :param runner_id: Optional runner binding to persist at
             creation time, e.g. ``"runner_abc123"``. Child sessions
             inherit the parent's binding through this field.
+        :param project_id: Optional first-class project membership to persist
+            with the new session metadata row.
         :returns: The committed conversation and agent entities.
         :raises ConversationNotFoundError: If
             ``parent_conversation_id`` is set but no such

@@ -976,13 +976,13 @@ async def test_publish_status_failed_edge_transitions_scheduled_run_to_failed(
     assert row.error_code == "runner_disconnected"
 
 
-# ── serializer fields: last_run_status + next_run_at ─────────────────────────
+# ── serializer fields: latest-run summary + next_run_at ──────────────────────
 
 
-async def test_list_and_get_carry_last_run_status_and_next_run_at(
+async def test_list_and_get_carry_latest_run_summary_and_next_run_at(
     auth_client: httpx.AsyncClient, auth_app: FastAPI, db_uri: str
 ) -> None:
-    """LIST + GET surface the latest run's status and the scheduler's next fire.
+    """LIST + GET surface the latest run summary and scheduler's next fire.
 
     ``last_run_status`` comes from the windowed store query (the most-recent run
     by scheduled_at DESC); ``next_run_at`` comes from the live scheduler, so an
@@ -997,6 +997,7 @@ async def test_list_and_get_carry_last_run_status_and_next_run_at(
     task_id = created["id"]
     # A freshly created task has never run.
     assert created["last_run_status"] is None
+    assert created["last_run_error_code"] is None
     # It is armed on the scheduler, so next_run_at is a non-null ISO string.
     assert isinstance(created["next_run_at"], str)
 
@@ -1017,15 +1018,18 @@ async def test_list_and_get_carry_last_run_status_and_next_run_at(
         status="failed",
         finished_at=2002,
         conversation_id=uuid.uuid4().hex,
+        error_code="no_online_host",
     )
 
     list_body = (await auth_client.get("/v1/scheduled-tasks", headers=_headers())).json()
     row = next(t for t in list_body["scheduled_tasks"] if t["id"] == task_id)
     assert row["last_run_status"] == "failed"
+    assert row["last_run_error_code"] == "no_online_host"
     assert isinstance(row["next_run_at"], str)
 
     get_body = (await auth_client.get(f"/v1/scheduled-tasks/{task_id}", headers=_headers())).json()
     assert get_body["last_run_status"] == "failed"
+    assert get_body["last_run_error_code"] == "no_online_host"
     assert isinstance(get_body["next_run_at"], str)
 
 

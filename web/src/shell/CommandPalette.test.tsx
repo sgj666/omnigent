@@ -223,6 +223,11 @@ describe("CommandPalette — actions", () => {
 
     expect(screen.getByText("New chat")).toBeTruthy();
     expect(screen.getByText("Go to Inbox")).toBeTruthy();
+    expect(screen.getByText("Go to Tasks")).toBeTruthy();
+    expect(screen.getByText("Go to Automations")).toBeTruthy();
+    expect(screen.getByText("Go to Projects")).toBeTruthy();
+    expect(screen.getByText("Go to Usage")).toBeTruthy();
+    expect(screen.getByText("Go to Runtime")).toBeTruthy();
     expect(screen.getByText("Go to Settings")).toBeTruthy();
     expect(screen.getByText("Toggle conversations sidebar")).toBeTruthy();
     expect(screen.getByText("Toggle workspace sidebar")).toBeTruthy();
@@ -235,6 +240,22 @@ describe("CommandPalette — actions", () => {
     fireEvent.click(screen.getByText("Go to Settings"));
 
     expect(navigate).toHaveBeenCalledWith("/settings");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it.each([
+    ["Go to Tasks", "/tasks"],
+    ["Go to Automations", "/automations"],
+    ["Go to Projects", "/projects"],
+    ["Go to Usage", "/usage"],
+    ["Go to Runtime", "/runtime"],
+  ])("navigates with the %s management action", (label, path) => {
+    const onOpenChange = vi.fn();
+    renderPalette({ onOpenChange });
+
+    fireEvent.click(screen.getByText(label));
+
+    expect(navigate).toHaveBeenCalledWith(path);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 

@@ -6441,6 +6441,7 @@ async def _create_session_from_existing_agent(
             git_branch=git_branch,
             terminal_launch_args=validated_launch_args,
             conversation_id=run_child_id,
+            project_id=body.project_id,
             agent_bundle_version=bundle_snapshot.bundle_version,
             agent_bundle_digest=bundle_snapshot.bundle_digest,
             agent_bundle_location=bundle_snapshot.bundle_location,

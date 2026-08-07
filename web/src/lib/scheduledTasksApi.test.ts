@@ -41,6 +41,8 @@ const TASK_WIRE = {
   host_id: null,
   state: "active",
   last_run_at: null,
+  last_run_status: null,
+  last_run_error_code: null,
   last_run_conversation_id: null,
 };
 
@@ -70,6 +72,7 @@ describe("listScheduledTasks", () => {
       state: "active",
       hostId: null,
       workspace: null,
+      lastRunErrorCode: null,
     });
   });
 

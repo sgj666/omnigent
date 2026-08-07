@@ -44,13 +44,44 @@ export interface Project {
   owner_user_id?: string | null;
   created_at?: number;
   updated_at?: number | null;
+  /** Exact count of first-class member sessions returned by collection/detail APIs. */
+  session_count?: number;
+  /** Artifact summary is present when the server has TaskRun stores wired. */
+  artifact_count?: number;
+  latest_artifact_name?: string | null;
+  latest_artifact_at?: number | null;
   /** Stored default session settings; `{}` when the project has none. */
   config?: ProjectConfig;
+}
+
+/** One file output traced back to the TaskRun that created it. */
+export interface ProjectArtifact {
+  id: string;
+  object: "project.artifact";
+  project_id: string;
+  name: string;
+  content_type: string | null;
+  bytes: number | null;
+  created_at: number | null;
+  version: number;
+  visibility: "private";
+  available: boolean;
+  summary: string | null;
+  work_item_id: string;
+  work_item_title: string;
+  work_item_run_id: string;
+  session_id: string | null;
+  download_url: string | null;
 }
 
 interface ProjectListResponse {
   object: "list";
   data: Project[];
+}
+
+interface ProjectArtifactListResponse {
+  object: "list";
+  data: ProjectArtifact[];
 }
 
 async function readError(res: Response): Promise<string> {
@@ -75,6 +106,14 @@ export async function getProject(id: string): Promise<Project> {
   const res = await authenticatedFetch(`/v1/projects/${encodeURIComponent(id)}`);
   if (!res.ok) throw new Error(await readError(res));
   return (await res.json()) as Project;
+}
+
+/** List real TaskRun file outputs for one owner-private project. */
+export async function listProjectArtifacts(id: string): Promise<ProjectArtifact[]> {
+  const res = await authenticatedFetch(`/v1/projects/${encodeURIComponent(id)}/artifacts`);
+  if (!res.ok) throw new Error(await readError(res));
+  const body = (await res.json()) as ProjectArtifactListResponse;
+  return body.data;
 }
 
 /**
@@ -118,10 +157,9 @@ export async function updateProjectConfig(id: string, config: ProjectConfig): Pr
 }
 
 /**
- * Delete a project. Only the container is removed; member sessions are kept
- * (never cascade-deleted). Their `project_id` is left dangling server-side, but
- * the dual-read listing joins against the (now-absent) project, so they surface
- * as unfiled. Returns 404 if not found / not owned.
+ * Delete a project. Member sessions are kept (never cascade-deleted) and the
+ * server clears their first-class `project_id` membership atomically with the
+ * container deletion. Returns 404 if not found / not owned.
  */
 export async function deleteProject(id: string): Promise<void> {
   const res = await authenticatedFetch(`/v1/projects/${encodeURIComponent(id)}`, {

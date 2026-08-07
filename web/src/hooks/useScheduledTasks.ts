@@ -42,7 +42,7 @@ export function useScheduledTasks() {
     // POLLING CONTRACT — read before reusing this hook.
     // The 60s interval only runs while a component that mounts this hook is
     // mounted; TanStack Query tears the interval down on unmount. Today the sole
-    // consumer is TasksPage, which is route-scoped and lazy-loaded at /tasks — so
+    // consumer is AutomationsPage, route-scoped and lazy-loaded at /automations — so
     // polling happens ONLY while the user is on the Scheduled Tasks page and
     // stops the moment they navigate away.
     // GUARD RAIL: do NOT mount this hook in a persistent / always-rendered spot

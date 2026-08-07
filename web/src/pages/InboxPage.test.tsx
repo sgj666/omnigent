@@ -20,6 +20,7 @@ import type { Conversation } from "@/hooks/useConversations";
 import * as conversationsHook from "@/hooks/useConversations";
 import * as commentInboxHook from "@/hooks/useCommentInbox";
 import * as sessionsApi from "@/lib/sessionsApi";
+import * as inboxApi from "@/lib/inboxApi";
 import type { CommentInbox } from "@/hooks/useCommentInbox";
 import { setTestLanguage } from "@/i18n/testHelpers";
 
@@ -53,6 +54,11 @@ vi.mock("@/hooks/useConversations", async (importActual) => ({
 }));
 vi.mock("@/hooks/useCommentInbox", () => ({ useCommentInbox: vi.fn() }));
 vi.mock("@/lib/sessionsApi", () => ({ getSession: vi.fn(), approve: vi.fn() }));
+vi.mock("@/lib/inboxApi", () => ({
+  usePersistentInboxItems: vi.fn(),
+  useSetPersistentInboxItemRead: vi.fn(),
+  useMarkAllPersistentInboxItemsRead: vi.fn(),
+}));
 
 function conversation(overrides: Partial<Conversation> = {}): Conversation {
   return {
@@ -115,6 +121,18 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  vi.mocked(inboxApi.usePersistentInboxItems).mockReturnValue({
+    data: { object: "list", data: [], unread_count: 0 },
+    isLoading: false,
+    isError: false,
+  } as unknown as ReturnType<typeof inboxApi.usePersistentInboxItems>);
+  vi.mocked(inboxApi.useSetPersistentInboxItemRead).mockReturnValue({
+    mutate: vi.fn(),
+  } as unknown as ReturnType<typeof inboxApi.useSetPersistentInboxItemRead>);
+  vi.mocked(inboxApi.useMarkAllPersistentInboxItemsRead).mockReturnValue({
+    mutate: vi.fn(),
+    isPending: false,
+  } as unknown as ReturnType<typeof inboxApi.useMarkAllPersistentInboxItemsRead>);
   vi.mocked(conversationsHook.useConversations).mockReturnValue(conversationsStub([]));
   vi.mocked(commentInboxHook.useCommentInbox).mockReturnValue(commentInboxStub());
   vi.mocked(sessionsApi.getSession).mockResolvedValue({
@@ -131,6 +149,93 @@ afterEach(() => {
 });
 
 describe("InboxPage states", () => {
+  it("renders persistent lifecycle items and toggles their read state", async () => {
+    const mutate = vi.fn();
+    vi.mocked(inboxApi.usePersistentInboxItems).mockReturnValue({
+      data: {
+        object: "list",
+        unread_count: 1,
+        data: [
+          {
+            id: "1".repeat(32),
+            object: "inbox_item",
+            kind: "task_succeeded",
+            work_item_id: "2".repeat(32),
+            work_item_run_id: "3".repeat(32),
+            session_id: "4".repeat(32),
+            source_id: null,
+            message: "Release Orvia",
+            target_url: `/tasks/${"2".repeat(32)}`,
+            action_required: false,
+            created_at: 1_700_000_000,
+            updated_at: null,
+            read_at: null,
+            resolved_at: null,
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof inboxApi.usePersistentInboxItems>);
+    vi.mocked(inboxApi.useSetPersistentInboxItemRead).mockReturnValue({
+      mutate,
+    } as unknown as ReturnType<typeof inboxApi.useSetPersistentInboxItemRead>);
+
+    renderPage();
+    expect(await screen.findByText("Task run completed")).toBeInTheDocument();
+    expect(screen.getByText("Release Orvia")).toBeInTheDocument();
+    expect(screen.getByText("1 unread")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mark read" }));
+    expect(mutate).toHaveBeenCalledWith({ itemId: "1".repeat(32), read: true });
+  });
+
+  it("groups lifecycle updates into action, progress, completed, and failed sections", async () => {
+    const kinds = [
+      { kind: "approval_required", actionRequired: true, message: "Approve release" },
+      { kind: "task_waiting", actionRequired: false, message: "Waiting on dependency" },
+      { kind: "task_succeeded", actionRequired: false, message: "Release complete" },
+      { kind: "task_failed", actionRequired: true, message: "Release failed" },
+    ] as const;
+    vi.mocked(inboxApi.usePersistentInboxItems).mockReturnValue({
+      data: {
+        object: "list",
+        unread_count: 4,
+        data: kinds.map((item, index) => ({
+          id: String(index + 1).repeat(32),
+          object: "inbox_item" as const,
+          kind: item.kind,
+          work_item_id: "a".repeat(32),
+          work_item_run_id: "b".repeat(32),
+          session_id: "c".repeat(32),
+          source_id: null,
+          message: item.message,
+          target_url: `/tasks/${"a".repeat(32)}`,
+          action_required: item.actionRequired,
+          created_at: 1_700_000_000 - index,
+          updated_at: null,
+          read_at: null,
+          resolved_at: null,
+        })),
+      },
+      isLoading: false,
+      isError: false,
+    } as unknown as ReturnType<typeof inboxApi.usePersistentInboxItems>);
+
+    renderPage();
+
+    const groups = await screen.findAllByTestId(/^inbox-group-/);
+    expect(groups.map((group) => group.getAttribute("data-testid"))).toEqual([
+      "inbox-group-actionRequired",
+      "inbox-group-progress",
+      "inbox-group-completed",
+      "inbox-group-failed",
+    ]);
+    expect(within(groups[0]).getByText("Approve release")).toBeInTheDocument();
+    expect(within(groups[1]).getByText("Waiting on dependency")).toBeInTheDocument();
+    expect(within(groups[2]).getByText("Release complete")).toBeInTheDocument();
+    expect(within(groups[3]).getByText("Release failed")).toBeInTheDocument();
+  });
+
   it("shows a loading state while the session list is still loading", () => {
     // WHY: an in-flight (assembling) list with no items yet must show the
     // loading row, never the empty state.

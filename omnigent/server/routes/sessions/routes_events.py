@@ -556,6 +556,9 @@ def register_events_routes(
                     # runner_disconnected as a quiet idle.
                     _intentional_stop_sessions.discard(session_id)
             if stop_conv is not None:
+                from omnigent.server import session_live_state
+
+                session_live_state.persist_work_item_run_cancelled(session_id)
                 terminal_projection = _observe_run_projection(
                     getattr(request.app.state, "run_projection", None),
                     "terminal",

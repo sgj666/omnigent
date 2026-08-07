@@ -144,14 +144,16 @@ function rowFor(id: string): HTMLElement {
 }
 
 describe("sidebar highlight while viewing a sub-agent", () => {
-  it("renders the official Omnigent wordmark instead of styled text", () => {
+  it("renders the official Orvia mark and product name", () => {
     mockConversations([]);
     renderAt("/");
 
     const wordmark = screen.getByTestId("sidebar-wordmark");
-    expect(wordmark).toHaveAttribute("alt", "Omnigent");
-    expect(wordmark).toHaveClass("h-[15px]", "dark:invert");
-    expect(wordmark.getAttribute("src")).toContain("omnigent-wordmark");
+    expect(wordmark).toHaveAttribute("alt", "Orvia");
+    expect(screen.getByText("Orvia")).toBeInTheDocument();
+    expect(wordmark).toHaveClass("size-7");
+    expect(wordmark).not.toHaveClass("dark:invert");
+    expect(wordmark.getAttribute("src")).toContain("orvia-mark");
   });
 
   it("uses the same Otto structural-container radius as the workspace rail", () => {

@@ -1865,14 +1865,13 @@ describe("NewChatLandingScreen", () => {
   });
 
   it("files a pre-selected project, and invalidates project sessions", async () => {
-    // Sequence: create POST → list projects (resolve name→id) → PATCH project_id.
+    // Resolve the selected name before create, then persist project_id in POST.
     authenticatedFetchMock
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conv_new" }) } as Response)
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ object: "list", data: [{ id: "p_docs", name: "docs" }] }),
       } as Response)
-      .mockResolvedValue({ ok: true, json: async () => ({ id: "conv_new" }) } as Response);
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conv_new" }) } as Response);
     const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     // A `?project=` landing (e.g. via the sidebar's per-project pencil) names the
     // project in the hero heading rather than a tray chip.
@@ -1885,27 +1884,14 @@ describe("NewChatLandingScreen", () => {
     });
     fireEvent.submit(screen.getByTestId("new-chat-landing-composer"));
 
-    // Create POST, then the name→id resolution, then a PATCH that files the
-    // freshly-created session via first-class project_id.
-    await waitFor(() => expect(authenticatedFetchMock).toHaveBeenCalledTimes(3));
-    expect(authenticatedFetchMock.mock.calls[0][0]).toBe("/v1/sessions");
-    // Born filed: the create POST stamps the project's `omni_project` label so
-    // the session groups under its project from its first sidebar appearance
-    // (the sidebar dual-reads the label OR project_id), rather than flashing
-    // through the ungrouped "Sessions" section until the follow-up move's
-    // project_id write catches up in the search-indexed session list.
+    await waitFor(() => expect(authenticatedFetchMock).toHaveBeenCalledTimes(2));
+    expect(authenticatedFetchMock.mock.calls[0][0]).toBe("/v1/projects");
+    expect(authenticatedFetchMock.mock.calls[1][0]).toBe("/v1/sessions");
     const createBody = JSON.parse(
-      (authenticatedFetchMock.mock.calls[0][1] as RequestInit).body as string,
-    ) as { labels?: Record<string, string> };
-    expect(createBody.labels?.omni_project).toBe("docs");
-    expect(authenticatedFetchMock.mock.calls[1][0]).toBe("/v1/projects");
-    const [patchUrl, patchInit] = authenticatedFetchMock.mock.calls[2];
-    expect(patchUrl).toBe("/v1/sessions/conv_new");
-    expect((patchInit as RequestInit).method).toBe("PATCH");
-    const patchBody = JSON.parse((patchInit as RequestInit).body as string) as {
-      project_id: string;
-    };
-    expect(patchBody.project_id).toBe("p_docs");
+      (authenticatedFetchMock.mock.calls[1][1] as RequestInit).body as string,
+    ) as { project_id: string; labels?: Record<string, string> };
+    expect(createBody.project_id).toBe("p_docs");
+    expect(createBody.labels?.omni_project).toBeUndefined();
 
     // The target folder fetches its own paginated list (useProjectSessions),
     // so filing the new session must invalidate it — otherwise the row only
@@ -1920,12 +1906,11 @@ describe("NewChatLandingScreen", () => {
     // The sidebar's per-project "new session" pencil lands here with the
     // project pre-selected — the hero heading reflects it with no interaction.
     authenticatedFetchMock
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conv_new" }) } as Response)
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ object: "list", data: [{ id: "p_sprint", name: "Sprint 42" }] }),
       } as Response)
-      .mockResolvedValue({ ok: true, json: async () => ({ id: "conv_new" }) } as Response);
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "conv_new" }) } as Response);
     renderLanding({}, "/?project=Sprint%2042");
 
     await waitFor(() => expect(screen.getByText("Sprint 42")).toBeTruthy());
@@ -1936,13 +1921,14 @@ describe("NewChatLandingScreen", () => {
     });
     fireEvent.submit(screen.getByTestId("new-chat-landing-composer"));
 
-    await waitFor(() => expect(authenticatedFetchMock).toHaveBeenCalledTimes(3));
-    const [patchUrl, patchInit] = authenticatedFetchMock.mock.calls[2];
-    expect(patchUrl).toBe("/v1/sessions/conv_new");
-    const patchBody = JSON.parse((patchInit as RequestInit).body as string) as {
+    await waitFor(() => expect(authenticatedFetchMock).toHaveBeenCalledTimes(2));
+    expect(authenticatedFetchMock.mock.calls[1][0]).toBe("/v1/sessions");
+    const createBody = JSON.parse(
+      (authenticatedFetchMock.mock.calls[1][1] as RequestInit).body as string,
+    ) as {
       project_id: string;
     };
-    expect(patchBody.project_id).toBe("p_sprint");
+    expect(createBody.project_id).toBe("p_sprint");
   });
 
   it("clamps a long project name in the hero heading so it can't overflow the row", async () => {

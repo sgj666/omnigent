@@ -7,6 +7,7 @@ import {
   createProject,
   deleteProject,
   getProject,
+  listProjectArtifacts,
   listProjects,
   renameProject,
   updateProjectConfig,
@@ -86,6 +87,31 @@ describe("getProject", () => {
     const result = await getProject("p_1");
     expect(fetchMock.mock.calls[0][0]).toBe("/v1/projects/p_1");
     expect(result.config).toEqual({ workspace: "/w" });
+  });
+});
+
+describe("listProjectArtifacts", () => {
+  it("GETs the owner-scoped Project Artifact collection", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockResponse({
+        object: "list",
+        data: [
+          {
+            id: "file_1",
+            object: "project.artifact",
+            project_id: "p a",
+            name: "report.md",
+            version: 1,
+          },
+        ],
+      }),
+    );
+
+    const result = await listProjectArtifacts("p a");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/projects/p%20a/artifacts");
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe("report.md");
   });
 });
 

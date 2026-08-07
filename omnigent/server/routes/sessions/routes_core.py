@@ -238,6 +238,20 @@ def register_core_routes(
             # message survives in each entry's `msg`.
             raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
 
+        if body.project_id is not None:
+            if project_store is None:
+                raise OmnigentError(
+                    "First-class projects are not configured on this server",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            project = await asyncio.to_thread(
+                project_store.get,
+                body.project_id,
+                owner_user_id=user_id,
+            )
+            if project is None:
+                raise OmnigentError("Project not found", code=ErrorCode.NOT_FOUND)
+
         run_child_rollback = _RunChildCreateRollback()
 
         async def _guard_run_child_create(awaitable: Any) -> Any:
@@ -590,6 +604,20 @@ def register_core_routes(
         parsed_metadata = _parse_session_create_metadata(metadata)
         _reject_reserved_cost_control_label_seed(parsed_metadata.labels)
         _reject_server_reserved_label_seed(parsed_metadata.labels)
+
+        if parsed_metadata.project_id is not None:
+            if project_store is None:
+                raise OmnigentError(
+                    "First-class projects are not configured on this server",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            project = await asyncio.to_thread(
+                project_store.get,
+                parsed_metadata.project_id,
+                owner_user_id=user_id,
+            )
+            if project is None:
+                raise OmnigentError("Project not found", code=ErrorCode.NOT_FOUND)
 
         inherited_runner_id: str | None = None
         if parsed_metadata.parent_session_id is not None:
@@ -1400,6 +1428,17 @@ def register_core_routes(
                         except Exception:
                             _logger.warning(
                                 "hosts-changed push failed; client will rely on fallback poll",
+                                exc_info=True,
+                            )
+                elif evt_type == "inbox_changed":
+                    async with emit_lock:
+                        try:
+                            await _send({"type": "inbox_changed"})
+                        except WebSocketDisconnect:
+                            raise
+                        except Exception:
+                            _logger.warning(
+                                "inbox-changed push failed; client will rely on fallback poll",
                                 exc_info=True,
                             )
 

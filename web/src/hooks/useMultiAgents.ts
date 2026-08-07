@@ -3,6 +3,7 @@ import {
   cloneAgentBundle,
   createAgentBundle,
   deleteAgentBundle,
+  getAgentActivity,
   getAgentBundle,
   getAgentBundleOptions,
   getAgentFormSchema,
@@ -45,6 +46,15 @@ export function useMultiAgent(agent_id: string | null, enabled = true) {
     queryKey: ["multi-agents", agent_id] as const,
     queryFn: ({ signal }) => getAgentBundle(agent_id as string, signal),
     enabled: enabled && agent_id !== null,
+  });
+}
+
+export function useAgentActivity(agent_id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ["multi-agents", agent_id, "activity"] as const,
+    queryFn: ({ signal }) => getAgentActivity(agent_id as string, signal),
+    enabled: enabled && agent_id !== null,
+    refetchInterval: (query) => (query.state.data?.active_runs ? 2_000 : false),
   });
 }
 

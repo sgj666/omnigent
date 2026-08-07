@@ -66,6 +66,10 @@ describe("MultiAgentsPage", () => {
 
     expect(screen.getByRole("heading", { name: "Multi-Agent" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Polly" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Polly" })).toHaveAttribute(
+      "href",
+      "/multi-agents/ag_polly",
+    );
     expect(screen.getByText("Built-in · Read only")).toBeVisible();
     expect(screen.getByText("7 workers")).toBeVisible();
     expect(screen.getByText("Version 4")).toBeVisible();
@@ -98,6 +102,19 @@ describe("MultiAgentsPage", () => {
     renderPage();
 
     expect(screen.getByText("No Multi-Agent bundles yet")).toBeVisible();
+  });
+
+  it("shows a dedicated permission state when the catalog is forbidden", () => {
+    hooks.list.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      error: Object.assign(new Error("Forbidden"), { status: 403 }),
+    });
+
+    renderPage();
+
+    expect(screen.getByText("You don’t have access to this collection")).toBeVisible();
   });
 
   it("shows the connected Feishu identity and a clear rebinding action", () => {

@@ -52,6 +52,8 @@ export interface ScheduledTask {
    * completion badge without a per-row `/runs` fetch.
    */
   lastRunStatus: ScheduledTaskRunStatus | null;
+  /** Structured failure classification from the same most-recent run. */
+  lastRunErrorCode: string | null;
   lastRunConversationId: string | null;
   /**
    * ISO-8601 timestamp of the next scheduled fire, computed by the SERVER's
@@ -125,6 +127,7 @@ interface ScheduledTaskWire {
   state: ScheduledTaskState;
   last_run_at: number | null;
   last_run_status: ScheduledTaskRunStatus | null;
+  last_run_error_code: string | null;
   last_run_conversation_id: string | null;
   next_run_at: string | null;
 }
@@ -199,6 +202,7 @@ function taskFromWire(wire: ScheduledTaskWire): ScheduledTask {
     state: wire.state,
     lastRunAt: wire.last_run_at,
     lastRunStatus: wire.last_run_status,
+    lastRunErrorCode: wire.last_run_error_code,
     lastRunConversationId: wire.last_run_conversation_id,
     nextRunAt: wire.next_run_at,
   };

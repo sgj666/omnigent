@@ -83,6 +83,7 @@ def set_elicitation_observer(
 # conversation row so replicas that don't hold this session's runner
 # tunnel still show parked approvals. Must be cheap + non-blocking.
 _count_persist_hook: Callable[[str, int], None] | None = None
+_event_persist_hook: Callable[[str, dict[str, Any]], None] | None = None
 
 
 def set_count_persist_hook(hook: Callable[[str, int], None] | None) -> None:
@@ -95,6 +96,14 @@ def set_count_persist_hook(hook: Callable[[str, int], None] | None) -> None:
     """
     global _count_persist_hook
     _count_persist_hook = hook
+
+
+def set_event_persist_hook(
+    hook: Callable[[str, dict[str, Any]], None] | None,
+) -> None:
+    """Register a non-blocking sink for durable elicitation notifications."""
+    global _event_persist_hook
+    _event_persist_hook = hook
 
 
 def _notify_count_hook(conversation_id: str, count: int) -> None:
@@ -150,6 +159,8 @@ def record_publish(conversation_id: str, event: dict[str, Any]) -> None:
             ids[elicitation_id] = event
             count = len(ids)
         _notify_count_hook(conversation_id, count)
+        if _event_persist_hook is not None:
+            _event_persist_hook(conversation_id, event)
         _notify_observer(conversation_id, event)
         return
     if event_type == "response.elicitation_resolved":
@@ -157,6 +168,8 @@ def record_publish(conversation_id: str, event: dict[str, Any]) -> None:
         if not isinstance(elicitation_id, str) or not elicitation_id:
             return
         resolve(conversation_id, elicitation_id)
+        if _event_persist_hook is not None:
+            _event_persist_hook(conversation_id, event)
         _notify_observer(conversation_id, event)
 
 

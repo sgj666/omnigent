@@ -35,14 +35,18 @@
  * the prompt timing out) is what clears an approval.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangleIcon,
   ArrowRightIcon,
   ChevronDownIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleDotIcon,
   InboxIcon,
   Loader2Icon,
+  MailOpenIcon,
 } from "lucide-react";
 import { ApprovalCard, type SubmitApprovalFn } from "@/components/blocks/ApprovalCard";
 import { PageScroll } from "@/components/PageScroll";
@@ -51,6 +55,12 @@ import { Button } from "@/components/ui/button";
 import { useCommentInbox } from "@/hooks/useCommentInbox";
 import { useConversations } from "@/hooks/useConversations";
 import { collectInboxItems, type InboxItem, type InboxSource } from "@/lib/inbox";
+import {
+  type PersistentInboxItem,
+  useMarkAllPersistentInboxItemsRead,
+  usePersistentInboxItems,
+  useSetPersistentInboxItemRead,
+} from "@/lib/inboxApi";
 import { relativeTime } from "@/lib/relativeTime";
 import { Link } from "@/lib/routing";
 import { approve, getSession } from "@/lib/sessionsApi";
@@ -65,10 +75,30 @@ type RespondedMap = Record<
   { action: "accept" | "decline"; content?: Record<string, unknown> }
 >;
 
+type InboxGroup = "actionRequired" | "progress" | "completed" | "failed";
+
+function inboxGroupFor(item: PersistentInboxItem): InboxGroup {
+  if (item.kind === "task_failed" || item.kind === "session_failed") return "failed";
+  if (item.action_required) return "actionRequired";
+  if (
+    item.resolved_at !== null ||
+    item.kind === "task_succeeded" ||
+    item.kind === "task_cancelled" ||
+    item.kind === "task_completed" ||
+    item.kind === "session_completed"
+  ) {
+    return "completed";
+  }
+  return "progress";
+}
+
 export function InboxPage() {
   const { t } = useTranslation("common");
   const queryClient = useQueryClient();
   const conversationsQuery = useConversations("", false, { reconcileWhileConnected: true });
+  const persistentInbox = usePersistentInboxItems();
+  const setPersistentRead = useSetPersistentInboxItemRead();
+  const markAllPersistentRead = useMarkAllPersistentInboxItemsRead();
   const [responded, setResponded] = useState<RespondedMap>({});
   // Manual expand/collapse toggles keyed by elicitation id. Anything
   // not in the map falls back to the default: expanded only for the
@@ -119,6 +149,36 @@ export function InboxPage() {
     }
   });
   const items = collectInboxItems(sources);
+  const pendingApprovalIds = new Set(items.map((item) => item.elicitation.elicitationId));
+  const persistentApprovalBySource = new Map(
+    (persistentInbox.data?.data ?? [])
+      .filter((item) => item.kind === "approval_required" && item.source_id !== null)
+      .map((item) => [item.source_id as string, item]),
+  );
+  const lifecycleItems = (persistentInbox.data?.data ?? []).filter(
+    (item) =>
+      item.kind !== "approval_required" ||
+      !item.source_id ||
+      !pendingApprovalIds.has(item.source_id),
+  );
+  const lifecycleGroups = {
+    actionRequired: lifecycleItems.filter((item) => inboxGroupFor(item) === "actionRequired"),
+    progress: lifecycleItems.filter((item) => inboxGroupFor(item) === "progress"),
+    completed: lifecycleItems.filter((item) => inboxGroupFor(item) === "completed"),
+    failed: lifecycleItems.filter((item) => inboxGroupFor(item) === "failed"),
+  } satisfies Record<InboxGroup, PersistentInboxItem[]>;
+
+  const renderLifecycleItems = (group: InboxGroup) =>
+    lifecycleGroups[group].map((item) => (
+      <PersistentLifecycleCard
+        key={item.id}
+        item={item}
+        onToggleRead={() =>
+          setPersistentRead.mutate({ itemId: item.id, read: item.read_at === null })
+        }
+        t={t}
+      />
+    ));
 
   // Clear stale optimistic verdicts when snapshot data refreshes.
   // If a hook retry re-parks the same elicitation id after the user
@@ -156,7 +216,8 @@ export function InboxPage() {
     hasNextPage ||
     isFetchingNextPage ||
     snapshotQueries.some((q) => q.isLoading) ||
-    commentInbox.isLoading;
+    commentInbox.isLoading ||
+    persistentInbox.isLoading;
   const failedSnapshots = snapshotQueries.filter((q) => q.isError);
   const failedSessionCount = failedSnapshots.length + commentInbox.failedCount;
 
@@ -193,18 +254,36 @@ export function InboxPage() {
     <PageScroll contentClassName="px-6">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-semibold">{t("inbox.title")}</h1>
-        {(items.length > 0 || commentInbox.items.length > 0) && (
-          <span className="text-sm text-muted-foreground">
-            {[
-              items.length > 0 && t("inbox.approval", { count: items.length }),
-              commentInbox.items.length > 0 &&
-                t("inbox.comment", { count: commentInbox.items.length }),
-            ]
-              .filter(Boolean)
-              .join(" · ")}{" "}
-            {t("inbox.waiting")}
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {(items.length > 0 || commentInbox.items.length > 0) && (
+            <span className="text-sm text-muted-foreground">
+              {[
+                items.length > 0 && t("inbox.approval", { count: items.length }),
+                commentInbox.items.length > 0 &&
+                  t("inbox.comment", { count: commentInbox.items.length }),
+              ]
+                .filter(Boolean)
+                .join(" · ")}{" "}
+              {t("inbox.waiting")}
+            </span>
+          )}
+          {(persistentInbox.data?.unread_count ?? 0) > 0 && (
+            <span className="text-sm text-muted-foreground">
+              {t("inbox.unread", { count: persistentInbox.data?.unread_count ?? 0 })}
+            </span>
+          )}
+          {(persistentInbox.data?.unread_count ?? 0) > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => markAllPersistentRead.mutate()}
+              disabled={markAllPersistentRead.isPending}
+            >
+              <MailOpenIcon className="mr-1 size-3.5" />
+              {t("inbox.markAllRead")}
+            </Button>
+          )}
+        </div>
       </div>
 
       {failedSessionCount > 0 && (
@@ -232,15 +311,20 @@ export function InboxPage() {
         </div>
       )}
 
-      {assembling && items.length === 0 && commentInbox.items.length === 0 && (
-        <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
-          <Loader2Icon className="size-4 animate-spin" />
-          {t("inbox.loading")}
-        </div>
-      )}
+      {assembling &&
+        lifecycleItems.length === 0 &&
+        items.length === 0 &&
+        commentInbox.items.length === 0 && (
+          <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
+            <Loader2Icon className="size-4 animate-spin" />
+            {t("inbox.loading")}
+          </div>
+        )}
 
       {!assembling &&
         failedSessionCount === 0 &&
+        !persistentInbox.isError &&
+        lifecycleItems.length === 0 &&
         items.length === 0 &&
         commentInbox.items.length === 0 && (
           <div className="flex flex-col items-center gap-2 py-16 text-center">
@@ -250,160 +334,286 @@ export function InboxPage() {
           </div>
         )}
 
-      <div className="flex flex-col gap-4">
-        {items.map((item, index) => {
-          const elicitationId = item.elicitation.elicitationId;
-          const verdict = responded[elicitationId];
-          const expanded = expandedOverrides[elicitationId] ?? index === 0;
-          // Same display mapping the sidebar uses: native-wrapper
-          // sessions read "Claude Code" / "Codex", never the internal
-          // agent name ("claude-native-ui"). The agent chip is hidden
-          // when it would just repeat the title (untitled native
-          // sessions, where the wrapper label IS the display label).
-          const title = conversationDisplayLabel(item.row);
-          const agentLabel = getConversationAgentType(item.row);
-          return (
-            <div
-              key={elicitationId}
-              data-testid="inbox-item"
-              data-expanded={expanded}
-              className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4"
-            >
-              <div className="flex items-center gap-2">
-                {/* The toggle is a sibling of the Open-session link (not a
+      <div className="flex flex-col gap-6">
+        {(lifecycleGroups.actionRequired.length > 0 ||
+          items.length > 0 ||
+          commentInbox.items.length > 0) && (
+          <InboxGroupSection
+            group="actionRequired"
+            title={t("inbox.groups.actionRequired")}
+            count={lifecycleGroups.actionRequired.length + items.length + commentInbox.items.length}
+          >
+            {renderLifecycleItems("actionRequired")}
+            {items.map((item, index) => {
+              const elicitationId = item.elicitation.elicitationId;
+              const persistentNotification = persistentApprovalBySource.get(elicitationId);
+              const verdict = responded[elicitationId];
+              const expanded = expandedOverrides[elicitationId] ?? index === 0;
+              // Same display mapping the sidebar uses: native-wrapper
+              // sessions read "Claude Code" / "Codex", never the internal
+              // agent name ("claude-native-ui"). The agent chip is hidden
+              // when it would just repeat the title (untitled native
+              // sessions, where the wrapper label IS the display label).
+              const title = conversationDisplayLabel(item.row);
+              const agentLabel = getConversationAgentType(item.row);
+              return (
+                <div
+                  key={elicitationId}
+                  data-testid="inbox-item"
+                  data-expanded={expanded}
+                  className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4"
+                >
+                  <div className="flex items-center gap-2">
+                    {/* The toggle is a sibling of the Open-session link (not a
                     parent) — nesting a link inside a button is invalid HTML
                     and breaks middle-click/new-tab behavior. */}
-                <button
-                  type="button"
-                  aria-expanded={expanded}
-                  onClick={() =>
-                    setExpandedOverrides((prev) => ({ ...prev, [elicitationId]: !expanded }))
-                  }
-                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                >
-                  <ChevronDownIcon
-                    className={cn(
-                      "size-4 shrink-0 text-muted-foreground transition-transform",
-                      !expanded && "-rotate-90",
-                    )}
-                  />
-                  <span className="min-w-0 shrink-0 truncate text-sm font-medium">
-                    {title}
-                    {agentLabel !== title && (
-                      <span className="ml-2 text-xs font-normal text-muted-foreground">
-                        {agentLabel}
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      onClick={() =>
+                        setExpandedOverrides((prev) => ({ ...prev, [elicitationId]: !expanded }))
+                      }
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    >
+                      <ChevronDownIcon
+                        className={cn(
+                          "size-4 shrink-0 text-muted-foreground transition-transform",
+                          !expanded && "-rotate-90",
+                        )}
+                      />
+                      <span className="min-w-0 shrink-0 truncate text-sm font-medium">
+                        {title}
+                        {agentLabel !== title && (
+                          <span className="ml-2 text-xs font-normal text-muted-foreground">
+                            {agentLabel}
+                          </span>
+                        )}
                       </span>
-                    )}
-                  </span>
-                  {!expanded && (
-                    <span className="min-w-0 truncate text-xs text-muted-foreground">
-                      {item.elicitation.message}
+                      {!expanded && (
+                        <span className="min-w-0 truncate text-xs text-muted-foreground">
+                          {item.elicitation.message}
+                        </span>
+                      )}
+                    </button>
+                    <span className="flex shrink-0 items-center gap-2">
+                      {persistentNotification && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs"
+                          onClick={() =>
+                            setPersistentRead.mutate({
+                              itemId: persistentNotification.id,
+                              read: persistentNotification.read_at === null,
+                            })
+                          }
+                        >
+                          {persistentNotification.read_at === null
+                            ? t("inbox.markRead")
+                            : t("inbox.markUnread")}
+                        </Button>
+                      )}
+                      <span className="text-xs text-muted-foreground">
+                        {/* Server timestamps are epoch seconds; relativeTime takes ms. */}
+                        {relativeTime(item.row.updated_at * 1000)}
+                      </span>
+                      <Button asChild variant="ghost" size="sm" className="text-xs">
+                        <Link to={`/c/${item.row.id}`}>
+                          {t("inbox.openSession")}
+                          <ArrowRightIcon className="ml-1 size-3.5" />
+                        </Link>
+                      </Button>
                     </span>
+                  </div>
+                  {expanded && (
+                    <ApprovalCard
+                      elicitationId={elicitationId}
+                      message={item.elicitation.message}
+                      phase={item.elicitation.phase}
+                      policyName={item.elicitation.policyName}
+                      contentPreview={item.elicitation.contentPreview}
+                      requestedSchema={item.elicitation.requestedSchema}
+                      url={item.elicitation.url}
+                      status={verdict ? "responded" : "pending"}
+                      response={verdict ?? null}
+                      askUserQuestion={item.elicitation.askUserQuestion}
+                      exitPlanMode={item.elicitation.exitPlanMode}
+                      codexCommand={item.elicitation.codexCommand}
+                      allowAllEdits={item.elicitation.allowAllEdits}
+                      rememberScope={item.elicitation.rememberScope}
+                      canApprove={item.canApprove}
+                      onSubmit={makeSubmit(item)}
+                    />
                   )}
-                </button>
-                <span className="flex shrink-0 items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {/* Server timestamps are epoch seconds; relativeTime takes ms. */}
-                    {relativeTime(item.row.updated_at * 1000)}
-                  </span>
-                  <Button asChild variant="ghost" size="sm" className="text-xs">
-                    <Link to={`/c/${item.row.id}`}>
-                      {t("inbox.openSession")}
-                      <ArrowRightIcon className="ml-1 size-3.5" />
-                    </Link>
-                  </Button>
-                </span>
-              </div>
-              {expanded && (
-                <ApprovalCard
-                  elicitationId={elicitationId}
-                  message={item.elicitation.message}
-                  phase={item.elicitation.phase}
-                  policyName={item.elicitation.policyName}
-                  contentPreview={item.elicitation.contentPreview}
-                  requestedSchema={item.elicitation.requestedSchema}
-                  url={item.elicitation.url}
-                  status={verdict ? "responded" : "pending"}
-                  response={verdict ?? null}
-                  askUserQuestion={item.elicitation.askUserQuestion}
-                  exitPlanMode={item.elicitation.exitPlanMode}
-                  codexCommand={item.elicitation.codexCommand}
-                  allowAllEdits={item.elicitation.allowAllEdits}
-                  rememberScope={item.elicitation.rememberScope}
-                  canApprove={item.canApprove}
-                  onSubmit={makeSubmit(item)}
-                />
-              )}
-            </div>
-          );
-        })}
-        {commentInbox.items.map((item) => {
-          const comment = item.comment;
-          // Single-user mode stores no author; mirror CommentsPanel's
-          // "You" fallback (the only human in that mode is the viewer).
-          const author = comment.created_by ?? t("comments.you");
-          const sessionTitle = conversationDisplayLabel(item.row);
-          return (
-            <div
-              key={comment.id}
-              data-testid="inbox-comment"
-              className="flex gap-3 rounded-xl border border-border bg-card p-4"
-            >
-              {/* The item's icon: the author's avatar pill (same
-                  deterministic initials + color as presence circles). */}
-              <Avatar size="sm" className="mt-0.5">
-                <AvatarFallback
-                  className="font-medium text-white"
-                  style={{ backgroundColor: userColor(author) }}
+                </div>
+              );
+            })}
+            {commentInbox.items.map((item) => {
+              const comment = item.comment;
+              // Single-user mode stores no author; mirror CommentsPanel's
+              // "You" fallback (the only human in that mode is the viewer).
+              const author = comment.created_by ?? t("comments.you");
+              const sessionTitle = conversationDisplayLabel(item.row);
+              return (
+                <div
+                  key={comment.id}
+                  data-testid="inbox-comment"
+                  className="flex gap-3 rounded-xl border border-border bg-card p-4"
                 >
-                  {userInitials(author)}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <div className="flex items-center gap-2">
-                  <span className="min-w-0 truncate text-sm">
-                    <span className="font-medium">{author}</span>
-                    <span className="text-muted-foreground"> {t("inbox.commentedOn")} </span>
-                    <span className="font-mono text-xs">{comment.path}</span>
-                  </span>
-                  <span className="ml-auto flex shrink-0 items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      {/* created_at is epoch seconds; relativeTime takes ms. */}
-                      {relativeTime(comment.created_at * 1000)}
-                    </span>
-                    <Button asChild variant="ghost" size="sm" className="text-xs">
-                      {/* Deep-link into the file browser with this comment
+                  {/* The item's icon: the author's avatar pill (same
+                  deterministic initials + color as presence circles). */}
+                  <Avatar size="sm" className="mt-0.5">
+                    <AvatarFallback
+                      className="font-medium text-white"
+                      style={{ backgroundColor: userColor(author) }}
+                    >
+                      {userInitials(author)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-0 truncate text-sm">
+                        <span className="font-medium">{author}</span>
+                        <span className="text-muted-foreground"> {t("inbox.commentedOn")} </span>
+                        <span className="font-mono text-xs">{comment.path}</span>
+                      </span>
+                      <span className="ml-auto flex shrink-0 items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          {/* created_at is epoch seconds; relativeTime takes ms. */}
+                          {relativeTime(comment.created_at * 1000)}
+                        </span>
+                        <Button asChild variant="ghost" size="sm" className="text-xs">
+                          {/* Deep-link into the file browser with this comment
                           selected — opening it there marks it seen, which
                           is what clears this inbox item. */}
-                      <Link
-                        to={`/c/${item.row.id}?file=${encodeURIComponent(comment.path)}&comment=${encodeURIComponent(comment.id)}`}
-                      >
-                        {t("inbox.openFile")}
-                        <ArrowRightIcon className="ml-1 size-3.5" />
-                      </Link>
-                    </Button>
-                  </span>
+                          <Link
+                            to={`/c/${item.row.id}?file=${encodeURIComponent(comment.path)}&comment=${encodeURIComponent(comment.id)}`}
+                          >
+                            {t("inbox.openFile")}
+                            <ArrowRightIcon className="ml-1 size-3.5" />
+                          </Link>
+                        </Button>
+                      </span>
+                    </div>
+                    {comment.anchor_content && (
+                      <p className="truncate font-mono text-[11px] text-muted-foreground">
+                        {comment.anchor_content.trim()}
+                      </p>
+                    )}
+                    <p className="line-clamp-3 text-sm break-words whitespace-pre-wrap">
+                      {comment.body}
+                    </p>
+                    <span className="text-xs text-muted-foreground">{sessionTitle}</span>
+                  </div>
                 </div>
-                {comment.anchor_content && (
-                  <p className="truncate font-mono text-[11px] text-muted-foreground">
-                    {comment.anchor_content.trim()}
-                  </p>
-                )}
-                <p className="line-clamp-3 text-sm break-words whitespace-pre-wrap">
-                  {comment.body}
-                </p>
-                <span className="text-xs text-muted-foreground">{sessionTitle}</span>
-              </div>
-            </div>
-          );
-        })}
-        {assembling && (items.length > 0 || commentInbox.items.length > 0) && (
-          <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-            <Loader2Icon className="size-3.5 animate-spin" />
-            {t("inbox.checkingRemaining")}
-          </div>
+              );
+            })}
+          </InboxGroupSection>
         )}
+        {(["progress", "completed", "failed"] as const).map(
+          (group) =>
+            lifecycleGroups[group].length > 0 && (
+              <InboxGroupSection
+                key={group}
+                group={group}
+                title={t(`inbox.groups.${group}`)}
+                count={lifecycleGroups[group].length}
+              >
+                {renderLifecycleItems(group)}
+              </InboxGroupSection>
+            ),
+        )}
+        {assembling &&
+          (lifecycleItems.length > 0 || items.length > 0 || commentInbox.items.length > 0) && (
+            <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+              <Loader2Icon className="size-3.5 animate-spin" />
+              {t("inbox.checkingRemaining")}
+            </div>
+          )}
       </div>
     </PageScroll>
+  );
+}
+
+function InboxGroupSection({
+  group,
+  title,
+  count,
+  children,
+}: {
+  group: InboxGroup;
+  title: string;
+  count: number;
+  children: ReactNode;
+}) {
+  const headingId = `inbox-group-${group}-heading`;
+  return (
+    <section
+      aria-labelledby={headingId}
+      data-testid={`inbox-group-${group}`}
+      className="flex flex-col gap-3"
+    >
+      <div className="flex items-center gap-2">
+        <h2 id={headingId} className="text-xs font-semibold tracking-wide text-muted-foreground">
+          {title}
+        </h2>
+        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          {count}
+        </span>
+      </div>
+      <div className="flex flex-col gap-3">{children}</div>
+    </section>
+  );
+}
+
+function PersistentLifecycleCard({
+  item,
+  onToggleRead,
+  t,
+}: {
+  item: PersistentInboxItem;
+  onToggleRead: () => void;
+  t: ReturnType<typeof useTranslation>["t"];
+}) {
+  const failed = item.kind === "task_failed" || item.kind === "session_failed";
+  const waiting = item.kind === "task_waiting" || item.kind === "approval_required";
+  const Icon = failed ? CircleAlertIcon : waiting ? CircleDotIcon : CircleCheckIcon;
+  return (
+    <article
+      data-testid="persistent-inbox-item"
+      data-read={item.read_at !== null}
+      className={cn(
+        "flex items-start gap-3 rounded-xl border border-border bg-card p-4",
+        item.read_at === null && "border-foreground/15 bg-muted/20",
+      )}
+    >
+      <Icon
+        className={cn(
+          "mt-0.5 size-4 shrink-0",
+          failed ? "text-destructive" : "text-muted-foreground",
+        )}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium">{t(`inbox.lifecycleKinds.${item.kind}`)}</h3>
+          {item.read_at === null && <span className="size-1.5 rounded-full bg-foreground" />}
+        </div>
+        {item.message && (
+          <p className="mt-1 truncate text-sm text-muted-foreground">{item.message}</p>
+        )}
+        <p className="mt-1 text-xs text-muted-foreground">{relativeTime(item.created_at * 1000)}</p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button variant="ghost" size="sm" className="text-xs" onClick={onToggleRead}>
+          {item.read_at === null ? t("inbox.markRead") : t("inbox.markUnread")}
+        </Button>
+        <Button asChild variant="ghost" size="sm" className="text-xs">
+          <Link to={item.target_url}>
+            {t("inbox.open")}
+            <ArrowRightIcon className="ml-1 size-3.5" />
+          </Link>
+        </Button>
+      </div>
+    </article>
   );
 }

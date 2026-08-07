@@ -37,6 +37,12 @@ _subscribers: dict[
     set[tuple[asyncio.Queue[dict[str, Any]], asyncio.AbstractEventLoop]],
 ] = {}
 _lock = threading.Lock()
+_SHARED_USER_KEY = "__all__"
+
+
+def user_key(user_id: str | None) -> str:
+    """Return the fan-out channel key for an optional authenticated user."""
+    return user_id if user_id is not None else _SHARED_USER_KEY
 
 
 def publish(user_key: str, event: dict[str, Any]) -> None:

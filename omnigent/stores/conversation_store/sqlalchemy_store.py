@@ -367,6 +367,7 @@ def _new_session_metadata_row(
     runner_id: str | None = None,
     workspace: str | None = None,
     terminal_launch_args: list[str] | None = None,
+    project_id: str | None = None,
 ) -> SqlConversationMetadata:
     """
     Build the Omnigent metadata row paired with a new session conversation.
@@ -380,6 +381,7 @@ def _new_session_metadata_row(
     :param terminal_launch_args: Optional pass-through CLI args for a
         native terminal wrapper. ``None`` leaves it NULL; a list
         (including ``[]``) is JSON-encoded.
+    :param project_id: Optional first-class project membership.
     :returns: Unsaved :class:`SqlConversationMetadata` row.
     """
     return SqlConversationMetadata(
@@ -387,6 +389,7 @@ def _new_session_metadata_row(
         kind=encode_conversation_kind("sub_agent" if parent_conversation_id else "default"),
         runner_id=runner_id,
         workspace=workspace,
+        project_id=project_id,
         terminal_launch_args=(
             json.dumps(terminal_launch_args) if terminal_launch_args is not None else None
         ),
@@ -924,6 +927,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         git_branch: str | None = None,
         terminal_launch_args: list[str] | None = None,
         conversation_id: str | None = None,
+        project_id: str | None = None,
         agent_bundle_version: int | None = None,
         agent_bundle_digest: str | None = None,
         agent_bundle_location: str | None = None,
@@ -975,6 +979,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             terminal.
         :param conversation_id: Optional caller-supplied identifier.
             ``None`` generates a new random id.
+        :param project_id: Optional first-class project membership to persist
+            with the metadata row.
         :param agent_bundle_version: Captured Agent Bundle version for a
             top-level binding. Children inherit the parent's value.
         :param agent_bundle_digest: Captured Agent Bundle SHA-256 digest.
@@ -1079,6 +1085,7 @@ class SqlAlchemyConversationStore(ConversationStore):
                 sub_agent_name=sub_agent_name,
                 workspace=workspace,
                 git_branch=git_branch,
+                project_id=project_id,
                 terminal_launch_args=(
                     json.dumps(terminal_launch_args) if terminal_launch_args is not None else None
                 ),
@@ -1644,6 +1651,18 @@ class SqlAlchemyConversationStore(ConversationStore):
                 .where(SqlUserDailyCost.day_utc >= since_day_utc)
             ).scalar_one()
             return float(total or 0.0)
+
+    def list_daily_costs(self, user_id: str, since_day_utc: str) -> list[tuple[str, float]]:
+        """Return chronological daily spend rows for a user and date range."""
+        with self._session() as session:
+            rows = session.execute(
+                select(SqlUserDailyCost.day_utc, SqlUserDailyCost.cost_usd)
+                .where(SqlUserDailyCost.workspace_id == current_workspace_id())
+                .where(SqlUserDailyCost.user_id == user_id)
+                .where(SqlUserDailyCost.day_utc >= since_day_utc)
+                .order_by(SqlUserDailyCost.day_utc)
+            ).all()
+            return [(str(day), float(cost or 0.0)) for day, cost in rows]
 
     def get_daily_cost_state(self, user_id: str, day_utc: str) -> dict[str, float]:
         """
@@ -3870,6 +3889,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         terminal_launch_args: list[str] | None = None,
         parent_conversation_id: str | None = None,
         runner_id: str | None = None,
+        project_id: str | None = None,
     ) -> CreatedSession:
         """
         Atomically insert a conversation row and session-scoped agent.
@@ -3918,6 +3938,8 @@ class SqlAlchemyConversationStore(ConversationStore):
             creation time, e.g. ``"runner_abc123"``. Child sessions
             inherit the parent's binding through this field so
             runner dispatch remains explicit in store state.
+        :param project_id: Optional first-class project membership to persist
+            with the metadata row.
         :returns: A :class:`CreatedSession` with both entities.
         :raises ConversationNotFoundError: If
             ``parent_conversation_id`` is set but no such
@@ -3936,6 +3958,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             terminal_launch_args=terminal_launch_args,
             parent_conversation_id=parent_conversation_id,
             runner_id=runner_id,
+            project_id=project_id,
         )
 
     def _create_session_with_agent_with_id(
@@ -3953,6 +3976,7 @@ class SqlAlchemyConversationStore(ConversationStore):
         terminal_launch_args: list[str] | None = None,
         parent_conversation_id: str | None = None,
         runner_id: str | None = None,
+        project_id: str | None = None,
     ) -> CreatedSession:
         """Body of :meth:`create_session_with_agent` under a caller-supplied
         ``conversation_id``. The public method generates a fresh id; this seam
@@ -4013,6 +4037,7 @@ class SqlAlchemyConversationStore(ConversationStore):
             conversation_id,
             parent_conversation_id=parent_conversation_id,
             runner_id=runner_id,
+            project_id=project_id,
             workspace=workspace,
             terminal_launch_args=terminal_launch_args,
         )

@@ -65,6 +65,12 @@ vi.mock("@/hooks/useHosts", () => ({
   useHosts: useHostsMock,
 }));
 
+vi.mock("@/lib/inboxApi", () => ({
+  usePersistentInboxItems: () => ({
+    data: { object: "list", data: [], unread_count: 0 },
+  }),
+}));
+
 // Mutation hooks are only invoked on row actions; stub them. useConversations
 // is the data source under test, so it's a controllable mock.
 vi.mock("@/hooks/useConversations", () => ({
@@ -344,7 +350,7 @@ describe("Sidebar session list", () => {
     // The same card now shows the settings nav (Back to app + sections),
     // not the conversation search/list.
     expect(screen.queryByTestId("sidebar-search-button")).toBeNull();
-    expect(screen.getByRole("link", { name: /Back to Omnigent/ })).toHaveAttribute("href", "/");
+    expect(screen.getByRole("link", { name: /Back to Orvia/ })).toHaveAttribute("href", "/");
     expect(screen.getByTestId("settings-nav-appearance")).toHaveAttribute(
       "href",
       "/settings/appearance",
@@ -415,25 +421,28 @@ describe("Sidebar session list", () => {
     expect(within(sessionsSection!).queryByRole("button", { name: "Select sessions" })).toBeNull();
   });
 
-  it("renders the 'Automations' nav row directly under 'New session' and routes to /tasks", () => {
+  it("renders Tasks and Automations as distinct primary navigation rows", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
     renderSidebar();
 
     const scheduled = screen.getByTestId("scheduled-tasks-nav");
-    // Full-width nav ROW (a link), labeled "Automations", pointing at /tasks —
+    const tasks = screen.getByTestId("tasks-nav");
+    // Full-width nav ROW (a link), labeled "Automations", pointing at /automations —
     // not the old top-right icon button.
-    expect(scheduled).toHaveAttribute("href", "/tasks");
+    expect(scheduled).toHaveAttribute("href", "/automations");
     expect(scheduled).toHaveTextContent("Automations");
+    expect(tasks).toHaveAttribute("href", "/tasks");
+    expect(tasks).toHaveTextContent("Tasks");
     // The removed icon-button version must be gone.
     expect(screen.queryByTestId("scheduled-tasks-button")).toBeNull();
 
-    // It sits in the primary nav group right after "New session" and before
-    // the "Inbox" row. Compare document order. (The search box now renders
-    // above this nav group upstream, so we anchor to New session + Inbox — the
-    // two items actually adjacent to Scheduled — rather than the search box.)
+    // Product Tasks and Automations are separate concepts and routes.
     const newSession = screen.getByTestId("new-chat-button");
     const inbox = screen.getByTestId("inbox-button");
-    expect(newSession.compareDocumentPosition(scheduled) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    expect(newSession.compareDocumentPosition(tasks) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(tasks.compareDocumentPosition(scheduled) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
     expect(scheduled.compareDocumentPosition(inbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
@@ -441,25 +450,42 @@ describe("Sidebar session list", () => {
     );
   });
 
-  it("renders Multi-Agent in the primary navigation after Inbox and before Projects", () => {
+  it("renders management destinations in the primary navigation", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
     renderSidebar(true, "/multi-agents");
 
     const primaryNav = screen.getByTestId("sidebar-primary-nav");
     const inbox = within(primaryNav).getByTestId("inbox-button");
     const multiAgents = within(primaryNav).getByTestId("multi-agents-nav");
-    const projects = screen.getByText("Projects");
+    const projects = within(primaryNav).getByTestId("projects-nav");
+    const runtime = within(primaryNav).getByTestId("runtime-nav");
+    const usage = within(primaryNav).getByTestId("usage-nav");
 
     expect(multiAgents).toHaveAttribute("href", "/multi-agents");
     expect(multiAgents).toHaveTextContent("Multi-Agent");
     expect(multiAgents).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(projects).toHaveAttribute("href", "/projects");
+    expect(runtime).toHaveAttribute("href", "/runtime");
+    expect(usage).toHaveAttribute("href", "/usage");
     expect(within(primaryNav).queryByText("Teams")).toBeNull();
     expect(inbox.compareDocumentPosition(multiAgents) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    expect(multiAgents.compareDocumentPosition(projects) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+    expect(multiAgents.compareDocumentPosition(runtime) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
+  });
+
+  it.each([
+    ["/projects", "projects-nav"],
+    ["/runtime", "runtime-nav"],
+    ["/usage", "usage-nav"],
+  ])("marks %s active without keeping New session active", (path, testId) => {
+    mockConversations(THREE_TYPE_CONVERSATIONS);
+    renderSidebar(true, path);
+
+    expect(screen.getByTestId(testId)).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(screen.getByTestId("new-chat-button")).not.toHaveClass("bg-[var(--sidebar-active)]");
   });
 
   it.each(["/multi-agents/new", "/multi-agents/ag_custom", "/runs/run-1"])(
@@ -518,9 +544,9 @@ describe("Sidebar session list", () => {
     expect(screen.getByTestId("multi-agents-nav")).not.toHaveClass("bg-[var(--sidebar-active)]");
   });
 
-  it("marks the 'Automations' nav row active when on /tasks", () => {
+  it("marks the 'Automations' nav row active when on /automations", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
-    renderSidebar(true, "/tasks");
+    renderSidebar(true, "/automations");
 
     // Active/selected state uses the SAME shared active-highlight as the sibling
     // nav rows (New session / Inbox) — the `--sidebar-active` pill, not an
@@ -528,6 +554,14 @@ describe("Sidebar session list", () => {
     expect(screen.getByTestId("scheduled-tasks-nav").className).toContain(
       "bg-[var(--sidebar-active)]",
     );
+  });
+
+  it("marks Tasks active without highlighting Automations", () => {
+    mockConversations(THREE_TYPE_CONVERSATIONS);
+    renderSidebar(true, "/tasks/task-1");
+
+    expect(screen.getByTestId("tasks-nav")).toHaveClass("bg-[var(--sidebar-active)]");
+    expect(screen.getByTestId("scheduled-tasks-nav")).not.toHaveClass("bg-[var(--sidebar-active)]");
   });
 
   it("does NOT close the sidebar when the footer Settings is tapped", () => {
@@ -904,11 +938,11 @@ describe("Sidebar tabs", () => {
     renderSidebar();
 
     // My sessions tab carries the Projects group.
-    expect(screen.getByText("Projects")).toBeInTheDocument();
+    expect(screen.getAllByText("Projects")).toHaveLength(2);
 
     // Shared tab: no Projects group; the shared session shows in Sessions.
     showSharedTab();
-    expect(screen.queryByText("Projects")).toBeNull();
+    expect(screen.getAllByText("Projects")).toHaveLength(1);
     expect(screen.getByText("conv_shared")).toBeInTheDocument();
   });
 
@@ -1720,6 +1754,7 @@ describe("Sidebar collapsed marker", () => {
     const aside = container.querySelector("aside.conversations-sidebar")!;
     // Closed: marked collapsed so the glass rule skips the w-0 strip.
     expect(aside).toHaveAttribute("data-collapsed");
+    expect(aside).toHaveAttribute("inert", "");
     cleanup();
 
     mockConversations(THREE_TYPE_CONVERSATIONS);
@@ -1728,5 +1763,6 @@ describe("Sidebar collapsed marker", () => {
     // Open: the attribute must be ABSENT — rendering it as "false" would
     // still match [data-collapsed] and strip the glass border while open.
     expect(openAside).not.toHaveAttribute("data-collapsed");
+    expect(openAside).not.toHaveAttribute("inert");
   });
 });

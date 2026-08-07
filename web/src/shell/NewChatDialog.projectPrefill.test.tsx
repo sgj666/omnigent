@@ -22,6 +22,7 @@ import { NewChatLandingScreen } from "./NewChatDialog";
 // unset falls through to the composer's generic defaults (last host, recent
 // workspace, last-used agent). These tests pin those seeding rules.
 const navigateMock = vi.fn();
+const setSearchParamsMock = vi.fn();
 
 const RECENT_KEY = "omnigent:recent-workspaces";
 const RECENT_WORKSPACE = "/Users/corey/universe/src/foo";
@@ -32,7 +33,7 @@ const REPO = "/Users/corey/projects/alpha";
 let searchParams = new URLSearchParams("project=Alpha");
 vi.mock("@/lib/routing", () => ({
   useNavigate: () => navigateMock,
-  useSearchParams: () => [searchParams, vi.fn()],
+  useSearchParams: () => [searchParams, setSearchParamsMock],
 }));
 
 vi.mock("@/store/chatStore", () => ({
@@ -107,7 +108,11 @@ function setProjects(
   data: { id: string | null; name: string }[] | undefined,
   isLoading = false,
 ): void {
-  vi.mocked(useProjects).mockReturnValue({ data, isLoading } as ReturnType<typeof useProjects>);
+  vi.mocked(useProjects).mockReturnValue({
+    data,
+    isLoading,
+    isSuccess: !isLoading,
+  } as ReturnType<typeof useProjects>);
 }
 
 /** Serve a git repo (has an is_main worktree) at REPO; [] elsewhere. */
@@ -133,21 +138,33 @@ function renderLanding(): (ui: ReactNode) => void {
 }
 
 async function submitAndReadBody(): Promise<Record<string, unknown>> {
-  vi.mocked(authenticatedFetch).mockResolvedValueOnce({
-    ok: true,
-    json: () => Promise.resolve({ id: "conv_new" }),
-  } as Response);
+  const projectName = searchParams.get("project") ?? "Alpha";
+  const projectId = `proj_${projectName.toLowerCase()}`;
+  vi.mocked(authenticatedFetch)
+    .mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ object: "list", data: [{ id: projectId, name: projectName }] }),
+    } as Response)
+    .mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ id: "conv_new" }),
+    } as Response);
   fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
     target: { value: "hello" },
   });
   fireEvent.click(screen.getByTestId("new-chat-landing-submit"));
-  await waitFor(() => expect(vi.mocked(authenticatedFetch)).toHaveBeenCalled());
-  const [, init] = vi.mocked(authenticatedFetch).mock.calls[0] as [string, RequestInit];
+  await waitFor(() =>
+    expect(vi.mocked(authenticatedFetch)).toHaveBeenCalledWith("/v1/sessions", expect.any(Object)),
+  );
+  const [, init] = vi
+    .mocked(authenticatedFetch)
+    .mock.calls.find(([url]) => url === "/v1/sessions") as [string, RequestInit];
   return JSON.parse(init.body as string) as Record<string, unknown>;
 }
 
 beforeEach(() => {
   navigateMock.mockReset();
+  setSearchParamsMock.mockReset();
   vi.mocked(authenticatedFetch).mockReset();
   searchParams = new URLSearchParams("project=Alpha");
   localStorage.clear();
@@ -281,5 +298,15 @@ describe("NewChatLandingScreen project prefill", () => {
     const body = await submitAndReadBody();
     expect(body.host_id).toBe("host_1");
     expect(body.workspace).toBe(RECENT_WORKSPACE);
+  });
+
+  it("clears a stale project deep link instead of recreating the deleted project", async () => {
+    setProjects([]);
+    renderLanding();
+
+    await waitFor(() =>
+      expect(setSearchParamsMock).toHaveBeenCalledWith(new URLSearchParams(), { replace: true }),
+    );
+    expect(screen.getByText("What should we do?")).toBeInTheDocument();
   });
 });

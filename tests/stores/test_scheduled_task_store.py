@@ -917,13 +917,13 @@ def test_list_running_runs_for_tasks_is_workspace_scoped(
         assert [r.id for r in got] == [_uid("run_w11")]
 
 
-# ── list_latest_run_status_for_tasks (Tasks-list completion badge source) ─────
+# ── list_latest_runs_for_tasks (Tasks-list latest-run summary source) ─────────
 
 
-def test_list_latest_run_status_for_tasks_returns_most_recent_status(
+def test_list_latest_runs_for_tasks_returns_most_recent_run(
     store: SqlAlchemyScheduledTaskStore,
 ) -> None:
-    """Returns each task's single most-recent run status by scheduled_at DESC.
+    """Returns each task's single most-recent run by scheduled_at DESC.
 
     Powers the Tasks-list completion badge in one windowed query. A task with a
     terminal run followed by a newer run reports the NEWER run's status (so a
@@ -953,6 +953,7 @@ def test_list_latest_run_status_for_tasks_returns_most_recent_status(
         status="failed",
         scheduled_at=200,
         finished_at=205,
+        error_code="no_online_host",
     )
     # task_b: a single running run.
     store.create_run(
@@ -962,11 +963,13 @@ def test_list_latest_run_status_for_tasks_returns_most_recent_status(
         scheduled_at=150,
     )
 
-    got = store.list_latest_run_status_for_tasks([_uid("lst_a"), _uid("lst_b")])
-    assert got == {_uid("lst_a"): "failed", _uid("lst_b"): "running"}
+    got = store.list_latest_runs_for_tasks([_uid("lst_a"), _uid("lst_b")])
+    assert got[_uid("lst_a")].status == "failed"
+    assert got[_uid("lst_a")].error_code == "no_online_host"
+    assert got[_uid("lst_b")].status == "running"
 
 
-def test_list_latest_run_status_tiebreaks_on_id_desc(
+def test_list_latest_runs_tiebreaks_on_id_desc(
     store: SqlAlchemyScheduledTaskStore,
 ) -> None:
     """Two runs at the SAME scheduled_at break the tie on id DESC.
@@ -999,11 +1002,12 @@ def test_list_latest_run_status_tiebreaks_on_id_desc(
         status="skipped",
         scheduled_at=300,
     )
-    got = store.list_latest_run_status_for_tasks([_uid("lst_tie")])
-    assert got == {_uid("lst_tie"): "skipped"}
+    got = store.list_latest_runs_for_tasks([_uid("lst_tie")])
+    assert got[_uid("lst_tie")].id == high_id
+    assert got[_uid("lst_tie")].status == "skipped"
 
 
-def test_list_latest_run_status_omits_tasks_with_no_runs(
+def test_list_latest_runs_omits_tasks_with_no_runs(
     store: SqlAlchemyScheduledTaskStore,
 ) -> None:
     """A task that has never run is absent from the map (badge → never run)."""
@@ -1016,17 +1020,17 @@ def test_list_latest_run_status_omits_tasks_with_no_runs(
         agent_id=_uid("ag"),
         timezone="UTC",
     )
-    assert store.list_latest_run_status_for_tasks([_uid("lst_norun")]) == {}
+    assert store.list_latest_runs_for_tasks([_uid("lst_norun")]) == {}
 
 
-def test_list_latest_run_status_empty_ids_returns_empty(
+def test_list_latest_runs_empty_ids_returns_empty(
     store: SqlAlchemyScheduledTaskStore,
 ) -> None:
     """An empty task-id list short-circuits to an empty map (no query)."""
-    assert store.list_latest_run_status_for_tasks([]) == {}
+    assert store.list_latest_runs_for_tasks([]) == {}
 
 
-def test_list_latest_run_status_is_workspace_scoped(
+def test_list_latest_runs_is_workspace_scoped(
     store: SqlAlchemyScheduledTaskStore,
 ) -> None:
     """A task's runs are invisible to the latest-status query from another workspace."""
@@ -1047,11 +1051,10 @@ def test_list_latest_run_status_is_workspace_scoped(
             scheduled_at=100,
             finished_at=105,
         )
-    assert store.list_latest_run_status_for_tasks([_uid("lst_w11")]) == {}
+    assert store.list_latest_runs_for_tasks([_uid("lst_w11")]) == {}
     with workspace_scope(11):
-        assert store.list_latest_run_status_for_tasks([_uid("lst_w11")]) == {
-            _uid("lst_w11"): "succeeded"
-        }
+        got = store.list_latest_runs_for_tasks([_uid("lst_w11")])
+        assert got[_uid("lst_w11")].status == "succeeded"
 
 
 # ── get_running_run_by_conversation (event-hook reverse lookup) ───────────────

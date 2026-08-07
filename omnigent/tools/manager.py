@@ -44,6 +44,7 @@ from omnigent.tools.builtins import (
     SysSessionShareTool,
     SysTimerCancelTool,
     SysTimerSetTool,
+    SysWorkItemCreateTool,
     UpdateCommentTool,
     any_skill_has_resources,
     get_builtin_tool,
@@ -192,6 +193,7 @@ class ToolManager:
         # Scheduled-task tools are always auto-registered so agents can
         # manage recurring runs at runtime without the spec opting in.
         self._register_scheduled_task_tools()
+        self._register_work_item_tools()
         # Embedded-browser tools are always auto-registered so any agent
         # can drive the desktop app's browser without the spec opting in
         # (framework-owned).
@@ -227,6 +229,11 @@ class ToolManager:
             SysScheduledTaskDeleteTool(),
         ):
             self._tools[tool.name()] = tool
+
+    def _register_work_item_tools(self) -> None:
+        """Expose explicit, user-directed Task creation to every Agent."""
+        tool = SysWorkItemCreateTool()
+        self._tools[tool.name()] = tool
 
     def _register_async_inbox_tools(self) -> None:
         """

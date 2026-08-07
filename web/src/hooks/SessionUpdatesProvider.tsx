@@ -243,6 +243,12 @@ export function SessionUpdatesProvider({ children }: { children: ReactNode }) {
         case "hosts_changed":
           void queryClient.invalidateQueries({ queryKey: ["hosts"] });
           return;
+        case "inbox_changed":
+          void queryClient.invalidateQueries({ queryKey: ["inbox-items"] });
+          return;
+        case "work_items_changed":
+          void queryClient.invalidateQueries({ queryKey: ["work-items"] });
+          return;
         case "removed":
           for (const id of frame.ids) commentsFingerprintsRef.current.delete(id);
           if (removeIdsFromCache(queryClient, frame.ids)) scheduleInvalidate();

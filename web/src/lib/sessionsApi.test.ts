@@ -163,6 +163,27 @@ describe("createSession", () => {
     });
   });
 
+  it("maps projectId to project_id on create", async () => {
+    fetchMock.mockResolvedValueOnce(
+      mockJsonResponse({
+        id: "conv_project",
+        agent_id: "agent_xyz",
+        status: "idle",
+        created_at: 1704067200,
+        project_id: "project_123",
+      }),
+    );
+
+    await createSession("agent_xyz", [], { projectId: "project_123" });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      agent_id: "agent_xyz",
+      initial_items: [],
+      project_id: "project_123",
+    });
+  });
+
   it("omits the optional fields entirely when no options are passed", async () => {
     fetchMock.mockResolvedValueOnce(
       mockJsonResponse({

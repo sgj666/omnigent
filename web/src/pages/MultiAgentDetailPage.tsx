@@ -2,26 +2,37 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ArrowDownIcon,
-  ArrowLeftIcon,
   ArrowUpIcon,
+  ActivityIcon,
   BotIcon,
+  FolderIcon,
   LinkIcon,
   PlusIcon,
   SaveIcon,
   Trash2Icon,
+  WrenchIcon,
 } from "lucide-react";
 import { AgentConfigEditor } from "@/components/multi-agent/AgentConfigEditor";
 import { AgentFeishuPairingDialog } from "@/components/multi-agent/AgentFeishuPairingDialog";
 import { BundleDiagnostics } from "@/components/multi-agent/BundleDiagnostics";
+import { PageBackButton } from "@/components/PageBackButton";
 import { PageScroll } from "@/components/PageScroll";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useAgentBundleOptions,
+  useAgentActivity,
   useAgentFormSchema,
   useCreateMultiAgent,
   useMultiAgent,
@@ -43,6 +54,7 @@ import {
   AgentBundleApiError,
   AgentVersionConflict,
   type AgentBundleFile,
+  type AgentActivityRun,
   type AgentBundlePatch,
   type AgentBundleValue,
   type AgentFormSchema,
@@ -50,6 +62,223 @@ import {
   type WorkerOperation,
 } from "@/lib/multiAgentApi";
 import { Link, useNavigate, useParams } from "@/lib/routing";
+
+function activityTimestamp(value: number | null, language: string): string {
+  if (value === null) return "—";
+  return new Intl.DateTimeFormat(language, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value * 1000));
+}
+
+function AgentActivityPanel({ agentId }: { agentId: string }) {
+  const { t, i18n } = useTranslation("agents", { keyPrefix: "multiAgent.activity" });
+  const activity = useAgentActivity(agentId);
+
+  if (activity.isLoading) {
+    return (
+      <Card data-testid="agent-activity">
+        <CardContent className="py-8 text-sm text-muted-foreground">{t("loading")}</CardContent>
+      </Card>
+    );
+  }
+
+  if (activity.isError || !activity.data) {
+    return (
+      <Card data-testid="agent-activity">
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 py-6">
+          <p role="alert" className="text-sm text-destructive">
+            {t("error")}
+          </p>
+          <Button variant="outline" size="sm" onClick={() => void activity.refetch()}>
+            {t("retry")}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const data = activity.data;
+  const metrics = [
+    ["totalRuns", data.total_runs],
+    ["activeRuns", data.active_runs],
+    [
+      "successRate",
+      data.success_rate === null
+        ? t("noTerminalSample")
+        : new Intl.NumberFormat(i18n.language, {
+            style: "percent",
+            maximumFractionDigits: 1,
+          }).format(data.success_rate),
+    ],
+    ["waitingRuns", data.waiting_runs],
+    ["failedRuns", data.failed_runs],
+  ] as const;
+
+  function stateBadge(run: AgentActivityRun) {
+    return (
+      <Badge
+        variant={run.state === "failed" ? "destructive" : "outline"}
+        className={
+          run.state === "succeeded"
+            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+            : run.state === "running"
+              ? "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-400"
+              : run.state === "waiting"
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                : undefined
+        }
+      >
+        {t(`states.${run.state}`, { defaultValue: run.state })}
+      </Badge>
+    );
+  }
+
+  return (
+    <Card data-testid="agent-activity">
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <ActivityIcon className="size-4 text-muted-foreground" />
+          <CardTitle>{t("title")}</CardTitle>
+        </div>
+        <CardDescription>{t("description")}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {metrics.map(([key, value]) => (
+            <div key={key} className="rounded-xl border bg-muted/20 p-3">
+              <p className="text-xs text-muted-foreground">{t(`metrics.${key}`)}</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div>
+          <h2 className="text-sm font-semibold">{t("recentRuns")}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">{t("recentRunsDescription")}</p>
+          {data.recent_runs.length === 0 ? (
+            <p className="mt-3 rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+              {t("emptyRuns")}
+            </p>
+          ) : (
+            <div className="mt-3 overflow-x-auto rounded-lg border">
+              <table className="w-full min-w-[760px] text-left text-sm">
+                <thead className="border-b bg-muted/30 text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">{t("columns.taskRun")}</th>
+                    <th className="px-3 py-2 font-medium">{t("columns.state")}</th>
+                    <th className="px-3 py-2 font-medium">{t("columns.project")}</th>
+                    <th className="px-3 py-2 font-medium">{t("columns.reason")}</th>
+                    <th className="px-3 py-2 font-medium">{t("columns.queuedAt")}</th>
+                    <th className="px-3 py-2 font-medium">{t("columns.session")}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {data.recent_runs.map((run) => (
+                    <tr key={run.id} className="align-top hover:bg-muted/20">
+                      <td className="max-w-64 px-3 py-3">
+                        <Link
+                          to={`/tasks/${run.task_id}#run-${run.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {run.task_title}
+                        </Link>
+                        <p
+                          className="mt-1 font-mono text-[11px] text-muted-foreground"
+                          title={run.id}
+                        >
+                          {t("runId", { id: run.id.slice(0, 8) })}
+                        </p>
+                      </td>
+                      <td className="px-3 py-3">{stateBadge(run)}</td>
+                      <td className="max-w-48 px-3 py-3">
+                        {run.project_id && run.project_name ? (
+                          <Link to={`/projects/${run.project_id}`} className="hover:underline">
+                            {run.project_name}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="max-w-72 px-3 py-3 text-xs text-muted-foreground">
+                        {run.waiting_reason || run.failure_message || run.failure_code || "—"}
+                        {run.failure_code && run.failure_message && (
+                          <p className="mt-1 font-mono text-[11px]">{run.failure_code}</p>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground">
+                        {activityTimestamp(run.queued_at, i18n.language)}
+                      </td>
+                      <td className="px-3 py-3">
+                        {run.session_id ? (
+                          <Link
+                            to={`/c/${run.session_id}`}
+                            className="font-mono text-xs hover:underline"
+                            title={run.session_id}
+                          >
+                            {t("sessionId", { id: run.session_id.slice(0, 8) })}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-xl border p-4">
+            <div className="flex items-center gap-2">
+              <FolderIcon className="size-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold">{t("projects")}</h2>
+            </div>
+            {data.projects.length === 0 ? (
+              <p className="mt-3 text-sm text-muted-foreground">{t("emptyProjects")}</p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {data.projects.map((project) => (
+                  <li key={project.id} className="flex items-center justify-between gap-3 text-sm">
+                    <Link to={`/projects/${project.id}`} className="truncate hover:underline">
+                      {project.name}
+                    </Link>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {t("runCount", { count: project.run_count })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="rounded-xl border p-4">
+            <div className="flex items-center gap-2">
+              <WrenchIcon className="size-4 text-muted-foreground" />
+              <h2 className="text-sm font-semibold">{t("skills")}</h2>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">{t("skillsDescription")}</p>
+            {data.skills.length === 0 ? (
+              <p className="mt-3 text-sm text-muted-foreground">{t("emptySkills")}</p>
+            ) : (
+              <ul className="mt-3 space-y-2">
+                {data.skills.map((skill) => (
+                  <li key={skill.name} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="truncate font-mono text-xs">{skill.name}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                      {t("useCount", { count: skill.uses })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 interface EditableFile {
   path: string;
@@ -143,13 +372,15 @@ function modelPreviewHarness(harness: string): string | null {
 function CreateBundleForm() {
   const { t } = useTranslation("agents", { keyPrefix: "multiAgent" });
   const create = useCreateMultiAgent();
+  const options = useAgentBundleOptions(true);
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [harness, setHarness] = useState("");
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || !harness) return;
     const draft = await create.mutateAsync({
       name: name.trim(),
       description: description.trim() || undefined,
@@ -157,7 +388,7 @@ function CreateBundleForm() {
         spec_version: 1,
         name: name.trim(),
         ...(description.trim() ? { description: description.trim() } : {}),
-        executor: { type: "omnigent", config: {} },
+        executor: { type: "omnigent", config: { harness } },
       },
     });
     navigate(`/multi-agents/${draft.card.id}`);
@@ -185,6 +416,23 @@ function CreateBundleForm() {
             />
           </div>
           <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">
+              {t("fields.harness")}
+            </label>
+            <Select value={harness} onValueChange={setHarness}>
+              <SelectTrigger aria-label={t("fields.harness")} className="w-full">
+                <SelectValue placeholder={t("fields.harness")} />
+              </SelectTrigger>
+              <SelectContent>
+                {(options.data?.harnesses ?? []).map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
             <label
               htmlFor="bundle-description"
               className="text-xs font-medium text-muted-foreground"
@@ -197,7 +445,7 @@ function CreateBundleForm() {
               onChange={(event) => setDescription(event.target.value)}
             />
           </div>
-          <Button type="submit" disabled={!name.trim() || create.isPending}>
+          <Button type="submit" disabled={!name.trim() || !harness || create.isPending}>
             <PlusIcon /> {create.isPending ? t("actions.saving") : t("actions.create")}
           </Button>
           {create.isError && (
@@ -641,12 +889,9 @@ export function MultiAgentDetailPage() {
 
   return (
     <PageScroll contentClassName="px-6 py-8" extraBottom="2.5rem" maxWidthClassName="max-w-6xl">
-      <Button asChild variant="ghost" size="sm" className="-ml-3 mb-4">
-        <Link to="/multi-agents" aria-label={t("actions.back")}>
-          <ArrowLeftIcon />
-          {t("actions.back")}
-        </Link>
-      </Button>
+      <PageBackButton fallbackTo="/multi-agents" className="-ml-3 mb-4">
+        {t("actions.back")}
+      </PageBackButton>
       {isNew ? (
         <CreateBundleForm />
       ) : (
@@ -759,6 +1004,8 @@ export function MultiAgentDetailPage() {
                 </Button>
               </div>
             )}
+
+            <AgentActivityPanel agentId={bundle.data.card.id} />
 
             <div className="grid items-start gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
               <Card className="self-start lg:sticky lg:top-6">

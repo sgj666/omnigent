@@ -361,6 +361,8 @@ _SCHEDULED_TASK_TOOLS = frozenset(
     }
 )
 
+_WORK_ITEM_TOOLS = frozenset({"sys_work_item_create"})
+
 # Priority 5m: Embedded-browser tools.
 # Runner dispatch POSTs a blocking action request to the server, which parks a
 # Future + publishes ``browser.action_request`` on the session stream; the
@@ -420,6 +422,7 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     | _AGENT_TOOLS
     | _POLICY_TOOLS
     | _SCHEDULED_TASK_TOOLS
+    | _WORK_ITEM_TOOLS
     | _TERMINAL_TOOLS
     # ``browser_*`` must ride the native relay: the Omnigent desktop app
     # runs native (claude/codex/pi) sessions, which ignore ``request.tools``
@@ -591,6 +594,7 @@ _ALL_LOCAL_TOOLS = (
     | _AGENT_TOOLS
     | _POLICY_TOOLS
     | _SCHEDULED_TASK_TOOLS
+    | _WORK_ITEM_TOOLS
 )
 _PLACEHOLDER_CWDS = (None, "", ".", "./")
 
@@ -3379,6 +3383,55 @@ async def _execute_scheduled_task_tool(
     return json.dumps(resp.json())
 
 
+_WORK_ITEM_CREATE_FIELDS = (
+    "title",
+    "description",
+    "state",
+    "priority",
+    "project_id",
+    "assignee_agent_id",
+    "due_at",
+)
+
+
+async def _execute_work_item_tool(
+    arguments: str,
+    *,
+    server_client: httpx.AsyncClient | None,
+    agent_id: str | None,
+    conversation_id: str | None,
+) -> str:
+    """Proxy explicit Agent Task creation to ``POST /v1/work-items``."""
+    if server_client is None:
+        return json.dumps({"error": "sys_work_item_create requires server access"})
+    if agent_id is None:
+        return json.dumps({"error": "sys_work_item_create requires an Agent identity"})
+    if conversation_id is None:
+        return json.dumps({"error": "sys_work_item_create requires a Session identity"})
+    try:
+        args: dict[str, Any] = json.loads(arguments) if arguments.strip() else {}
+    except json.JSONDecodeError:
+        return json.dumps({"error": "sys_work_item_create: malformed JSON arguments"})
+    payload = {key: args[key] for key in _WORK_ITEM_CREATE_FIELDS if key in args}
+    try:
+        response = await server_client.post(
+            "/v1/work-items",
+            json=payload,
+            headers={
+                "X-Orvia-Creator-Agent-Id": agent_id,
+                "X-Orvia-Creator-Session-Id": conversation_id,
+            },
+            timeout=30.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"sys_work_item_create failed: {exc}"})
+    if response.status_code >= 400:
+        return json.dumps(
+            {"error": f"server returned {response.status_code}", "details": response.text[:500]}
+        )
+    return json.dumps(response.json())
+
+
 @dataclass
 class _ParsedTitle:
     """
@@ -4942,6 +4995,13 @@ async def execute_tool(
                 tool_name,
                 arguments,
                 server_client=server_client,
+            )
+        elif tool_name in _WORK_ITEM_TOOLS:
+            output = await _execute_work_item_tool(
+                arguments,
+                server_client=server_client,
+                agent_id=agent_id,
+                conversation_id=conversation_id,
             )
         elif tool_name in _BROWSER_TOOLS:
             output = await _execute_browser_tool(

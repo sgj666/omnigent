@@ -94,6 +94,7 @@ def _to_response(
     task: ScheduledTask,
     *,
     last_run_status: str | None = None,
+    last_run_error_code: str | None = None,
     next_run_at: str | None = None,
 ) -> dict[str, Any]:
     """Serialize a :class:`ScheduledTask` to a JSON-safe dict.
@@ -102,6 +103,8 @@ def _to_response(
         (``succeeded`` / ``failed`` / ``skipped`` / ``running`` / ``scheduled``),
         or ``None`` when the task has never run. Surfaced so the Tasks list can
         render a completion badge without an extra per-row ``/runs`` fetch.
+    :param last_run_error_code: Structured failure classification from that
+        same latest run, or ``None`` when no failure code was recorded.
     :param next_run_at: ISO-8601 timestamp of the task's next scheduled fire as
         computed by the live scheduler (the server's authoritative anchor), or
         ``None`` when the task is paused / not armed. Deliberately server-sourced
@@ -126,6 +129,7 @@ def _to_response(
         "state": task.state,
         "last_run_at": task.last_run_at,
         "last_run_status": last_run_status,
+        "last_run_error_code": last_run_error_code,
         "last_run_conversation_id": task.last_run_conversation_id,
         "next_run_at": next_run_at,
         "updated_at": task.updated_at,
@@ -345,13 +349,16 @@ def create_scheduled_tasks_router(
         # Force-fail stale orphans FIRST so the completion badge below reports a
         # dead run as ``failed`` rather than a stuck ``running``.
         force_fail_stale_runs(store, running)
-        latest_status = store.list_latest_run_status_for_tasks(task_ids)
+        latest_runs = store.list_latest_runs_for_tasks(task_ids)
         scheduler = _scheduler(request)
         return {
             "scheduled_tasks": [
                 _to_response(
                     t,
-                    last_run_status=latest_status.get(t.id),
+                    last_run_status=latest_runs[t.id].status if t.id in latest_runs else None,
+                    last_run_error_code=(
+                        latest_runs[t.id].error_code if t.id in latest_runs else None
+                    ),
                     next_run_at=scheduler.next_run_at(t.id) if scheduler is not None else None,
                 )
                 for t in tasks
@@ -369,11 +376,12 @@ def create_scheduled_tasks_router(
         task = _require_owned(scheduled_task_id, owner_id)
         running = store.list_running_runs_for_tasks([task.id])
         force_fail_stale_runs(store, running)
-        latest_status = store.list_latest_run_status_for_tasks([task.id])
+        latest_run = store.list_latest_runs_for_tasks([task.id]).get(task.id)
         scheduler = _scheduler(request)
         return _to_response(
             task,
-            last_run_status=latest_status.get(task.id),
+            last_run_status=latest_run.status if latest_run else None,
+            last_run_error_code=latest_run.error_code if latest_run else None,
             next_run_at=scheduler.next_run_at(task.id) if scheduler is not None else None,
         )
 
@@ -500,10 +508,11 @@ def create_scheduled_tasks_router(
         scheduler = _scheduler(request)
         if scheduler is not None:
             scheduler.update(updated)
-        latest_status = store.list_latest_run_status_for_tasks([updated.id])
+        latest_run = store.list_latest_runs_for_tasks([updated.id]).get(updated.id)
         return _to_response(
             updated,
-            last_run_status=latest_status.get(updated.id),
+            last_run_status=latest_run.status if latest_run else None,
+            last_run_error_code=latest_run.error_code if latest_run else None,
             next_run_at=scheduler.next_run_at(updated.id) if scheduler is not None else None,
         )
 

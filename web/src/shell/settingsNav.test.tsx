@@ -151,7 +151,7 @@ describe("SettingsSidebarBody", () => {
     // sidebar swaps back to the conversation list rather than closing onto the
     // homepage behind it.
     const { onNavClick } = renderBody();
-    fireEvent.click(screen.getByRole("link", { name: /Back to Omnigent/ }));
+    fireEvent.click(screen.getByRole("link", { name: /Back to Orvia/ }));
     expect(onNavClick).not.toHaveBeenCalled();
   });
 
@@ -180,7 +180,7 @@ describe("SettingsSidebarBody", () => {
       </TooltipProvider>,
     );
     fireEvent.click(screen.getByText("go-settings"));
-    expect(screen.getByRole("link", { name: /Back to Omnigent/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /Back to Orvia/ })).toHaveAttribute(
       "href",
       "/c/conv_123?file=foo.ts",
     );

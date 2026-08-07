@@ -1265,6 +1265,8 @@ class SessionCreateRequest(BaseModel):
     :param title: Optional human-readable title for the session,
         e.g. ``"debugging auth flow"``.
     :param labels: Initial guardrails labels to set on the session.
+    :param project_id: Optional first-class project to file the new session
+        into. The project must exist and belong to the caller.
     :param parent_session_id: Parent session for sub-agent spawns.
         When set, the server inherits the parent's ``runner_id``
         affinity and sets ``parent_conversation_id`` on the child
@@ -1369,6 +1371,7 @@ class SessionCreateRequest(BaseModel):
     initial_items: list[SessionEventInput] = Field(default_factory=list)
     title: str | None = None
     labels: dict[str, str] = Field(default_factory=dict)
+    project_id: str | None = Field(default=None, min_length=1)
     parent_session_id: str | None = None
     sub_agent_name: str | None = None
     host_type: Literal["external", "managed"] = "external"
@@ -1471,6 +1474,8 @@ class SessionCreateMetadata(BaseModel):
         e.g. ``"debugging auth flow"``.
     :param labels: Initial guardrails labels to set on the
         session. Empty dict (the default) starts with no labels.
+    :param project_id: Optional first-class project to file the new session
+        into. The project must exist and belong to the caller.
     :param reasoning_effort: Optional per-session reasoning-effort
         hint. Accepted metadata values are ``"none"``,
         ``"minimal"``, ``"low"``, ``"medium"``, ``"high"``,
@@ -1505,6 +1510,7 @@ class SessionCreateMetadata(BaseModel):
 
     title: str | None = None
     labels: dict[str, str] = Field(default_factory=dict)
+    project_id: str | None = Field(default=None, min_length=1)
     reasoning_effort: str | None = None
     host_id: str | None = None
     workspace: str | None = None
@@ -2422,7 +2428,115 @@ class SessionUsage(BaseModel):
     updated_at: int
     title: str | None = None
     cost_usd: float = 0.0
+    priced: bool = False
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    total_tokens: int = 0
     models: dict[str, float] = Field(default_factory=dict)
+
+
+class OperationalUsageMetrics(BaseModel):
+    """Task and TaskRun health metrics derived from durable product work."""
+
+    total_tasks: int = 0
+    total_runs: int = 0
+    active_runs: int = 0
+    terminal_runs: int = 0
+    succeeded_runs: int = 0
+    failed_runs: int = 0
+    cancelled_runs: int = 0
+    waiting_runs: int = 0
+    success_rate: float | None = None
+    retry_runs: int = 0
+    retry_rate: float | None = None
+    average_queue_seconds: float | None = None
+    average_run_seconds: float | None = None
+    priced_runs: int = 0
+    unpriced_runs: int = 0
+    waiting_duration_available: bool = False
+
+
+class UsageBreakdownRow(BaseModel):
+    """One Project, Agent, Runtime, or observed Skill usage aggregation."""
+
+    id: str
+    name: str
+    run_count: int = 0
+    succeeded_runs: int = 0
+    failed_runs: int = 0
+    success_rate: float | None = None
+    cost_usd: float = 0.0
+    priced_run_count: int = 0
+    unpriced_run_count: int = 0
+    total_tokens: int = 0
+    average_run_seconds: float | None = None
+    uses: int | None = None
+    cost_attribution: Literal["session", "session_association_only"] = "session"
+
+
+class UsageBreakdowns(BaseModel):
+    """Operational usage grouped by the management dimensions Orvia exposes."""
+
+    projects: list[UsageBreakdownRow] = Field(default_factory=list)
+    agents: list[UsageBreakdownRow] = Field(default_factory=list)
+    runtimes: list[UsageBreakdownRow] = Field(default_factory=list)
+    skills: list[UsageBreakdownRow] = Field(default_factory=list)
+
+
+class UsageFilterOption(BaseModel):
+    """One stable Project or Agent option for URL-backed Usage filters."""
+
+    id: str
+    name: str
+
+
+class UsageFilterOptions(BaseModel):
+    """Available filters derived from all owner-scoped TaskRuns."""
+
+    projects: list[UsageFilterOption] = Field(default_factory=list)
+    agents: list[UsageFilterOption] = Field(default_factory=list)
+
+
+class TaskRunUsage(BaseModel):
+    """Auditable TaskRun row with Session-backed usage attribution."""
+
+    id: str
+    task_id: str
+    task_title: str
+    project_id: str | None = None
+    project_name: str | None = None
+    agent_id: str
+    agent_name: str
+    runtime_id: str
+    runtime_name: str
+    session_id: str | None = None
+    state: Literal["queued", "running", "waiting", "succeeded", "failed", "cancelled"]
+    trigger: Literal["manual", "retry"]
+    retry_of_run_id: str | None = None
+    queued_at: int
+    started_at: int | None = None
+    finished_at: int | None = None
+    queue_seconds: float | None = None
+    run_seconds: float | None = None
+    run_duration_live: bool = False
+    priced: bool = False
+    cost_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    total_tokens: int = 0
+    observed_skills: list[str] = Field(default_factory=list)
+    waiting_reason: str | None = None
+    failure_code: str | None = None
+    failure_message: str | None = None
+
+
+class DailyCostUsage(BaseModel):
+    """One authoritative UTC-day cost point for the Usage trend."""
+
+    day_utc: str
+    cost_usd: float = 0.0
 
 
 class UsageReport(BaseModel):
@@ -2455,7 +2569,12 @@ class UsageReport(BaseModel):
     cost_last_7d: float = 0.0
     cost_last_30d: float = 0.0
     total_cost_usd: float = 0.0
+    daily_cost: list[DailyCostUsage] = Field(default_factory=list)
     sessions: list[SessionUsage] = Field(default_factory=list)
+    operations: OperationalUsageMetrics = Field(default_factory=OperationalUsageMetrics)
+    breakdowns: UsageBreakdowns = Field(default_factory=UsageBreakdowns)
+    filter_options: UsageFilterOptions = Field(default_factory=UsageFilterOptions)
+    task_runs: list[TaskRunUsage] = Field(default_factory=list)
 
 
 # ── Permissions ────────────────────────────────────────────────────
@@ -4419,6 +4538,108 @@ class UpdateProjectRequest(BaseModel):
         if len(trimmed) > 100:
             raise ValueError("name must be at most 100 characters")
         return trimmed
+
+
+# ── Product Tasks ──────────────────────────────────────────────
+
+
+WorkItemState = Literal[
+    "backlog",
+    "todo",
+    "in_progress",
+    "review",
+    "done",
+    "blocked",
+    "failed",
+    "cancelled",
+]
+WorkItemPriority = Literal["low", "medium", "high", "urgent"]
+
+
+class CreateWorkItemRequest(BaseModel):
+    """Request body for ``POST /v1/work-items``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    description: str | None = Field(default=None, max_length=20_000)
+    state: WorkItemState = "backlog"
+    priority: WorkItemPriority = "medium"
+    project_id: str | None = Field(default=None, min_length=32, max_length=32)
+    assignee_agent_id: str | None = Field(default=None, min_length=32, max_length=32)
+    due_at: int | None = Field(default=None, ge=0)
+
+    @field_validator("title")
+    @classmethod
+    def _validate_title(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("title must not be empty")
+        if len(trimmed) > 256:
+            raise ValueError("title must be at most 256 characters")
+        return trimmed
+
+
+class UpdateWorkItemRequest(BaseModel):
+    """Optimistic update for ``PATCH /v1/work-items/{id}``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=1)
+    title: str | None = None
+    description: str | None = Field(default=None, max_length=20_000)
+    state: WorkItemState | None = None
+    priority: WorkItemPriority | None = None
+    project_id: str | None = Field(default=None, min_length=32, max_length=32)
+    assignee_agent_id: str | None = Field(default=None, min_length=32, max_length=32)
+    due_at: int | None = Field(default=None, ge=0)
+
+    @field_validator("title")
+    @classmethod
+    def _validate_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("title must not be empty")
+        if len(trimmed) > 256:
+            raise ValueError("title must be at most 256 characters")
+        return trimmed
+
+    @model_validator(mode="after")
+    def _validate_changes(self) -> UpdateWorkItemRequest:
+        fields = self.model_fields_set - {"expected_version"}
+        if not fields:
+            raise ValueError("at least one Task field must be provided")
+        if "title" in fields and self.title is None:
+            raise ValueError("title cannot be null")
+        return self
+
+
+class CreateWorkItemRunRequest(BaseModel):
+    """Execution target for ``POST /v1/work-items/{id}/runs``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    runtime_id: str = Field(min_length=1, max_length=128)
+    workspace: str = Field(min_length=1, max_length=4096)
+    retry_of_run_id: str | None = Field(default=None, min_length=32, max_length=32)
+
+    @field_validator("runtime_id", "workspace")
+    @classmethod
+    def _trim_required(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("value must not be empty")
+        return trimmed
+
+
+class UpdateInboxItemRequest(BaseModel):
+    """Read-state update for one persistent Inbox item."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    read: bool
 
 
 # ── Team harness ───────────────────────────────────────────────

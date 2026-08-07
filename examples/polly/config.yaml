@@ -321,6 +321,9 @@ terminals:
         type: none
 
 tools:
+  builtins:
+    - upload_file
+
   # Coding sub-agents — see agents/<name>/. claude_code, codex, opencode,
   # cursor, hermes, and agy are real CLI coding harnesses; pi is a headless
   # multi-model worker. Each implements, reviews (cross-vendor), and explores.

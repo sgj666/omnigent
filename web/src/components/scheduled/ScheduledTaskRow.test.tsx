@@ -3,7 +3,7 @@
 //
 // The row is fully props-driven, so these render it directly with a built task
 // object — no hook mocking needed. The ⋯ menu is a Radix dropdown; opening it
-// uses pointerDown on the trigger (matching the TasksPage tests).
+// uses pointerDown on the trigger (matching the AutomationsPage tests).
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +28,7 @@ function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
     state: "active",
     lastRunAt: null,
     lastRunStatus: null,
+    lastRunErrorCode: null,
     lastRunConversationId: null,
     nextRunAt: null,
     ...overrides,
@@ -73,6 +74,25 @@ describe("next-run text (server-sourced, relative delta)", () => {
   it("renders NO next-run text when nextRunAt is null (paused / unarmed)", () => {
     renderRow(task({ nextRunAt: null }));
     expect(screen.queryByTestId("task-next-run")).toBeNull();
+  });
+});
+
+describe("latest run issue", () => {
+  it("renders a localized failure reason and its structured code", () => {
+    renderRow(
+      task({
+        lastRunStatus: "failed",
+        lastRunErrorCode: "no_online_host",
+      }),
+    );
+    const issue = screen.getByTestId("task-last-run-issue");
+    expect(issue).toHaveTextContent("Last run issue: No connected host was available.");
+    expect(issue).toHaveTextContent("no_online_host");
+  });
+
+  it("does not render an issue summary for a successful run", () => {
+    renderRow(task({ lastRunStatus: "succeeded", lastRunErrorCode: null }));
+    expect(screen.queryByTestId("task-last-run-issue")).toBeNull();
   });
 });
 

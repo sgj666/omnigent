@@ -62,8 +62,8 @@ describe("bundled localization resources", () => {
       token: "Token",
     });
     expect(JSON.stringify(resources["zh-CN"])).not.toContain("令牌");
-    expect(resources.en.common.documentTitle).toBe("Omnigent");
-    expect(resources["zh-CN"].common.documentTitle).toBe("Omnigent");
+    expect(resources.en.common.documentTitle).toBe("Orvia");
+    expect(resources["zh-CN"].common.documentTitle).toBe("Orvia");
   });
 
   it("keeps ChatPage status and context feedback professionally localized", () => {

@@ -4,10 +4,10 @@
   "banner": {
     "ariaLabel": "桌面端更新",
     "update": "更新",
-    "available": "Omnigent {{version}} 可用更新",
-    "downloading": "正在下载 Omnigent 更新…{{progress}}%",
+    "available": "Orvia {{version}} 可用更新",
+    "downloading": "正在下载 Orvia 更新…{{progress}}%",
     "downloadProgress": "更新下载进度",
-    "ready": "Omnigent {{version}} 已准备安装",
+    "ready": "Orvia {{version}} 已准备安装",
     "autoInstallOnQuit": "下次退出应用时自动安装。",
     "checkFailed": "检查更新失败",
     "releaseNotes": "发行说明",

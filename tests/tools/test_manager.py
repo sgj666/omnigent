@@ -81,6 +81,8 @@ _ALWAYS_PRESENT_TOOLS: frozenset[str] = frozenset(
         "sys_scheduled_task_list",
         "sys_scheduled_task_update",
         "sys_scheduled_task_delete",
+        # Explicit, user-directed durable Task creation.
+        "sys_work_item_create",
         # Embedded-browser tools are always auto-registered (framework-
         # owned) so any agent can drive the desktop app's browser without
         # the spec opting in. Schema-only; runner-dispatched.
@@ -189,6 +191,7 @@ def _make_spec(
     return AgentSpec(
         spec_version=1,
         skills=skills or [],
+        skills_filter="none",
         mcp_servers=mcp_servers or [],
         local_tools=local_tools or [],
     )

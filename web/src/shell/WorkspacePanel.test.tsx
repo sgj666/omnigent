@@ -92,6 +92,7 @@ function renderWorkspace(
     todosSupported?: boolean;
     todosCompleted?: number;
     todosTotal?: number;
+    inert?: boolean;
   } = {},
 ) {
   const openFileViewer = vi.fn();
@@ -106,6 +107,7 @@ function renderWorkspace(
         conversationId="conv_ws"
         width={360}
         handleProps={{ tabIndex: 0 }}
+        inert={overrides.inert}
         rightRailTab={overrides.rightRailTab ?? "files"}
         onRightRailTabChange={onRightRailTabChange}
         showFilesPanel
@@ -152,6 +154,15 @@ function renderWorkspace(
 }
 
 describe("WorkspacePanel surface presentation", () => {
+  it("only renders the inert attribute while the panel is inactive", () => {
+    renderWorkspace({ inert: false });
+    expect(screen.getByRole("complementary", { name: "Workspace" })).not.toHaveAttribute("inert");
+
+    cleanup();
+    renderWorkspace({ inert: true });
+    expect(screen.getByRole("complementary", { name: "Workspace" })).toHaveAttribute("inert");
+  });
+
   it("uses an evenly inset desktop surface instead of clearing the header", () => {
     renderWorkspace();
 

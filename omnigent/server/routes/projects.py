@@ -22,22 +22,33 @@ from fastapi import APIRouter, Request
 
 from omnigent.entities import Project
 from omnigent.errors import ErrorCode, OmnigentError
+from omnigent.project_artifacts import list_project_artifacts
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.schemas import (
     CreateProjectRequest,
     UpdateProjectRequest,
 )
+from omnigent.stores.file_store import FileStore
 from omnigent.stores.project_store import ProjectStore
+from omnigent.stores.work_item_run_store import WorkItemRunStore
+from omnigent.stores.work_item_store import WorkItemStore
 
 
-def _to_response(project: Project) -> dict[str, Any]:
+def _to_response(
+    project: Project,
+    *,
+    session_count: int | None = None,
+    artifact_count: int | None = None,
+    latest_artifact_name: str | None = None,
+    latest_artifact_at: int | None = None,
+) -> dict[str, Any]:
     """Convert a :class:`Project` entity to a ``ProjectObject`` response dict.
 
     :param project: The entity to convert.
     :returns: Dict matching the :class:`ProjectObject` shape.
     """
-    return {
+    response = {
         "id": project.id,
         "object": "project",
         "name": project.name,
@@ -45,10 +56,25 @@ def _to_response(project: Project) -> dict[str, Any]:
         "updated_at": project.updated_at,
         "config": project.config,
     }
+    if session_count is not None:
+        response["session_count"] = session_count
+    if artifact_count is not None:
+        response.update(
+            {
+                "artifact_count": artifact_count,
+                "latest_artifact_name": latest_artifact_name,
+                "latest_artifact_at": latest_artifact_at,
+            }
+        )
+    return response
 
 
 def create_projects_router(
     project_store: ProjectStore,
+    *,
+    file_store: FileStore | None = None,
+    work_item_store: WorkItemStore | None = None,
+    work_item_run_store: WorkItemRunStore | None = None,
     auth_provider: AuthProvider | None = None,
 ) -> APIRouter:
     """Build the projects router (``/v1/projects``).
@@ -93,7 +119,62 @@ def create_projects_router(
         """
         user_id = require_user(request, auth_provider)
         projects = await asyncio.to_thread(project_store.list, owner_user_id=user_id)
-        return {"object": "list", "data": [_to_response(p) for p in projects]}
+        counts = await asyncio.to_thread(
+            project_store.count_sessions,
+            [project.id for project in projects],
+        )
+        artifact_summaries: dict[str, tuple[int, str | None, int | None]] = {}
+        if (
+            file_store is not None
+            and work_item_store is not None
+            and work_item_run_store is not None
+        ):
+            artifact_lists = await asyncio.gather(
+                *(
+                    asyncio.to_thread(
+                        list_project_artifacts,
+                        project.id,
+                        owner_user_id=user_id,
+                        work_item_store=work_item_store,
+                        work_item_run_store=work_item_run_store,
+                        file_store=file_store,
+                    )
+                    for project in projects
+                )
+            )
+            artifact_summaries = {
+                project.id: (
+                    len(artifacts),
+                    artifacts[0]["name"] if artifacts else None,
+                    artifacts[0]["created_at"] if artifacts else None,
+                )
+                for project, artifacts in zip(projects, artifact_lists, strict=True)
+            }
+        return {
+            "object": "list",
+            "data": [
+                _to_response(
+                    project,
+                    session_count=counts.get(project.id, 0),
+                    artifact_count=(
+                        artifact_summaries[project.id][0]
+                        if project.id in artifact_summaries
+                        else None
+                    ),
+                    latest_artifact_name=(
+                        artifact_summaries[project.id][1]
+                        if project.id in artifact_summaries
+                        else None
+                    ),
+                    latest_artifact_at=(
+                        artifact_summaries[project.id][2]
+                        if project.id in artifact_summaries
+                        else None
+                    ),
+                )
+                for project in projects
+            ],
+        }
 
     @router.get("/projects/{project_id}")
     async def get_project(request: Request, project_id: str) -> dict[str, Any]:
@@ -109,7 +190,31 @@ def create_projects_router(
         project = await asyncio.to_thread(project_store.get, project_id, owner_user_id=user_id)
         if project is None:
             raise OmnigentError("Project not found", code=ErrorCode.NOT_FOUND)
-        return _to_response(project)
+        counts = await asyncio.to_thread(project_store.count_sessions, [project.id])
+        return _to_response(project, session_count=counts.get(project.id, 0))
+
+    if file_store is not None and work_item_store is not None and work_item_run_store is not None:
+
+        @router.get("/projects/{project_id}/artifacts")
+        async def list_artifacts(request: Request, project_id: str) -> dict[str, Any]:
+            """List real TaskRun output files associated with one Project."""
+            user_id = require_user(request, auth_provider)
+            project = await asyncio.to_thread(
+                project_store.get,
+                project_id,
+                owner_user_id=user_id,
+            )
+            if project is None:
+                raise OmnigentError("Project not found", code=ErrorCode.NOT_FOUND)
+            artifacts = await asyncio.to_thread(
+                list_project_artifacts,
+                project_id,
+                owner_user_id=user_id,
+                work_item_store=work_item_store,
+                work_item_run_store=work_item_run_store,
+                file_store=file_store,
+            )
+            return {"object": "list", "data": artifacts}
 
     @router.patch("/projects/{project_id}")
     async def update_project(
@@ -143,8 +248,7 @@ def create_projects_router(
     async def delete_project(request: Request, project_id: str) -> dict[str, Any]:
         """Delete one of the caller's projects.
 
-        Member sessions are not deleted; they are left for the caller to
-        unfile (clearing their ``project_id``).
+        Member sessions are preserved and unfiled atomically with the project.
 
         :param request: The incoming request, used to identify the user.
         :param project_id: The project to delete.

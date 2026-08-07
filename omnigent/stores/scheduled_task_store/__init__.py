@@ -301,18 +301,17 @@ class ScheduledTaskStore(ABC):
         ...
 
     @abstractmethod
-    def list_latest_run_status_for_tasks(
+    def list_latest_runs_for_tasks(
         self,
         scheduled_task_ids: builtins.list[str],
-    ) -> dict[str, str]:
+    ) -> dict[str, ScheduledTaskRun]:
         """
-        Return each task's MOST RECENT run status in one windowed query.
+        Return each task's MOST RECENT run in one windowed query.
 
-        Powers the Tasks-list completion badge: the route resolves the owner's
-        tasks, then this returns ``{task_id: status}`` for the single latest run
-        per task, so a page of N tasks costs ONE query instead of N per-row
-        ``/runs`` fetches. A task with no runs is simply absent from the map (the
-        caller renders "never run").
+        Powers the Tasks-list completion badge and failure summary: the route
+        resolves the owner's tasks, then this returns the single latest run per
+        task, so a page of N tasks costs ONE query instead of N per-row ``/runs``
+        fetches. A task with no runs is simply absent from the map.
 
         "Latest" uses the same ``(scheduled_at DESC, id DESC)`` ordering as
         :meth:`list_runs`, so the reported status matches the run that would head
@@ -326,7 +325,7 @@ class ScheduledTaskStore(ABC):
         read; an empty id list returns an empty map without a query.
 
         :param scheduled_task_ids: Task ids (already owner-scoped by the caller).
-        :returns: ``{scheduled_task_id: latest_run_status}`` for tasks that have
-            at least one run.
+        :returns: ``{scheduled_task_id: latest_run}`` for tasks that have at
+            least one run.
         """
         ...

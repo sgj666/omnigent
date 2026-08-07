@@ -3,6 +3,7 @@ import adminEn from "./locales/en/admin.json";
 import agentsEn from "./locales/en/agents.json";
 import chatEn from "./locales/en/chat.json";
 import commonEn from "./locales/en/common.json";
+import managementEn from "./locales/en/management.json";
 import modelsEn from "./locales/en/models.json";
 import settingsEn from "./locales/en/settings.json";
 import tasksEn from "./locales/en/tasks.json";
@@ -14,6 +15,7 @@ import adminZhCn from "./locales/zh-CN/admin.json";
 import agentsZhCn from "./locales/zh-CN/agents.json";
 import chatZhCn from "./locales/zh-CN/chat.json";
 import commonZhCn from "./locales/zh-CN/common.json";
+import managementZhCn from "./locales/zh-CN/management.json";
 import modelsZhCn from "./locales/zh-CN/models.json";
 import settingsZhCn from "./locales/zh-CN/settings.json";
 import tasksZhCn from "./locales/zh-CN/tasks.json";
@@ -33,6 +35,7 @@ export const namespaceKeys = [
   "account",
   "admin",
   "updates",
+  "management",
 ] as const;
 
 export const resources = {
@@ -48,6 +51,7 @@ export const resources = {
     account: accountEn,
     admin: adminEn,
     updates: updatesEn,
+    management: managementEn,
   },
   "zh-CN": {
     common: commonZhCn,
@@ -61,5 +65,6 @@ export const resources = {
     account: accountZhCn,
     admin: adminZhCn,
     updates: updatesZhCn,
+    management: managementZhCn,
   },
 } as const;

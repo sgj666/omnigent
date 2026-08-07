@@ -192,6 +192,7 @@ function scheduledTask(overrides: Partial<ScheduledTasksApiModule.ScheduledTask>
     state: "active",
     lastRunAt: null,
     lastRunStatus: null,
+    lastRunErrorCode: null,
     lastRunConversationId: null,
     nextRunAt: null,
     ...overrides,

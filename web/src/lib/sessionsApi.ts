@@ -423,6 +423,7 @@ export async function createSession(
     parentSessionId?: string;
     subAgentName?: string | null;
     title?: string;
+    projectId?: string;
   } = {},
 ): Promise<Session> {
   const body: {
@@ -431,6 +432,7 @@ export async function createSession(
     parent_session_id?: string;
     sub_agent_name?: string | null;
     title?: string;
+    project_id?: string;
   } = { agent_id: agentId, initial_items: initialItems };
   if (options.parentSessionId !== undefined) {
     body.parent_session_id = options.parentSessionId;
@@ -440,6 +442,9 @@ export async function createSession(
   }
   if (options.title !== undefined) {
     body.title = options.title;
+  }
+  if (options.projectId !== undefined) {
+    body.project_id = options.projectId;
   }
   const res = await authenticatedFetch("/v1/sessions", {
     method: "POST",
@@ -472,6 +477,7 @@ export async function createBundledSession(
     labels?: Record<string, string>;
     terminal_launch_args?: string[];
     git?: { branch_name: string; base_branch?: string };
+    project_id?: string;
   } = {},
 ): Promise<{ id: string }> {
   const form = new FormData();
@@ -696,7 +702,7 @@ interface RunnerSummaryWire {
   harnesses?: string[];
 }
 
-interface RunnerSummary {
+export interface RunnerSummary {
   runnerId: string;
   online: boolean;
   harnesses: string[];

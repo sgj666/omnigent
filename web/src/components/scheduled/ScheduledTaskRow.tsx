@@ -24,6 +24,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { StatusBadge, type StatusTone } from "@/components/collection";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,6 +35,15 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { describeSchedule, formatNextRunAt, localizeScheduleSummary } from "@/lib/scheduleText";
 import type { ScheduledTask } from "@/lib/scheduledTasksApi";
+import { Link } from "@/lib/routing";
+
+function runStatusTone(status: ScheduledTask["lastRunStatus"]): StatusTone {
+  if (status === "succeeded") return "success";
+  if (status === "failed") return "danger";
+  if (status === "running" || status === "scheduled") return "info";
+  if (status === "skipped" || status === "incomplete") return "warning";
+  return "neutral";
+}
 
 export function ScheduledTaskRow({
   task,
@@ -76,6 +86,21 @@ export function ScheduledTaskRow({
       ),
     [task.nextRunAt, now, i18n.language, i18n.resolvedLanguage],
   );
+  const lastRunDate = useMemo(() => {
+    if (task.lastRunAt == null) return null;
+    return new Intl.DateTimeFormat(i18n.resolvedLanguage ?? i18n.language).format(
+      new Date(task.lastRunAt * 1000),
+    );
+  }, [task.lastRunAt, i18n.language, i18n.resolvedLanguage]);
+  const hasLastRunIssue =
+    task.lastRunStatus === "failed" ||
+    task.lastRunStatus === "skipped" ||
+    task.lastRunStatus === "incomplete";
+  const lastRunReason = hasLastRunIssue
+    ? t(`runError.${task.lastRunErrorCode ?? task.lastRunStatus}`, {
+        defaultValue: t("runError.unknown"),
+      })
+    : null;
 
   return (
     <div
@@ -85,7 +110,7 @@ export function ScheduledTaskRow({
         // Card chrome — matching the app's card vocabulary (`rounded-xl border
         // border-border bg-card`, see InboxPage rows / the Card component): a
         // visible border, subtle card background, rounded corners, and internal
-        // padding. The list container (TasksPage) stacks these with a `gap` so
+        // padding. The list container (AutomationsPage) stacks these with a `gap` so
         // there is vertical spacing between cards. `group relative` lets the
         // absolutely-positioned ⋯ trigger hover-reveal; `pr-12` keeps the text
         // clear of the inset button, whose `right-3` matches the card's `px-4`
@@ -119,6 +144,44 @@ export function ScheduledTaskRow({
             </>
           )}
         </span>
+        <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="max-w-48 truncate">{t("agentTarget", { agent: task.agentId })}</span>
+          <span aria-hidden>·</span>
+          <span>{lastRunDate ? t("lastRunAt", { date: lastRunDate }) : t("neverRun")}</span>
+          {task.lastRunStatus ? (
+            task.lastRunConversationId ? (
+              <Link
+                to={`/c/${task.lastRunConversationId}`}
+                aria-label={t("openLastRun")}
+                className="rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <StatusBadge tone={runStatusTone(task.lastRunStatus)}>
+                  {t(`runStatus.${task.lastRunStatus}`)}
+                </StatusBadge>
+              </Link>
+            ) : (
+              <StatusBadge tone={runStatusTone(task.lastRunStatus)}>
+                {t(`runStatus.${task.lastRunStatus}`)}
+              </StatusBadge>
+            )
+          ) : null}
+        </span>
+        {lastRunReason ? (
+          <p
+            className={cn(
+              "mt-1 text-[11px]",
+              task.lastRunStatus === "failed" ? "text-destructive" : "text-warning-foreground",
+            )}
+            data-testid="task-last-run-issue"
+          >
+            {t("lastRunIssue")}: {lastRunReason}
+            {task.lastRunErrorCode ? (
+              <code className="ml-1 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+                {task.lastRunErrorCode}
+              </code>
+            ) : null}
+          </p>
+        ) : null}
       </div>
 
       {/* Hover-revealed ellipsis menu, mirroring the sidebar conversation-row

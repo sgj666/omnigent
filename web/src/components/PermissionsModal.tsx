@@ -147,7 +147,7 @@ export function PermissionsModal({
             </DialogTitle>
             <DialogDescription>
               {t("permissions.sharingDisabled", {
-                defaultValue: "Sharing has been disabled for this Omnigent server.",
+                defaultValue: "Sharing has been disabled for this Orvia server.",
               })}
             </DialogDescription>
           </DialogHeader>
@@ -583,8 +583,7 @@ function QrCodeDialog({
           </DialogTitle>
           <DialogDescription>
             {t("permissions.scanMobile", {
-              defaultValue:
-                "Scan with your phone's camera to open this session in the Omnigent app.",
+              defaultValue: "Scan with your phone's camera to open this session in the Orvia app.",
             })}
           </DialogDescription>
         </DialogHeader>
@@ -599,7 +598,7 @@ function QrCodeDialog({
               bgColor="#ffffff"
               fgColor="#000000"
               aria-label={t("permissions.qrLabel", {
-                defaultValue: "QR code to open this session in the Omnigent app",
+                defaultValue: "QR code to open this session in the Orvia app",
               })}
             />
           </div>

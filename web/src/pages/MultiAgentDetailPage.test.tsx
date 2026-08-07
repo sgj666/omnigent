@@ -6,22 +6,33 @@ import { i18n } from "@/i18n";
 import {
   AgentBundleApiError,
   AgentVersionConflict,
+  type AgentActivity,
   type AgentBundleDraft,
 } from "@/lib/multiAgentApi";
 import { MultiAgentDetailPage } from "./MultiAgentDetailPage";
 
 const hooks = vi.hoisted(() => ({
   detail: vi.fn(),
+  activity: vi.fn(),
   schema: vi.fn(),
   options: vi.fn(),
   hostModels: vi.fn(),
   create: { mutateAsync: vi.fn(), isPending: false, isError: false, error: null },
   update: { mutateAsync: vi.fn(), isPending: false, isError: false, error: null },
   feishuConnection: vi.fn(),
+  feishuSurfaceProfile: {
+    data: {
+      details_enabled: true,
+      details_base_url: "http://127.0.0.1:5173",
+      actions: ["quick_commands", "manage_devices", "switch_workspace"],
+    },
+    error: null,
+  },
 }));
 
 vi.mock("@/hooks/useMultiAgents", () => ({
   useMultiAgent: () => hooks.detail(),
+  useAgentActivity: () => hooks.activity(),
   useAgentFormSchema: () => hooks.schema(),
   useAgentBundleOptions: () => hooks.options(),
   useCreateMultiAgent: () => hooks.create,
@@ -57,14 +68,7 @@ vi.mock("@/hooks/useFeishuInstall", () => ({
   useDisconnectAgentFeishu: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   useBindAgentFeishuWorkspace: () => ({ mutateAsync: vi.fn(), isPending: false, error: null }),
   useAgentFeishuSurface: () => ({ data: undefined, error: null }),
-  useAgentFeishuSurfaceProfile: () => ({
-    data: {
-      details_enabled: true,
-      details_base_url: "http://127.0.0.1:5173",
-      actions: ["quick_commands", "manage_devices", "switch_workspace"],
-    },
-    error: null,
-  }),
+  useAgentFeishuSurfaceProfile: () => hooks.feishuSurfaceProfile,
   useReinitializeAgentFeishuSurface: () => ({
     mutateAsync: vi.fn(),
     isPending: false,
@@ -145,6 +149,18 @@ function renderPage() {
   );
 }
 
+function renderCreatePage() {
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={["/multi-agents/new"]}>
+        <Routes>
+          <Route path="/multi-agents/:agentId" element={<MultiAgentDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 function selectTab(name: string) {
   fireEvent.mouseDown(screen.getByRole("tab", { name }), { button: 0, ctrlKey: false });
 }
@@ -154,6 +170,23 @@ describe("MultiAgentDetailPage", () => {
     vi.clearAllMocks();
     const data = copyDraft();
     hooks.detail.mockReturnValue({ data, isLoading: false, isError: false });
+    hooks.activity.mockReturnValue({
+      data: {
+        agent_id: "ag_custom",
+        total_runs: 0,
+        active_runs: 0,
+        waiting_runs: 0,
+        failed_runs: 0,
+        success_rate: null,
+        recent_runs: [],
+        projects: [],
+        skills: [],
+        skill_usage_source: "observed_load_skill_calls",
+      } satisfies AgentActivity,
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
     hooks.schema.mockReturnValue({ data: { schema_version: "1", fields: [] } });
     hooks.options.mockReturnValue({
       data: {
@@ -166,8 +199,35 @@ describe("MultiAgentDetailPage", () => {
       },
     });
     hooks.hostModels.mockReturnValue({ data: [], isLoading: false, isError: false });
+    hooks.create.mutateAsync.mockResolvedValue(data);
     hooks.update.mutateAsync.mockResolvedValue({ ...data, version: data.version + 1 });
     hooks.feishuConnection.mockReturnValue({ data: null, isLoading: false, error: null });
+  });
+
+  it("requires a provider-owned harness when creating a bundle", async () => {
+    renderCreatePage();
+
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Approval agent" } });
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+
+    fireEvent.pointerDown(screen.getByLabelText("Harness"), {
+      button: 0,
+      pointerType: "mouse",
+    });
+    fireEvent.click(screen.getByRole("option", { name: "Provider Harness" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() =>
+      expect(hooks.create.mutateAsync).toHaveBeenCalledWith({
+        name: "Approval agent",
+        description: undefined,
+        config: {
+          spec_version: 1,
+          name: "Approval agent",
+          executor: { type: "omnigent", config: { harness: "provider-harness" } },
+        },
+      }),
+    );
   });
 
   it("renders the visual editor without pinning a local-default model", () => {
@@ -180,6 +240,98 @@ describe("MultiAgentDetailPage", () => {
     expect(screen.getByRole("tab", { name: "Advanced YAML" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Connect Feishu" })).toBeVisible();
     expect(screen.getByText("Not connected")).toBeVisible();
+  });
+
+  it("renders real Agent activity with TaskRun, Session, Project, reason, and Skill links", () => {
+    hooks.activity.mockReturnValue({
+      data: {
+        agent_id: "ag_custom",
+        total_runs: 3,
+        active_runs: 1,
+        waiting_runs: 1,
+        failed_runs: 1,
+        success_rate: 0.5,
+        recent_runs: [
+          {
+            id: "run-success-1234",
+            task_id: "task-1",
+            task_title: "Publish launch report",
+            state: "succeeded",
+            queued_at: 1_786_000_000,
+            started_at: 1_786_000_001,
+            finished_at: 1_786_000_010,
+            session_id: "session-1",
+            runtime_id: "host-1",
+            workspace: "/work/project",
+            project_id: "project-1",
+            project_name: "Launch",
+            waiting_reason: null,
+            failure_code: null,
+            failure_message: null,
+          },
+          {
+            id: "run-wait-1234",
+            task_id: "task-2",
+            task_title: "Approve release",
+            state: "waiting",
+            queued_at: 1_785_999_000,
+            started_at: 1_785_999_001,
+            finished_at: null,
+            session_id: "session-2",
+            runtime_id: "host-1",
+            workspace: "/work/project",
+            project_id: null,
+            project_name: null,
+            waiting_reason: "Awaiting approval",
+            failure_code: null,
+            failure_message: null,
+          },
+          {
+            id: "run-fail-1234",
+            task_id: "task-3",
+            task_title: "Check deployment",
+            state: "failed",
+            queued_at: 1_785_998_000,
+            started_at: 1_785_998_001,
+            finished_at: 1_785_998_010,
+            session_id: "session-3",
+            runtime_id: "host-1",
+            workspace: "/work/project",
+            project_id: "project-1",
+            project_name: "Launch",
+            waiting_reason: null,
+            failure_code: "runner_error",
+            failure_message: "Runner stopped",
+          },
+        ],
+        projects: [{ id: "project-1", name: "Launch", run_count: 2 }],
+        skills: [{ name: "cross-review", uses: 2 }],
+        skill_usage_source: "observed_load_skill_calls",
+      } satisfies AgentActivity,
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+
+    renderPage();
+
+    expect(screen.getByTestId("agent-activity")).toHaveTextContent("50%");
+    expect(screen.getByText("Awaiting approval")).toBeVisible();
+    expect(screen.getByText("Runner stopped")).toBeVisible();
+    expect(screen.getByText("runner_error")).toBeVisible();
+    expect(screen.getByText("cross-review")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Publish launch report" })).toHaveAttribute(
+      "href",
+      "/tasks/task-1#run-run-success-1234",
+    );
+    expect(screen.getAllByRole("link", { name: "Session session-" })[0]).toHaveAttribute(
+      "href",
+      "/c/session-1",
+    );
+    expect(screen.getAllByRole("link", { name: "Launch" })[0]).toHaveAttribute(
+      "href",
+      "/projects/project-1",
+    );
   });
 
   it("selects a model from the online Host catalog and keeps the prompt compact", async () => {

@@ -3541,11 +3541,14 @@ def server(
     # with "unable to open database file".
     _ensure_sqlite_parent_dir(db_uri)
 
+    from omnigent.stores.inbox_item_store.sqlalchemy_store import SqlAlchemyInboxItemStore
     from omnigent.stores.permission_store.sqlalchemy_store import SqlAlchemyPermissionStore
     from omnigent.stores.project_store.sqlalchemy_store import SqlAlchemyProjectStore
     from omnigent.stores.scheduled_task_store.sqlalchemy_store import (
         SqlAlchemyScheduledTaskStore,
     )
+    from omnigent.stores.work_item_run_store.sqlalchemy_store import SqlAlchemyWorkItemRunStore
+    from omnigent.stores.work_item_store.sqlalchemy_store import SqlAlchemyWorkItemStore
 
     agent_store = SqlAlchemyAgentStore(db_uri, conv_db_uri)
     file_store = SqlAlchemyFileStore(db_uri)
@@ -3555,6 +3558,9 @@ def server(
     permission_store = SqlAlchemyPermissionStore(db_uri)
     scheduled_task_store = SqlAlchemyScheduledTaskStore(db_uri)
     project_store = SqlAlchemyProjectStore(db_uri)
+    work_item_store = SqlAlchemyWorkItemStore(db_uri)
+    work_item_run_store = SqlAlchemyWorkItemRunStore(db_uri)
+    inbox_item_store = SqlAlchemyInboxItemStore(db_uri)
     artifact_store = _create_artifact_store(art_loc)
 
     # Initialize the runtime with store references so workflow code
@@ -3707,6 +3713,9 @@ def server(
         permission_store=permission_store,
         scheduled_task_store=scheduled_task_store,
         project_store=project_store,
+        work_item_store=work_item_store,
+        work_item_run_store=work_item_run_store,
+        inbox_item_store=inbox_item_store,
         auth_provider=auth_provider,
         host_store=host_store,
         account_store=account_store,

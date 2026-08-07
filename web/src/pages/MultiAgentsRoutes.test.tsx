@@ -29,6 +29,21 @@ vi.mock("@/pages/MultiAgentDetailPage", async () => {
 
 vi.mock("@/hooks/useMultiAgents", () => ({
   useMultiAgents: () => ({ data: [], isLoading: false, isError: false }),
+  useAgentActivity: () => ({
+    data: {
+      total_runs: 0,
+      active_runs: 0,
+      success_rate: null,
+      waiting_runs: 0,
+      failed_runs: 0,
+      recent_runs: [],
+      projects: [],
+      skills: [],
+    },
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+  }),
   useMultiAgent: (_id: string | null) => ({
     data: {
       card: {
@@ -121,10 +136,7 @@ describe("Multi-Agent routes", () => {
     const creation = renderRoute("/multi-agents/new");
 
     expect(await screen.findByRole("heading", { name: "New Multi-Agent" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Back to Multi-Agent" })).toHaveAttribute(
-      "href",
-      "/multi-agents",
-    );
+    expect(screen.getByRole("button", { name: "Back to Multi-Agent" })).toBeVisible();
     expect(multiAgentModuleLoads.detail).toHaveBeenCalledOnce();
     creation.unmount();
 
@@ -132,10 +144,7 @@ describe("Multi-Agent routes", () => {
 
     expect(await screen.findByRole("heading", { name: "Route bundle" })).toBeVisible();
     expect(screen.getByText("v1 · sha256:route")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Back to Multi-Agent" })).toHaveAttribute(
-      "href",
-      "/multi-agents",
-    );
+    expect(screen.getByRole("button", { name: "Back to Multi-Agent" })).toBeVisible();
     expect(multiAgentModuleLoads.detail).toHaveBeenCalledOnce();
     detail.unmount();
 

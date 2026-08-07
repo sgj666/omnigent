@@ -69,6 +69,7 @@ from omnigent.tools.builtins.timer import (
 )
 from omnigent.tools.builtins.update_comment import UpdateCommentTool
 from omnigent.tools.builtins.web_search import WebSearchTool
+from omnigent.tools.builtins.work_items import SysWorkItemCreateTool
 
 __all__ = [
     "BUILTIN_NAMES",
@@ -98,6 +99,7 @@ __all__ = [
     "SysSessionShareTool",
     "SysTimerCancelTool",
     "SysTimerSetTool",
+    "SysWorkItemCreateTool",
     "UpdateCommentTool",
     "WebSearchTool",
     "any_skill_has_resources",

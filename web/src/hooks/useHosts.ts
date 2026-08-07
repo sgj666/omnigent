@@ -40,6 +40,13 @@ async function fetchHosts(includeSandbox: boolean): Promise<Host[]> {
   return body.hosts.filter((h) => !h.sandbox_provider);
 }
 
+/** Fetch one owner-visible host for the runtime detail surface. */
+export async function getHost(hostId: string): Promise<Host> {
+  const res = await authenticatedFetch(`/v1/hosts/${encodeURIComponent(hostId)}`);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return (await res.json()) as Host;
+}
+
 interface UseHostsOptions {
   enabled?: boolean;
   includeSandbox?: boolean;

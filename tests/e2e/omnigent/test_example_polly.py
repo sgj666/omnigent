@@ -113,6 +113,11 @@ def test_coding_subagents(polly_spec: AgentSpec) -> None:
         assert "EXPLORE / SEARCH — answer a specific question" in prompt
 
 
+def test_orchestrator_can_publish_task_artifacts(polly_spec: AgentSpec) -> None:
+    """Task runs can attach generated files to their owning session."""
+    assert [tool.name for tool in polly_spec.tools.builtins] == ["upload_file"]
+
+
 def test_pi_subagent_is_headless_scaffold_worker(polly_spec: AgentSpec) -> None:
     """
     The ``pi`` sub-agent is a headless scaffold-harness child: pi harness,

@@ -175,7 +175,7 @@
   },
   "permissions": {
     "sharingUnavailable": "无法共享",
-    "sharingDisabled": "此 Omnigent 服务器已禁用共享。",
+    "sharingDisabled": "此 Orvia 服务器已禁用共享。",
     "shareSession": "共享此会话",
     "readOnlyInvite": "此服务器仅允许只读共享——邀请他人查看此会话。",
     "invite": "邀请他人查看或协作处理此会话。",
@@ -190,7 +190,7 @@
     "grant": "授予",
     "approvers": "审批人可以使用你的会话凭据授权操作。",
     "openMobile": "在移动应用中打开",
-    "scanMobile": "使用手机摄像头扫描，在 Omnigent 应用中打开此会话。",
+    "scanMobile": "使用手机摄像头扫描，在 Orvia 应用中打开此会话。",
     "close": "关闭",
     "done": "完成",
     "copyLink": "复制链接",
@@ -205,7 +205,7 @@
     "editApprove": "编辑 + 批准",
     "withApprove": "{{level}} + 批准",
     "levelForUser": "{{userId}} 的权限级别",
-    "qrLabel": "用于在 Omnigent 应用中打开此会话的二维码"
+    "qrLabel": "用于在 Orvia 应用中打开此会话的二维码"
   },
   "routing": {
     "router": "智能模型路由",

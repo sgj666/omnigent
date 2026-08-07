@@ -5,7 +5,7 @@
     "desktop": "Desktop",
     "general": "General",
     "archived": "Archived",
-    "back": "Back to Omnigent",
+    "back": "Back to Orvia",
     "close": "Close sidebar",
     "collapse": "Collapse sidebar",
     "sharing": "Sharing",
@@ -15,7 +15,7 @@
   },
   "language": {
     "title": "Language",
-    "description": "Choose the language used throughout Omnigent.",
+    "description": "Choose the language used throughout Orvia.",
     "optionsLabel": "Language",
     "options": {
       "system": "Follow system",
@@ -30,7 +30,7 @@
   },
   "appearance": {
     "title": "Appearance",
-    "description": "Choose how Omnigent looks on this device.",
+    "description": "Choose how Orvia looks on this device.",
     "theme": "Theme",
     "hostControlled": "Theme is controlled by the host application.",
     "reset": "Reset to defaults",
@@ -94,7 +94,7 @@
       "nord": "Arctic frost blues over polar-night neutrals."
     },
     "paletteLabel": {
-      "omni": "Omnigent",
+      "omni": "Orvia",
       "dracula": "Dracula",
       "github": "GitHub",
       "catppuccin": "Catppuccin",
@@ -112,7 +112,7 @@
   },
   "git": {
     "title": "Git",
-    "description": "Configure how Omnigent works with Git.",
+    "description": "Configure how Orvia works with Git.",
     "defaultBaseBranch": "Default base branch",
     "defaultBaseBranchHelper": "Auto-filled as the base when you name a new worktree branch. Leave blank to not auto-fill.",
     "placeholder": "e.g. main"
@@ -199,7 +199,7 @@
   },
   "updates": {
     "title": "Updates",
-    "description": "Desktop app update preferences for this installed Omnigent shell.",
+    "description": "Desktop app update preferences for this installed Orvia shell.",
     "checking": "Checking…",
     "unavailable": "Update settings are unavailable.",
     "updateMode": "Update mode",
@@ -208,7 +208,7 @@
     "checkNow": "Check for updates now",
     "saving": "Saving…",
     "lastCheckFailed": "Last check failed",
-    "start": "Check when Omnigent starts",
+    "start": "Check when Orvia starts",
     "manual": "Manual only",
     "off": "Off",
     "automatic": "Automatic (check periodically, ask before installing)",

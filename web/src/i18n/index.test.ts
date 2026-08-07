@@ -29,7 +29,7 @@ describe("i18n runtime", () => {
     await setUiLanguagePreference("zh-CN");
     expect(i18n.resolvedLanguage).toBe("zh-CN");
     expect(document.documentElement.lang).toBe("zh-CN");
-    expect(document.title).toBe("Omnigent");
+    expect(document.title).toBe("Orvia");
   });
 
   it("preserves a dynamic title owned by the chat page", async () => {

@@ -8,7 +8,7 @@ import httpx
 from fastapi import Request
 
 from omnigent.errors import ErrorCode, OmnigentError
-from omnigent.runs.service import RootSessionRequest
+from omnigent.runs.service import RootSessionRequest, TaskSessionRequest
 from omnigent.server.schemas import SessionEventInput
 
 
@@ -58,6 +58,27 @@ class ASGISessionGateway:
             )
         return session_id
 
+    async def create_task_session(self, command: TaskSessionRequest) -> str:
+        """Create a TaskRun Session through the canonical Session route."""
+        response = await self._post(
+            "/v1/sessions",
+            {
+                "agent_id": command.agent_id,
+                "title": command.title,
+                "project_id": command.project_id,
+                "host_id": command.runtime_id,
+                "workspace": command.workspace,
+                "labels": command.labels,
+            },
+        )
+        session_id = response.get("id") or response.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            raise OmnigentError(
+                "Session create response did not include a session id",
+                code=ErrorCode.INTERNAL_ERROR,
+            )
+        return session_id
+
     async def send_input(
         self,
         session_id: str,
@@ -68,7 +89,11 @@ class ASGISessionGateway:
             f"/v1/sessions/{session_id}/events",
             event.model_dump(exclude_none=True),
         )
-        if response.get("denied") is True or response.get("queued") is not True:
+        if (
+            response.get("denied") is True
+            or response.get("queued") is not True
+            or response.get("terminal") == "failed"
+        ):
             raise OmnigentError(
                 "Root Session did not accept the initial input",
                 code=ErrorCode.CONFLICT,

@@ -7,6 +7,7 @@ import {
   createAgentBundle,
   deleteAgentBundle,
   exportAgentBundle,
+  getAgentActivity,
   getAgentBundle,
   getAgentBundleOptions,
   getAgentFormSchema,
@@ -153,6 +154,25 @@ describe("multi-agent bundle API", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, "/v1/agent-bundles");
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/v1/agent-bundles/ag%20custom");
+  });
+
+  it("loads owner-scoped Agent activity with an encoded Agent id", async () => {
+    const activity = {
+      agent_id: "ag custom",
+      total_runs: 1,
+      active_runs: 0,
+      waiting_runs: 0,
+      failed_runs: 0,
+      success_rate: 1,
+      recent_runs: [],
+      projects: [],
+      skills: [],
+      skill_usage_source: "observed_load_skill_calls",
+    } as const;
+    fetchMock.mockResolvedValueOnce(jsonResponse(activity));
+
+    await expect(getAgentActivity("ag custom")).resolves.toEqual(activity);
+    expect(fetchMock).toHaveBeenCalledWith("/v1/agent-bundles/ag%20custom/activity");
   });
 
   it("loads provider-owned Bundle editor options", async () => {

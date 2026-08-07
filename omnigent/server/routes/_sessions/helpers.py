@@ -429,7 +429,7 @@ def _discovery_key(user_id: str | None) -> str:
         ``None`` in single-user / no-auth mode.
     :returns: ``user_id`` when set, else :data:`_SHARED_DISCOVERY_KEY`.
     """
-    return user_id if user_id is not None else _SHARED_DISCOVERY_KEY
+    return user_session_stream.user_key(user_id)
 
 
 def _announce_session_added(user_id: str | None, session_id: str) -> None:
@@ -3409,6 +3409,13 @@ def _publish_status(
             error_code=error.code if error is not None else None,
             error=error.message if error is not None else None,
         )
+    session_live_state.persist_work_item_run_status(
+        session_id,
+        status,
+        error_code=error.code if error is not None else None,
+        error_message=error.message if error is not None else None,
+        response_id=response_id,
+    )
     # Track the in-flight response id for snapshot-based reconnect (see
     # _session_active_response_cache). A running/waiting edge that names a
     # turn opens it; any idle/failed edge closes it.
@@ -7730,6 +7737,7 @@ def _persist_stored_session_bundle(
             terminal_launch_args=metadata.terminal_launch_args,
             parent_conversation_id=metadata.parent_session_id,
             runner_id=runner_id,
+            project_id=metadata.project_id,
         )
     except ConversationNotFoundError as exc:
         # Parent was authorized by the caller but vanished (deleted)

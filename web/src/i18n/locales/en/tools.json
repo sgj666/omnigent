@@ -175,7 +175,7 @@
   },
   "permissions": {
     "sharingUnavailable": "Sharing unavailable",
-    "sharingDisabled": "Sharing has been disabled for this Omnigent server.",
+    "sharingDisabled": "Sharing has been disabled for this Orvia server.",
     "shareSession": "Share this session",
     "readOnlyInvite": "This server allows read-only sharing — invite others to view this session.",
     "invite": "Invite others to view or collaborate on this session.",
@@ -190,7 +190,7 @@
     "grant": "Grant",
     "approvers": "Approvers can authorize actions that use your session credentials.",
     "openMobile": "Open in mobile app",
-    "scanMobile": "Scan with your phone's camera to open this session in the Omnigent app.",
+    "scanMobile": "Scan with your phone's camera to open this session in the Orvia app.",
     "close": "Close",
     "done": "Done",
     "copyLink": "Copy link",
@@ -205,7 +205,7 @@
     "editApprove": "Edit + approve",
     "withApprove": "{{level}} + approve",
     "levelForUser": "Permission level for {{userId}}",
-    "qrLabel": "QR code to open this session in the Omnigent app"
+    "qrLabel": "QR code to open this session in the Orvia app"
   },
   "routing": {
     "router": "Intelligent model router",

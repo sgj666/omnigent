@@ -140,14 +140,74 @@
     }
   },
   "multiAgent": {
+    "title": "多智能体",
     "catalog": {
       "description": "创建、检查并运行 Agent Bundle。Polly 是内置的多智能体模板。",
+      "search": "搜索多智能体 Bundle",
+      "searchPlaceholder": "搜索 Bundle、描述或运行时…",
+      "filterLabel": "筛选 Bundle 校验状态",
+      "filters": { "all": "全部", "valid": "有效", "issues": "需要处理" },
+      "tableCaption": "多智能体 Bundle 列表",
+      "columns": {
+        "agent": "Agent Bundle",
+        "composition": "组成",
+        "runtime": "运行时",
+        "version": "版本",
+        "updated": "更新时间",
+        "status": "校验状态",
+        "feishu": "飞书",
+        "actions": "操作"
+      },
       "loading": "正在加载 Bundle…",
       "error": "无法加载 Multi-Agent Bundle",
       "emptyTitle": "还没有 Multi-Agent Bundle",
       "emptyDescription": "创建一个 Bundle，或导入已有的 .tar.gz 归档。",
       "noDescription": "暂无描述",
+      "noMatches": "没有符合当前筛选条件的 Bundle",
       "builtinReadonly": "内置 · 只读"
+    },
+    "activity": {
+      "title": "智能体活动",
+      "description": "汇总分配给此智能体的任务与 TaskRun 真实运行记录。",
+      "loading": "正在加载智能体活动…",
+      "error": "无法加载智能体活动。",
+      "retry": "重试",
+      "metrics": {
+        "totalRuns": "Run 总数",
+        "activeRuns": "当前占用",
+        "successRate": "成功率",
+        "waitingRuns": "等待中",
+        "failedRuns": "失败"
+      },
+      "noTerminalSample": "暂无样本",
+      "recentRuns": "最近 Runs",
+      "recentRunsDescription": "展示最近 20 次 TaskRun，并可返回对应任务与会话。",
+      "emptyRuns": "此智能体还没有被分配过 TaskRun。",
+      "columns": {
+        "taskRun": "任务 / Run",
+        "state": "状态",
+        "project": "项目",
+        "reason": "等待 / 失败原因",
+        "queuedAt": "进入队列",
+        "session": "会话"
+      },
+      "runId": "Run {{id}}",
+      "sessionId": "会话 {{id}}",
+      "projects": "关联项目",
+      "emptyProjects": "暂无关联项目。",
+      "runCount": "{{count}} 次 Run",
+      "skills": "实际使用的 Skills",
+      "skillsDescription": "仅统计 TaskRun 会话中真实发生的 load_skill 调用。",
+      "emptySkills": "这些 Runs 中尚未观察到 load_skill 调用。",
+      "useCount": "使用 {{count}} 次",
+      "states": {
+        "queued": "排队中",
+        "running": "运行中",
+        "waiting": "等待中",
+        "succeeded": "成功",
+        "failed": "失败",
+        "cancelled": "已取消"
+      }
     },
     "actions": {
       "create": "创建",
@@ -178,6 +238,8 @@
       "workers": "Worker",
       "workerCount_one": "{{count}} 个 Worker",
       "workerCount_other": "{{count}} 个 Worker",
+      "skillCount_one": "{{count}} 个 Skill",
+      "skillCount_other": "{{count}} 个 Skill",
       "version": "版本",
       "versionValue": "版本 {{version}}",
       "digest": "摘要",
@@ -337,7 +399,7 @@
     },
     "feishu": {
       "title": "飞书",
-      "description": "连接当前 Bundle 的 Coordinator 界面；运行状态仍保存在 Omnigent。",
+      "description": "连接当前 Bundle 的 Coordinator 界面；运行状态仍保存在 Orvia。",
       "connect": "连接飞书",
       "connected": "已连接飞书",
       "changeBinding": "更换飞书绑定",
@@ -356,7 +418,7 @@
       "localDetailsWarning": "当前地址只可在这台电脑访问；手机飞书请改为可访问的内网或公网地址。",
       "quickEntries": "Agent 飞书能力",
       "quickEntriesHelp": "控制当前 Agent 响应哪些菜单事件和交互卡操作；不同 Agent 可以选择不同组合。",
-      "nativeMenuLimit": "能力开关不会自动增删飞书客户端中的悬浮菜单；未启用的菜单事件会被 Omnigent 拒绝执行。",
+      "nativeMenuLimit": "能力开关不会自动增删飞书客户端中的悬浮菜单；未启用的菜单事件会被 Orvia 拒绝执行。",
       "floatingMenuTitle": "飞书悬浮菜单",
       "manualPublish": "需后台发布",
       "floatingMenuDescription": "在飞书开发者后台开启机器人自定义菜单，选择悬浮菜单，并将菜单项设置为“推送事件”。",
@@ -425,7 +487,7 @@
       "defaultScopeRequired": "请先保存一个在线主机上的默认本地目录，再连接飞书。",
       "retryProvisioning": "重试配置",
       "provisioning": "正在配置…",
-      "stateSource": "飞书仅作为入口、通知和必要审批界面；Omnigent 始终是状态真源。",
+      "stateSource": "飞书仅作为入口、通知和必要审批界面；Orvia 始终是状态真源。",
       "disconnect": "断开飞书",
       "disconnecting": "正在断开…",
       "states": {

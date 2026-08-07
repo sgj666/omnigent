@@ -72,7 +72,7 @@ export interface PaletteMeta {
 export const PALETTES: readonly PaletteMeta[] = [
   {
     id: "omni",
-    label: "Omnigent",
+    label: "Orvia",
     blurb: "The signature pink brand look.",
     light: {
       bg: "#fdf7fb",

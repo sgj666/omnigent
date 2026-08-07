@@ -19,15 +19,21 @@
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  BarChart3Icon,
+  BookOpenIcon,
   CalendarClockIcon,
+  FolderIcon,
   InboxIcon,
+  ListChecksIcon,
   type LucideIcon,
   PanelLeftIcon,
   PanelRightIcon,
   SettingsIcon,
+  ServerIcon,
   SquarePenIcon,
 } from "lucide-react";
 import { useNavigate } from "@/lib/routing";
+import { APP_ROUTES } from "@/lib/navigation";
 import { useConversations } from "@/hooks/useConversations";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -140,10 +146,45 @@ export function CommandPalette({
       },
       {
         id: "go-tasks",
+        label: t("shell.goToTasks"),
+        icon: ListChecksIcon,
+        keywords: ["tasks", "board", "work items", "goals"],
+        run: () => navigate(APP_ROUTES.tasks),
+      },
+      {
+        id: "go-automations",
         label: t("shell.goToAutomations"),
         icon: CalendarClockIcon,
         keywords: ["scheduled", "recurring", "cron", "automation", "schedule"],
-        run: () => navigate("/tasks"),
+        run: () => navigate(APP_ROUTES.automations),
+      },
+      {
+        id: "go-projects",
+        label: t("shell.goToProjects"),
+        icon: FolderIcon,
+        keywords: ["projects", "folders", "work"],
+        run: () => navigate(APP_ROUTES.projects),
+      },
+      {
+        id: "go-usage",
+        label: t("shell.goToUsage"),
+        icon: BarChart3Icon,
+        keywords: ["tokens", "cost", "spend", "analytics"],
+        run: () => navigate(APP_ROUTES.usage),
+      },
+      {
+        id: "go-skills",
+        label: t("shell.goToSkills"),
+        icon: BookOpenIcon,
+        keywords: ["skills", "instructions", "git", "repository"],
+        run: () => navigate(APP_ROUTES.skills),
+      },
+      {
+        id: "go-runtime",
+        label: t("shell.goToRuntime"),
+        icon: ServerIcon,
+        keywords: ["hosts", "runners", "harnesses", "machines"],
+        run: () => navigate(APP_ROUTES.runtime),
       },
       {
         id: "go-settings",
