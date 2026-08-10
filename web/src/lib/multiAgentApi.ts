@@ -178,6 +178,12 @@ export interface AgentSkillOption {
   validation_status: "valid" | "warning" | "error";
 }
 
+export interface AgentRuntimeSkillOption {
+  name: string;
+  description: string;
+  source: string;
+}
+
 export interface AgentBundleOptions {
   harnesses: AgentHarnessOption[];
   models: Record<string, unknown>[];

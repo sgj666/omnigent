@@ -55,6 +55,8 @@ from omnigent.host.frames import (
     HostRunnerExitedFrame,
     HostRunnerStatusFrame,
     HostRunnerStatusResultFrame,
+    HostSkillOptionsFrame,
+    HostSkillOptionsResultFrame,
     HostStatFrame,
     HostStatResultFrame,
     HostStopRunnerFrame,
@@ -1992,6 +1994,47 @@ class HostProcess:
         )
 
     @staticmethod
+    def _handle_skill_options(frame: HostSkillOptionsFrame) -> HostSkillOptionsResultFrame:
+        """Discover the host and optional workspace Skills a harness can inherit."""
+        try:
+            from omnigent.spec.skill_sources import SkillSourceContext, resolve_harness_skills
+
+            roots: tuple[Path, ...] = ()
+            if frame.workspace:
+                workspace = Path(frame.workspace).expanduser().resolve()
+                if workspace.is_dir():
+                    roots = (workspace,)
+            skills = resolve_harness_skills(
+                SkillSourceContext(
+                    roots=roots,
+                    home=Path.home(),
+                    skills_filter="all",
+                    bundle_dir=None,
+                ),
+                canonicalize_harness(frame.harness) or frame.harness,
+            )
+            rows = [
+                {
+                    "name": skill.name,
+                    "description": skill.description,
+                    "source": str(skill.skill_dir or "runtime"),
+                }
+                for skill in skills
+            ]
+        except Exception:
+            _logger.exception("Failed to resolve pre-launch Skill options")
+            return HostSkillOptionsResultFrame(
+                request_id=frame.request_id,
+                status="failed",
+                error="failed to resolve Skill options",
+            )
+        return HostSkillOptionsResultFrame(
+            request_id=frame.request_id,
+            status="ok",
+            skills=rows,
+        )
+
+    @staticmethod
     def _dispatch_fs_op(
         reader: object,
         op: str,
@@ -2595,6 +2638,9 @@ class HostProcess:
             await ws.send(encode_host_frame(fs_result))
         elif isinstance(frame, HostModelOptionsFrame):
             await ws.send(encode_host_frame(await self._handle_model_options(frame)))
+        elif isinstance(frame, HostSkillOptionsFrame):
+            result = await asyncio.to_thread(self._handle_skill_options, frame)
+            await ws.send(encode_host_frame(result))
 
 
 def run_host_process(

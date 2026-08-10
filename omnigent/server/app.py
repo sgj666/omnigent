@@ -2171,7 +2171,11 @@ def create_app(
     )
     app.include_router(
         create_agent_bundles_router(
-            AgentBundleService(agent_store, artifact_store),
+            AgentBundleService(
+                agent_store,
+                artifact_store,
+                skills_reader=skills_inventory_reader,
+            ),
             auth_provider=auth_provider,
             skills_reader=skills_inventory_reader,
         ),

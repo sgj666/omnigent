@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import copy
 import io
+import json
 import mimetypes
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any, Literal
 
 from ruamel.yaml import YAML
@@ -18,6 +20,7 @@ from omnigent.db.utils import builtin_agent_id, generate_agent_id
 from omnigent.entities import Agent
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.bundles import bundle_location, validate_agent_bundle
+from omnigent.skills import SkillRecord, SkillRepositoryReader
 from omnigent.spec import ExtractionError
 from omnigent.stores.agent_store import AgentStore
 from omnigent.stores.artifact_store import ArtifactStore
@@ -124,14 +127,22 @@ class BundleWorkerOperation:
 
 _MAX_INLINE_FILE_BYTES = 1024 * 1024
 _MAX_INLINE_TOTAL_BYTES = 8 * 1024 * 1024
+_REMOTE_SKILL_MARKER = ".omnigent-remote-skill.json"
 
 
 class AgentBundleService:
     """Coordinate lossless edits with agent and artifact persistence."""
 
-    def __init__(self, agent_store: AgentStore, artifact_store: ArtifactStore) -> None:
+    def __init__(
+        self,
+        agent_store: AgentStore,
+        artifact_store: ArtifactStore,
+        *,
+        skills_reader: SkillRepositoryReader | None = None,
+    ) -> None:
         self._agents = agent_store
         self._artifacts = artifact_store
+        self._skills_reader = skills_reader
 
     @staticmethod
     def location(agent_id: str, bundle_bytes: bytes) -> str:
@@ -230,6 +241,7 @@ class AgentBundleService:
                 raise self._agent_config_too_large(exc.path) from None
             self._require_inline_agent_configs(document)
             coordinator = BundleWorkers.coordinator(document)
+        self._sync_remote_skills(document)
         self._require_inline_agent_configs(document)
         rendered = document.to_bytes()
         self._require_valid(rendered)
@@ -276,6 +288,7 @@ class AgentBundleService:
             BundleWorkers.update_coordinator(document, clone_changes)
         except BundleFileSizeError as exc:
             raise self._agent_config_too_large(exc.path) from None
+        self._sync_remote_skills(document)
         self._require_inline_agent_configs(document)
         rendered = document.to_bytes()
         self._require_valid(rendered)
@@ -451,6 +464,168 @@ class AgentBundleService:
             description=agent.description,
         )
 
+    def _sync_remote_skills(self, document: BundleDocument) -> None:
+        """Materialize declarative ``remote_skills`` beside each agent config."""
+        config_paths = ["config.yaml"]
+        config_paths.extend(f"agents/{name}/config.yaml" for name in BundleWorkers.names(document))
+        requested: dict[str, list[str]] = {}
+        for config_path in config_paths:
+            config = document.yaml_value(config_path, ())
+            if not isinstance(config, Mapping):
+                continue
+            raw = config.get("remote_skills")
+            if raw is None:
+                requested[config_path] = []
+                continue
+            if (
+                not isinstance(raw, Sequence)
+                or isinstance(raw, str | bytes)
+                or any(not isinstance(name, str) or not name for name in raw)
+                or len(raw) != len(set(raw))
+            ):
+                raise BundleValidationFailure(
+                    (
+                        BundleIssue(
+                            "invalid_remote_skills",
+                            "remote_skills must be a list of unique non-empty names",
+                            file=config_path,
+                            path="/remote_skills",
+                        ),
+                    )
+                )
+            requested[config_path] = list(raw)
+
+        if not any(requested.values()):
+            for config_path in config_paths:
+                self._remove_unselected_remote_skills(document, config_path, set())
+            return
+        for config_path, names in requested.items():
+            self._remove_unselected_remote_skills(document, config_path, set(names))
+        if self._skills_reader is None:
+            if all(
+                document.exists(f"{self._skill_root(config_path, name)}/{_REMOTE_SKILL_MARKER}")
+                for config_path, names in requested.items()
+                for name in names
+            ):
+                return
+            raise BundleValidationFailure(
+                (BundleIssue("skills_repository_unavailable", "Skills repository is unavailable"),)
+            )
+
+        snapshot = self._skills_reader.load(refresh=False)
+        available = {
+            skill.name: skill for skill in snapshot.skills if skill.validation_status != "error"
+        }
+        for config_path, names in requested.items():
+            for name in names:
+                skill = available.get(name)
+                if skill is None:
+                    marker = f"{self._skill_root(config_path, name)}/{_REMOTE_SKILL_MARKER}"
+                    if document.exists(marker):
+                        continue
+                    raise BundleValidationFailure(
+                        (
+                            BundleIssue(
+                                "remote_skill_unavailable",
+                                f"Remote Skill is unavailable: {name}",
+                                file=config_path,
+                                path="/remote_skills",
+                            ),
+                        )
+                    )
+                self._materialize_remote_skill(
+                    document,
+                    config_path,
+                    skill,
+                    snapshot.source.commit_sha,
+                )
+
+    @staticmethod
+    def _skill_root(config_path: str, name: str) -> str:
+        if PurePosixPath(name).name != name or name in {".", ".."} or "\\" in name:
+            raise BundleValidationFailure(
+                (BundleIssue("invalid_remote_skill_name", "Remote Skill name is not portable"),)
+            )
+        scope = PurePosixPath(config_path).parent
+        prefix = "" if scope.as_posix() == "." else f"{scope.as_posix()}/"
+        return f"{prefix}skills/{name}"
+
+    @classmethod
+    def _managed_remote_roots(cls, document: BundleDocument, config_path: str) -> set[str]:
+        scope = PurePosixPath(config_path).parent
+        prefix = "skills/" if scope.as_posix() == "." else f"{scope.as_posix()}/skills/"
+        suffix = f"/{_REMOTE_SKILL_MARKER}"
+        return {
+            path[: -len(suffix)]
+            for path in document.paths()
+            if path.startswith(prefix)
+            and path.endswith(suffix)
+            and "/" not in path[len(prefix) : -len(suffix)]
+        }
+
+    @classmethod
+    def _remove_unselected_remote_skills(
+        cls,
+        document: BundleDocument,
+        config_path: str,
+        selected: set[str],
+    ) -> None:
+        for root in cls._managed_remote_roots(document, config_path):
+            if PurePosixPath(root).name in selected:
+                continue
+            prefix = f"{root}/"
+            for path in tuple(document.paths()):
+                if path.startswith(prefix):
+                    document.delete_file(path)
+
+    @classmethod
+    def _materialize_remote_skill(
+        cls,
+        document: BundleDocument,
+        config_path: str,
+        skill: SkillRecord,
+        commit_sha: str | None,
+    ) -> None:
+        root = cls._skill_root(config_path, skill.name)
+        marker = f"{root}/{_REMOTE_SKILL_MARKER}"
+        existing = [path for path in document.paths() if path.startswith(f"{root}/")]
+        if existing and marker not in existing:
+            raise BundleValidationFailure(
+                (
+                    BundleIssue(
+                        "remote_skill_conflict",
+                        f"Remote Skill conflicts with an existing bundled Skill: {skill.name}",
+                        file=config_path,
+                        path="/remote_skills",
+                    ),
+                )
+            )
+        for path in existing:
+            document.delete_file(path)
+        if not any(file.path == "SKILL.md" for file in skill.files):
+            raise BundleValidationFailure(
+                (
+                    BundleIssue(
+                        "remote_skill_unavailable",
+                        f"Remote Skill has no readable SKILL.md: {skill.name}",
+                        file=config_path,
+                        path="/remote_skills",
+                    ),
+                )
+            )
+        for file in skill.files:
+            document.add_file_bytes(f"{root}/{file.path}", file.content.encode("utf-8"))
+        document.add_file_bytes(
+            marker,
+            (
+                json.dumps(
+                    {"version": 1, "id": skill.id, "name": skill.name, "commit_sha": commit_sha},
+                    sort_keys=True,
+                )
+                + "\n"
+            ).encode("utf-8"),
+        )
+
     @staticmethod
     def _apply_worker_operation(
         document: BundleDocument,
@@ -534,6 +709,7 @@ class AgentBundleService:
         name: str,
         description: str | None,
     ) -> BundleDetail:
+        self._sync_remote_skills(document)
         self._require_inline_agent_configs(document)
         rendered = document.to_bytes()
         self._require_valid(rendered)

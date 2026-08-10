@@ -249,7 +249,8 @@ def test_reader_accepts_non_secret_server_settings_with_environment_overrides(
             "url": "https://git.example.test/team/skills.git",
             "ref": "configured-ref",
             "path": "catalog/skills",
-            "token": "must-not-be-read-from-yaml",
+            "username": "config-user",
+            "token": "config-token",
         }
     )
 
@@ -258,3 +259,5 @@ def test_reader_accepts_non_secret_server_settings_with_environment_overrides(
     assert reader.skills_path == "catalog/skills"
     assert reader.cache_dir == tmp_path / "cache"
     assert reader.token_env == "ORVIA_SKILLS_GIT_TOKEN"
+    assert reader._username == "config-user"
+    assert reader._token == "config-token"

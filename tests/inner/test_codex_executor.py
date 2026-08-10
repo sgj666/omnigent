@@ -2410,10 +2410,10 @@ def test_populate_codex_skills_from_bundle_links_bundle_skills(tmp_path: Path) -
     assert (linked / "SKILL.md").is_file()
 
 
-def test_populate_codex_skills_from_bundle_none_leaves_no_dir(tmp_path: Path) -> None:
+def test_populate_codex_skills_from_bundle_none_keeps_assigned_skills(tmp_path: Path) -> None:
     """
-    ``skills_filter="none"`` produces no ``skills/`` dir even when the
-    bundle ships skills — the codex-native parity for a hermetic agent.
+    ``skills_filter="none"`` suppresses inherited host Skills without
+    suppressing Skills explicitly shipped in the Agent Bundle.
     """
     from omnigent.inner.codex_executor import populate_codex_skills_from_bundle
 
@@ -2423,7 +2423,7 @@ def test_populate_codex_skills_from_bundle_none_leaves_no_dir(tmp_path: Path) ->
 
     populate_codex_skills_from_bundle(codex_home, bundle, "none")
 
-    assert not (codex_home / "skills").exists()
+    assert (codex_home / "skills" / "authoring" / "SKILL.md").is_file()
 
 
 # ---------------------------------------------------------------------------

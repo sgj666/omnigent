@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -28,6 +29,7 @@ import type {
   AgentFormField,
   AgentFormSchema,
   AgentHarnessOption,
+  AgentRuntimeSkillOption,
   AgentSkillOption,
 } from "@/lib/multiAgentApi";
 import type { AgentConfigDraft } from "@/lib/multiAgentDraft";
@@ -36,8 +38,9 @@ const LOCAL_DEFAULT = "__local_default__";
 const EMPTY_HARNESSES: AgentHarnessOption[] = [];
 const EMPTY_MODEL_OPTIONS: { id: string; label: string }[] = [];
 const EMPTY_SKILL_OPTIONS: AgentSkillOption[] = [];
+const EMPTY_RUNTIME_SKILL_OPTIONS: AgentRuntimeSkillOption[] = [];
 const EMPTY_STRINGS: string[] = [];
-const STRUCTURED_FIELDS = ["tools", "skills", "mcp", "environment", "guardrails"] as const;
+const STRUCTURED_FIELDS = ["tools", "mcp", "environment", "guardrails"] as const;
 const SYSTEM_PATHS = new Set(["/spec_version", "/executor/type"]);
 
 type JsonObject = Record<string, AgentBundleValue>;
@@ -423,34 +426,36 @@ function ToolsEditor({
 }
 
 function SkillsEditor({
-  source,
-  onChange,
-  options,
+  remoteSource,
+  inheritSource,
+  onRemoteChange,
+  onInheritChange,
+  repositoryOptions,
+  runtimeOptions,
+  runtimeLabel,
+  bundledSkills,
   disabled,
   t,
 }: {
-  source: string;
-  onChange: (source: string) => void;
-  options: AgentSkillOption[];
+  remoteSource: string;
+  inheritSource: string;
+  onRemoteChange: (source: string) => void;
+  onInheritChange: (source: string) => void;
+  repositoryOptions: AgentSkillOption[];
+  runtimeOptions: AgentRuntimeSkillOption[];
+  runtimeLabel?: string;
+  bundledSkills: string[];
   disabled: boolean;
   t: TFunction;
 }) {
-  const parsed = parseValue(source);
-  const mode =
-    parsed === undefined
-      ? "default"
-      : parsed === "all"
-        ? "all"
-        : parsed === "none"
-          ? "none"
-          : "custom";
-  const skills = Array.isArray(parsed)
-    ? parsed.filter((entry): entry is string => typeof entry === "string")
+  const parsedRemote = parseValue(remoteSource);
+  const remoteSkills = Array.isArray(parsedRemote)
+    ? parsedRemote.filter((entry): entry is string => typeof entry === "string")
     : [];
-  const choices = [
-    ...options,
-    ...skills
-      .filter((name) => !options.some((option) => option.name === name))
+  const repositoryChoices = [
+    ...repositoryOptions,
+    ...remoteSkills
+      .filter((name) => !repositoryOptions.some((option) => option.name === name))
       .map((name) => ({
         id: `missing:${name}`,
         name,
@@ -459,119 +464,188 @@ function SkillsEditor({
         validation_status: "error" as const,
       })),
   ];
+  const parsedInheritance = parseValue(inheritSource);
+  const inheritanceEnabled = parsedInheritance !== "none";
+  const inheritedAllowList = Array.isArray(parsedInheritance)
+    ? parsedInheritance.filter((entry): entry is string => typeof entry === "string")
+    : null;
+  const runtimeChoices = [
+    ...runtimeOptions,
+    ...(inheritedAllowList ?? [])
+      .filter((name) => !runtimeOptions.some((option) => option.name === name))
+      .map((name) => ({ name, description: "", source: "unavailable" })),
+  ];
 
-  function toggleSkill(name: string) {
-    const next = skills.includes(name)
-      ? skills.filter((entry) => entry !== name)
-      : [...skills, name];
-    onChange(JSON.stringify(next));
+  function toggleRemoteSkill(name: string) {
+    const next = remoteSkills.includes(name)
+      ? remoteSkills.filter((entry) => entry !== name)
+      : [...remoteSkills, name];
+    onRemoteChange(next.length ? JSON.stringify(next) : "");
+  }
+
+  function toggleInheritedSkill(name: string) {
+    const current = inheritedAllowList ?? runtimeChoices.map((option) => option.name);
+    const next = current.includes(name)
+      ? current.filter((entry) => entry !== name)
+      : [...current, name];
+    const allRuntimeSelected =
+      runtimeOptions.length > 0 && runtimeOptions.every((option) => next.includes(option.name));
+    onInheritChange(JSON.stringify(allRuntimeSelected ? "all" : next.length ? next : "none"));
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
-      <Field label={t("fields.skillAccess")} help={t("fields.skillAccessHelp")}>
-        <Select
-          value={mode}
-          onValueChange={(next) => {
-            if (next === "default") onChange("");
-            else if (next === "all" || next === "none") onChange(JSON.stringify(next));
-            else onChange(JSON.stringify(skills));
-          }}
-          disabled={disabled}
-        >
-          <SelectTrigger aria-label={t("fields.skillAccess")} className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="default">{t("fields.default")}</SelectItem>
-            <SelectItem value="all">{t("fields.allSkills")}</SelectItem>
-            <SelectItem value="none">{t("fields.noSkills")}</SelectItem>
-            <SelectItem value="custom">{t("fields.selectedSkills")}</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
-      {mode === "custom" && (
-        <Field label={t("fields.skillNames")} help={t("fields.skillNamesHelp")}>
-          <div className="space-y-2">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  role="combobox"
-                  aria-label={t("fields.skillNames")}
-                  className="w-full justify-between font-normal"
-                  disabled={disabled}
-                >
-                  <span className="truncate">
-                    {skills.length
-                      ? t("fields.skillsSelected", { count: skills.length })
-                      : t("fields.selectSkills")}
-                  </span>
-                  <ChevronsUpDownIcon className="ml-2 size-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
-                <Command>
-                  <CommandInput placeholder={t("fields.searchSkills")} />
-                  <CommandList>
-                    <CommandEmpty>{t("fields.noSkillOptions")}</CommandEmpty>
-                    <CommandGroup>
-                      {choices.map((option) => {
-                        const selected = skills.includes(option.name);
-                        const missing = option.id.startsWith("missing:");
-                        return (
-                          <CommandItem
-                            key={option.id}
-                            value={`${option.name} ${option.description} ${option.relative_path}`}
-                            data-checked={selected}
-                            onSelect={() => toggleSkill(option.name)}
-                          >
-                            <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-2">
-                                <span className="truncate font-mono text-xs">{option.name}</span>
-                                {missing ? (
-                                  <Badge variant="destructive">
-                                    {t("fields.skillUnavailable")}
-                                  </Badge>
-                                ) : null}
-                              </span>
-                              <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                                {option.description || option.relative_path}
-                              </span>
-                            </span>
-                          </CommandItem>
-                        );
-                      })}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-            {skills.length ? (
-              <div className="flex flex-wrap gap-1.5">
-                {skills.map((name) => {
-                  const missing = !options.some((option) => option.name === name);
-                  return (
-                    <Badge key={name} variant={missing ? "destructive" : "secondary"}>
-                      <span className="font-mono">{name}</span>
-                      {missing ? <span>{t("fields.skillUnavailable")}</span> : null}
-                      <button
-                        type="button"
-                        aria-label={t("fields.removeSkill", { name })}
-                        onClick={() => toggleSkill(name)}
-                        disabled={disabled}
-                      >
-                        <XIcon />
-                      </button>
-                    </Badge>
-                  );
-                })}
-              </div>
-            ) : null}
+    <div className="space-y-6">
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h4 className="text-sm font-medium">{t("fields.assignedSkills")}</h4>
+            <p className="mt-1 text-xs text-muted-foreground">{t("fields.assignedSkillsHelp")}</p>
           </div>
-        </Field>
-      )}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                role="combobox"
+                aria-label={t("fields.skillNames")}
+                disabled={disabled}
+              >
+                {t("fields.addSkill")}
+                <ChevronsUpDownIcon className="size-4 opacity-50" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-96 max-w-[calc(100vw-2rem)] p-0">
+              <Command>
+                <CommandInput placeholder={t("fields.searchSkills")} />
+                <CommandList>
+                  <CommandEmpty>{t("fields.noSkillOptions")}</CommandEmpty>
+                  <CommandGroup>
+                    {repositoryChoices.map((option) => {
+                      const selected = remoteSkills.includes(option.name);
+                      const missing = option.id.startsWith("missing:");
+                      return (
+                        <CommandItem
+                          key={option.id}
+                          value={`${option.name} ${option.description} ${option.relative_path}`}
+                          onSelect={() => toggleRemoteSkill(option.name)}
+                        >
+                          <CheckIcon className={selected ? "opacity-100" : "opacity-0"} />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-2">
+                              <span className="truncate font-mono text-xs">{option.name}</span>
+                              {missing && (
+                                <Badge variant="destructive">{t("fields.skillUnavailable")}</Badge>
+                              )}
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                              {option.description || option.relative_path}
+                            </span>
+                          </span>
+                        </CommandItem>
+                      );
+                    })}
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+        </div>
+        {remoteSkills.length || bundledSkills.length ? (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              {t("fields.skillsSelected", {
+                count: new Set([...remoteSkills, ...bundledSkills]).size,
+              })}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {remoteSkills.map((name) => {
+                const missing = !repositoryOptions.some((option) => option.name === name);
+                return (
+                  <Badge key={name} variant={missing ? "destructive" : "secondary"}>
+                    <span className="font-mono">{name}</span>
+                    {missing && <span>{t("fields.skillUnavailable")}</span>}
+                    <button
+                      type="button"
+                      aria-label={t("fields.removeSkill", { name })}
+                      onClick={() => toggleRemoteSkill(name)}
+                      disabled={disabled}
+                    >
+                      <XIcon className="size-3" />
+                    </button>
+                  </Badge>
+                );
+              })}
+              {bundledSkills
+                .filter((name) => !remoteSkills.includes(name))
+                .map((name) => (
+                  <Badge key={name} variant="outline">
+                    <span className="font-mono">{name}</span>
+                    <span>{t("fields.bundledSkill")}</span>
+                  </Badge>
+                ))}
+            </div>
+          </div>
+        ) : (
+          <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+            {t("fields.noAssignedSkills")}
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-3 border-t pt-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h4 className="text-sm font-medium">{t("fields.inheritRuntimeSkills")}</h4>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {t("fields.inheritRuntimeSkillsHelp", {
+                runtime: runtimeLabel || t("fields.runtime"),
+              })}
+            </p>
+          </div>
+          <Switch
+            aria-label={t("fields.inheritRuntimeSkills")}
+            checked={inheritanceEnabled}
+            onCheckedChange={(checked) => onInheritChange(JSON.stringify(checked ? "all" : "none"))}
+            disabled={disabled}
+          />
+        </div>
+        {inheritanceEnabled && runtimeChoices.length > 0 && (
+          <div className="divide-y rounded-lg border">
+            {runtimeChoices.map((option) => {
+              const checked =
+                inheritedAllowList === null || inheritedAllowList.includes(option.name);
+              const unavailable = option.source === "unavailable";
+              return (
+                <div key={option.name} className="flex items-center gap-3 p-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-mono text-sm">{option.name}</span>
+                      {unavailable && (
+                        <Badge variant="destructive">{t("fields.skillUnavailable")}</Badge>
+                      )}
+                    </div>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {option.description || option.source}
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label={t("fields.inheritSkill", { name: option.name })}
+                    checked={checked}
+                    onCheckedChange={() => toggleInheritedSkill(option.name)}
+                    disabled={disabled}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {inheritanceEnabled && runtimeChoices.length === 0 && (
+          <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+            {t("fields.noRuntimeSkills")}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -683,6 +757,9 @@ export function AgentConfigEditor({
   harnesses = EMPTY_HARNESSES,
   models = EMPTY_MODEL_OPTIONS,
   skills = EMPTY_SKILL_OPTIONS,
+  runtimeSkills = EMPTY_RUNTIME_SKILL_OPTIONS,
+  runtimeLabel,
+  bundledSkills = EMPTY_STRINGS,
   workerNames = EMPTY_STRINGS,
 }: {
   value: AgentConfigDraft;
@@ -692,6 +769,9 @@ export function AgentConfigEditor({
   harnesses?: AgentHarnessOption[];
   models?: { id: string; label: string }[];
   skills?: AgentSkillOption[];
+  runtimeSkills?: AgentRuntimeSkillOption[];
+  runtimeLabel?: string;
+  bundledSkills?: string[];
   workerNames?: string[];
 }) {
   const { t } = useTranslation("agents", { keyPrefix: "multiAgent" });
@@ -711,6 +791,7 @@ export function AgentConfigEditor({
         "/prompt",
         "/instructions",
         "/tools",
+        "/remote_skills",
         "/skills",
         "/mcp",
         "/mcp_servers",
@@ -864,6 +945,25 @@ export function AgentConfigEditor({
         </div>
       </section>
 
+      <section className="space-y-4 rounded-xl border bg-muted/15 p-5">
+        <div>
+          <h3 className="text-sm font-semibold">{t("fields.skills")}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">{t("fields.skillsHelp")}</p>
+        </div>
+        <SkillsEditor
+          remoteSource={value.remoteSkills}
+          inheritSource={value.skills}
+          onRemoteChange={(next) => set("remoteSkills", next)}
+          onInheritChange={(next) => set("skills", next)}
+          repositoryOptions={skills}
+          runtimeOptions={runtimeSkills}
+          runtimeLabel={runtimeLabel}
+          bundledSkills={bundledSkills}
+          disabled={disabled}
+          t={t}
+        />
+      </section>
+
       <Collapsible>
         <div className="overflow-hidden rounded-xl border">
           <CollapsibleTrigger className="group flex w-full items-center justify-between gap-4 bg-muted/15 p-5 text-left transition-colors hover:bg-muted/35">
@@ -899,14 +999,6 @@ export function AgentConfigEditor({
                       source={value.tools}
                       onChange={(next) => set("tools", next)}
                       workerNames={workerNames}
-                      disabled={disabled}
-                      t={t}
-                    />
-                  ) : field === "skills" ? (
-                    <SkillsEditor
-                      source={value.skills}
-                      onChange={(next) => set("skills", next)}
-                      options={skills}
                       disabled={disabled}
                       t={t}
                     />

@@ -53,6 +53,7 @@ class BundleConfig(BaseModel):
     prompt: str | None = None
     instructions: str | None = None
     tools: BundleTools | None = None
+    remote_skills: list[str] | None = None
     skills: Any | None = None
     mcp: Any | None = None
     mcp_servers: Any | None = None

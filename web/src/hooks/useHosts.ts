@@ -1,5 +1,6 @@
 import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { authenticatedFetch } from "@/lib/identity";
+import type { AgentRuntimeSkillOption } from "@/lib/multiAgentApi";
 import type { NativeModelOption } from "@/lib/types";
 
 export interface Host {
@@ -102,6 +103,36 @@ export function useHostModelOptions(hostId: string | null, harness: string, enab
     queryKey: ["host-model-options", hostId, harness],
     queryFn: () => fetchHostModelOptions(hostId as string, harness),
     enabled: enabled && hostId !== null,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
+async function fetchHostSkillOptions(
+  hostId: string,
+  harness: string,
+  workspace?: string,
+): Promise<AgentRuntimeSkillOption[]> {
+  const query = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+  const res = await authenticatedFetch(
+    `/v1/hosts/${encodeURIComponent(hostId)}/harnesses/${encodeURIComponent(harness)}/skill-options${query}`,
+  );
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const body = (await res.json()) as { skills?: AgentRuntimeSkillOption[] };
+  return body.skills ?? [];
+}
+
+/** Host and workspace Skills available for the agent to inherit before launch. */
+export function useHostSkillOptions(
+  hostId: string | null,
+  harness: string,
+  workspace?: string,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ["host-skill-options", hostId, harness, workspace ?? null],
+    queryFn: () => fetchHostSkillOptions(hostId as string, harness, workspace),
+    enabled: enabled && hostId !== null && Boolean(harness),
     staleTime: 30_000,
     retry: false,
   });

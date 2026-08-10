@@ -37,6 +37,7 @@ from omnigent.host.frames import (
     HostLaunchRunnerFrame,
     HostListDirFrame,
     HostModelOptionsFrame,
+    HostSkillOptionsFrame,
     HostStoreSecretFrame,
     encode_host_frame,
 )
@@ -71,6 +72,7 @@ _LIST_DIR_MAX_LIMIT = 1000
 # for transient network slowness without making the picker feel hung.
 _CREATE_DIR_TIMEOUT_S = 5.0
 _MODEL_OPTIONS_TIMEOUT_S = 15.0
+_SKILL_OPTIONS_TIMEOUT_S = 15.0
 # Per-call timeout for host.install_harness round-trips. The host runs
 # `npm install -g <pkg>` — install_harness_cli caps that subprocess at 300s —
 # then recomputes readiness and sends the result back over the tunnel. The
@@ -120,6 +122,43 @@ async def _proxy_model_options(
             ) from exc
     finally:
         host_conn.pending_model_options.pop(request_id, None)
+
+
+async def _proxy_skill_options(
+    *,
+    host_registry: HostRegistry,
+    host_conn: HostConnection,
+    harness: str,
+    workspace: str | None,
+) -> dict[str, Any]:
+    """Ask a host which Skills the harness can inherit before launch."""
+    request_id = secrets.token_hex(8)
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[dict[str, Any]] = loop.create_future()
+    host_conn.pending_skill_options[request_id] = future
+    frame = encode_host_frame(
+        HostSkillOptionsFrame(request_id=request_id, harness=harness, workspace=workspace),
+    )
+    try:
+        try:
+            host_registry.send_text(host_conn, frame)
+        except ConnectionError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"host '{host_conn.host_id}' connection lost",
+            ) from exc
+        try:
+            return await asyncio.wait_for(future, timeout=_SKILL_OPTIONS_TIMEOUT_S)
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(
+                status_code=504,
+                detail=(
+                    f"host '{host_conn.host_id}' did not resolve Skill options within "
+                    f"{_SKILL_OPTIONS_TIMEOUT_S:.0f}s"
+                ),
+            ) from exc
+    finally:
+        host_conn.pending_skill_options.pop(request_id, None)
 
 
 async def _proxy_list_dir(
@@ -690,6 +729,37 @@ def create_hosts_router(
             )
         models = result.get("models")
         return {"models": models if isinstance(models, list) else []}
+
+    @router.get("/hosts/{host_id}/harnesses/{harness}/skill-options")
+    async def get_host_skill_options(
+        request: Request,
+        host_id: str,
+        harness: str,
+        workspace: str | None = Query(default=None),
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Return host and optional workspace Skills available for inheritance."""
+        user_id = require_user(request, auth_provider)
+        host = await asyncio.to_thread(host_store.get_host, host_id)
+        if host is None:
+            raise HTTPException(status_code=404, detail="host not found")
+        if user_id is not None and host.user_id != user_id:
+            raise HTTPException(status_code=403, detail="not your host")
+        conn = host_registry.get(host.host_id)
+        if conn is None:
+            raise HTTPException(status_code=409, detail="host is offline")
+        result = await _proxy_skill_options(
+            host_registry=host_registry,
+            host_conn=conn,
+            harness=canonicalize_harness(harness) or harness,
+            workspace=workspace,
+        )
+        if result.get("status") != "ok":
+            raise HTTPException(
+                status_code=502,
+                detail=str(result.get("error") or "host Skill-options lookup failed"),
+            )
+        skills = result.get("skills")
+        return {"skills": skills if isinstance(skills, list) else []}
 
     @router.post("/hosts/{host_id}/runners")
     async def launch_runner(

@@ -3,9 +3,9 @@
 The reader deliberately has no publish methods. It resolves a remote ref,
 clones into a temporary directory, parses ``SKILL.md`` files, and persists a
 JSON snapshot keyed by repository identity and commit SHA. Authentication is
-accepted only through environment variables and is passed to Git through an
-ephemeral askpass helper, never through command-line arguments or repository
-URLs.
+passed to Git through an ephemeral askpass helper, never through command-line
+arguments or repository URLs. Environment variables take precedence over the
+owner-only server config credential used by single-node deployments.
 """
 
 from __future__ import annotations
@@ -111,6 +111,8 @@ class GitSkillRepositoryReader:
         cache_dir: Path,
         token_env: str = "ORVIA_SKILLS_GIT_TOKEN",
         username_env: str = "ORVIA_SKILLS_GIT_USERNAME",
+        token: str | None = None,
+        username: str | None = None,
     ) -> None:
         self.remote_url = remote_url.strip()
         self.ref = ref.strip() or "main"
@@ -118,6 +120,8 @@ class GitSkillRepositoryReader:
         self.cache_dir = cache_dir
         self.token_env = token_env
         self.username_env = username_env
+        self._token = token.strip() if token else None
+        self._username = username.strip() if username else None
         identity = f"{self.remote_url}\0{self.ref}\0{self.skills_path}".encode()
         self._repository_key = hashlib.sha256(identity).hexdigest()[:24]
         self._latest: SkillSnapshot | None = None
@@ -130,9 +134,9 @@ class GitSkillRepositoryReader:
     ) -> GitSkillRepositoryReader:
         """Build a reader from server settings with environment overrides.
 
-        Repository identity is safe to keep in the non-secret server YAML;
-        credentials remain environment-only. This lets deployments configure
-        ``skills_repository`` without weakening the existing token boundary.
+        Environment variables override the server YAML. The YAML credential
+        path supports owner-only, single-node configs; managed deployments
+        should continue to inject credentials from their Secret store.
         """
         configured = settings or {}
 
@@ -153,6 +157,8 @@ class GitSkillRepositoryReader:
             ref=setting("ORVIA_SKILLS_GIT_REF", "ref", "main"),
             skills_path=setting("ORVIA_SKILLS_GIT_PATH", "path", "skills"),
             cache_dir=cache_dir,
+            token=setting("ORVIA_SKILLS_GIT_TOKEN", "token", "") or None,
+            username=setting("ORVIA_SKILLS_GIT_USERNAME", "username", "") or None,
         )
 
     @staticmethod
@@ -438,15 +444,21 @@ class GitSkillRepositoryReader:
         environment["GIT_TERMINAL_PROMPT"] = "0"
         environment["GIT_CONFIG_NOSYSTEM"] = "1"
         askpass_dir: tempfile.TemporaryDirectory[str] | None = None
-        token = environment.get(self.token_env)
+        token = environment.get(self.token_env) or self._token
         if token:
+            askpass_token_env = "_OMNIGENT_SKILLS_ASKPASS_TOKEN"
+            askpass_username_env = "_OMNIGENT_SKILLS_ASKPASS_USERNAME"
+            environment[askpass_token_env] = token
+            environment[askpass_username_env] = (
+                environment.get(self.username_env) or self._username or "oauth2"
+            )
             askpass_dir = tempfile.TemporaryDirectory(prefix="orvia-git-askpass-")
             askpass = Path(askpass_dir.name) / "askpass.sh"
             askpass.write_text(
                 "#!/bin/sh\n"
                 'case "$1" in\n'
-                f'  *Username*) printf "%s\\n" "${{{self.username_env}:-oauth2}}" ;;\n'
-                f'  *) printf "%s\\n" "${{{self.token_env}:-}}" ;;\n'
+                f'  *Username*) printf "%s\\n" "${{{askpass_username_env}:-oauth2}}" ;;\n'
+                f'  *) printf "%s\\n" "${{{askpass_token_env}:-}}" ;;\n'
                 "esac\n",
                 encoding="utf-8",
             )

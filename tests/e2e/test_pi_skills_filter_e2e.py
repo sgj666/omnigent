@@ -6,9 +6,9 @@ construction time (``_resolve_pi_skill_args``):
 
 - ``"all"``  → ``--skill <bundle_path>`` for each bundle skill, no
                ``--no-skills`` (Pi host auto-discovery stays on).
-- ``"none"`` → ``["--no-skills"]`` (suppresses everything).
-- list[name] → ``["--no-skills"]`` plus one ``--skill <bundle_path>``
-               per named bundle skill (silent skip for missing names).
+- ``"none"`` → ``--no-skills`` plus every assigned Bundle Skill.
+- list[name] → ``--no-skills`` plus every assigned Bundle Skill; the list
+               filters inherited runtime Skills only.
 
 This test parametrizes the three filter modes against three fixture
 agent bundles whose ``skills/`` subdir ships two distinctively-named
@@ -204,26 +204,19 @@ def pi_profile(request: pytest.FixtureRequest) -> str:
             [_GREET_NAME, _COUNT_NAME],
             [],
         ),
-        # ``skills: none`` → ``--no-skills`` suppresses both
-        # auto-discovery and explicit skills. Failure mode: the
-        # env-var bridge drops the filter, the harness wrap defaults
-        # to ``"all"``, or the ``"none"`` branch emits stray
-        # ``--skill`` flags. Any of these would leak the bundle skills
-        # and the ``not in text`` assertion would fail.
+        # ``skills: none`` disables inherited auto-discovery but keeps
+        # both explicitly assigned bundle skills.
         (
             "pi_skills_none",
-            [],
             [_GREET_NAME, _COUNT_NAME],
+            [],
         ),
-        # ``skills: [greet]`` → ``--no-skills`` plus exactly one
-        # ``--skill`` for the named bundle skill. Failure mode: the
-        # per-name filter doesn't apply (counter leaks), or it applies
-        # but emits the wrong path (greet missing). Either is caught by
-        # one of the two assertions.
+        # ``skills: [greet]`` filters inherited runtime skills only and
+        # keeps both explicitly assigned bundle skills.
         (
             "pi_skills_list",
-            [_GREET_NAME],
-            [_COUNT_NAME],
+            [_GREET_NAME, _COUNT_NAME],
+            [],
         ),
     ],
 )
@@ -248,15 +241,10 @@ def test_pi_skills_filter_e2e(
 
     **What breaks if the feature is wrong:**
 
-    - If the ``"all"`` branch drops the bundle source (or the
-      AP→harness env-var bridge drops the bundle dir / filter), the
-      ``"all"`` and ``"list"`` cases find no bundle-skill names in the
-      output → ``expected_visible`` assertion fires.
-    - If the filter defaults to ``"all"`` when the env-var bridge
-      breaks, the ``"none"`` case leaks bundle skills →
-      ``expected_hidden`` assertion fires with the leaked name.
-    - If the per-name list filter is broken (matches everything or
-      nothing), the ``"list"`` case fires either branch.
+    - If any filter branch drops the bundle source (or the AP→harness
+      env-var bridge drops the bundle dir), that case finds no assigned
+      bundle-skill names in the output and the ``expected_visible``
+      assertion fires.
 
     Each breakage produces a specific failure message naming the
     offending skill, so triage can jump straight to the right layer.

@@ -520,8 +520,19 @@ def _populate_codex_skills(
     if skills_filter == "none":
         return
 
-    target_dir.mkdir(parents=True, exist_ok=True)
     selected = select_codex_skill_dirs(skills_filter, sources)
+
+    _populate_selected_codex_skills(target_dir, selected)
+
+
+def _populate_selected_codex_skills(
+    target_dir: Path,
+    selected: dict[str, Path],
+) -> None:
+    """Link a resolved Skill mapping into a private Codex home."""
+    if not selected:
+        return
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     for name, skill_dir in selected.items():
         link_path = target_dir / name
@@ -564,12 +575,9 @@ def populate_codex_skills_from_bundle(
     Populate a CODEX_HOME's ``skills/`` from a bundle + host skills.
 
     Shared by the wrapped ``codex`` executor and the ``codex-native``
-    launch path so both expose the same skill surface. Builds the source
-    list in priority order — the agent's own ``<bundle>/skills/`` before
-    host-installed ``~/.codex/skills/`` (so a bundled skill shadows a
-    host skill of the same name) — and delegates to
-    :func:`_populate_codex_skills`, which honours ``skills_filter``
-    (``"all"`` / ``"none"`` / list of names).
+    launch path so both expose the same skill surface. Assigned bundle
+    Skills are always linked; ``skills_filter`` applies only to inherited
+    host Skills. A bundled Skill shadows a host Skill of the same name.
 
     :param codex_home: The CODEX_HOME whose ``skills/`` subdir Codex
         scans, e.g. a per-conversation temp dir or the per-bridge native
@@ -582,8 +590,17 @@ def populate_codex_skills_from_bundle(
         ``"none"`` / a list of skill names.
     :returns: None.
     """
-    skill_sources = codex_skill_sources(bundle_dir, Path.home())
-    _populate_codex_skills(codex_home / "skills", skills_filter, skill_sources)
+    bundle_sources = (
+        [bundle_dir / "skills"]
+        if bundle_dir is not None and (bundle_dir / "skills").is_dir()
+        else []
+    )
+    host_source = Path.home() / ".codex" / "skills"
+    host_sources = [host_source] if host_source.is_dir() else []
+    selected = select_codex_skill_dirs("all", bundle_sources)
+    for name, path in select_codex_skill_dirs(skills_filter, host_sources).items():
+        selected.setdefault(name, path)
+    _populate_selected_codex_skills(codex_home / "skills", selected)
 
 
 def _is_omnigent_private_codex_home(path: Path) -> bool:

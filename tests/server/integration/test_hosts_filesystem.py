@@ -28,6 +28,8 @@ from omnigent.host.frames import (
     HostListDirResultFrame,
     HostModelOptionsFrame,
     HostModelOptionsResultFrame,
+    HostSkillOptionsFrame,
+    HostSkillOptionsResultFrame,
     decode_host_frame,
     encode_host_frame,
 )
@@ -193,6 +195,22 @@ async def fs_setup(
                     }
                 )
                 continue
+            if isinstance(frame, HostSkillOptionsFrame):
+                reply = replies.get(f"skill:{frame.harness}", {})
+                await comm.send_input(
+                    {
+                        "type": "websocket.receive",
+                        "text": encode_host_frame(
+                            HostSkillOptionsResultFrame(
+                                request_id=frame.request_id,
+                                status=reply.get("status", "ok"),
+                                skills=reply.get("skills", []),
+                                error=reply.get("error"),
+                            )
+                        ),
+                    }
+                )
+                continue
             if not isinstance(frame, HostListDirFrame):
                 continue
             reply = replies.get(frame.path)
@@ -269,6 +287,36 @@ async def test_host_model_options_returns_prelaunch_catalog(
             }
         ]
     }
+
+
+async def test_host_skill_options_returns_inheritable_catalog(
+    fs_setup: tuple[
+        FastAPI,
+        HostRegistry,
+        ApplicationCommunicator,
+        dict[str, dict[str, Any]],
+        asyncio.Task[None],
+    ],
+) -> None:
+    app, _reg, _comm, replies, _drain = fs_setup
+    replies["skill:claude-native"] = {
+        "skills": [
+            {
+                "name": "review",
+                "description": "Review a change.",
+                "source": "/work/project/.claude/skills/review",
+            }
+        ]
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(
+            f"/v1/hosts/{_HOST_ID}/harnesses/claude-native/skill-options",
+            params={"workspace": "/work/project"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"skills": replies["skill:claude-native"]["skills"]}
 
 
 async def test_list_filesystem_returns_paginated_entries(

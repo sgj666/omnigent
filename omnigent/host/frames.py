@@ -68,6 +68,8 @@ class HostFrameKind(str, Enum):
     FS_RESULT = "host.fs_result"
     MODEL_OPTIONS = "host.model_options"
     MODEL_OPTIONS_RESULT = "host.model_options_result"
+    SKILL_OPTIONS = "host.skill_options"
+    SKILL_OPTIONS_RESULT = "host.skill_options_result"
 
 
 # ── Frame dataclasses ────────────────────────────────────
@@ -808,6 +810,25 @@ class HostModelOptionsResultFrame:
     error: str | None = None
 
 
+@dataclass
+class HostSkillOptionsFrame:
+    """Server → host: discover inheritable Skills for a harness and workspace."""
+
+    request_id: str
+    harness: str
+    workspace: str | None = None
+
+
+@dataclass
+class HostSkillOptionsResultFrame:
+    """Host → server: inheritable Skills discovered on that machine."""
+
+    request_id: str
+    status: str
+    skills: list[_JsonObject] = field(default_factory=list)
+    error: str | None = None
+
+
 HostFrame = (
     HostHelloFrame
     | HostHarnessReadinessFrame
@@ -840,6 +861,8 @@ HostFrame = (
     | HostFsResultFrame
     | HostModelOptionsFrame
     | HostModelOptionsResultFrame
+    | HostSkillOptionsFrame
+    | HostSkillOptionsResultFrame
 )
 
 
@@ -1188,6 +1211,25 @@ def encode_host_frame(frame: HostFrame) -> str:
                 "error": frame.error,
             }
         )
+    if isinstance(frame, HostSkillOptionsFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.SKILL_OPTIONS.value,
+                "request_id": frame.request_id,
+                "harness": frame.harness,
+                "workspace": frame.workspace,
+            }
+        )
+    if isinstance(frame, HostSkillOptionsResultFrame):
+        return _encode_payload(
+            {
+                "kind": HostFrameKind.SKILL_OPTIONS_RESULT.value,
+                "request_id": frame.request_id,
+                "status": frame.status,
+                "skills": frame.skills,
+                "error": frame.error,
+            }
+        )
     raise TypeError(f"unknown host frame type: {type(frame).__name__}")
 
 
@@ -1310,6 +1352,10 @@ def _decode_known_host_frame(
             return _decode_model_options(msg)
         case HostFrameKind.MODEL_OPTIONS_RESULT:
             return _decode_model_options_result(msg)
+        case HostFrameKind.SKILL_OPTIONS:
+            return _decode_skill_options(msg)
+        case HostFrameKind.SKILL_OPTIONS_RESULT:
+            return _decode_skill_options_result(msg)
     raise ValueError(f"unhandled host frame kind: {kind.value!r}")  # pragma: no cover
 
 
@@ -1813,6 +1859,28 @@ def _decode_model_options_result(msg: _JsonObject) -> HostModelOptionsResultFram
         request_id=_required_str(msg, "request_id"),
         status=_required_str(msg, "status"),
         models=models,
+        error=_optional_nullable_str(msg, "error"),
+    )
+
+
+def _decode_skill_options(msg: _JsonObject) -> HostSkillOptionsFrame:
+    """Decode a host.skill_options request frame."""
+    return HostSkillOptionsFrame(
+        request_id=_required_str(msg, "request_id"),
+        harness=_required_str(msg, "harness"),
+        workspace=_optional_nullable_str(msg, "workspace"),
+    )
+
+
+def _decode_skill_options_result(msg: _JsonObject) -> HostSkillOptionsResultFrame:
+    """Decode a host.skill_options_result frame."""
+    skills = msg.get("skills", [])
+    if not isinstance(skills, list) or not all(isinstance(skill, dict) for skill in skills):
+        raise ValueError("frame field must be a list of JSON objects: 'skills'")
+    return HostSkillOptionsResultFrame(
+        request_id=_required_str(msg, "request_id"),
+        status=_required_str(msg, "status"),
+        skills=skills,
         error=_optional_nullable_str(msg, "error"),
     )
 

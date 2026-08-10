@@ -17,6 +17,7 @@ const hooks = vi.hoisted(() => ({
   schema: vi.fn(),
   options: vi.fn(),
   hostModels: vi.fn(),
+  hostSkills: vi.fn(),
   create: { mutateAsync: vi.fn(), isPending: false, isError: false, error: null },
   update: { mutateAsync: vi.fn(), isPending: false, isError: false, error: null },
   feishuConnection: vi.fn(),
@@ -60,6 +61,7 @@ vi.mock("@/hooks/useWorkspaces", () => ({
 vi.mock("@/hooks/useHosts", () => ({
   useHosts: () => ({ data: [{ host_id: "host_1", name: "Local Mac", status: "online" }] }),
   useHostModelOptions: (...args: unknown[]) => hooks.hostModels(...args),
+  useHostSkillOptions: (...args: unknown[]) => hooks.hostSkills(...args),
 }));
 
 vi.mock("@/hooks/useFeishuInstall", () => ({
@@ -199,6 +201,7 @@ describe("MultiAgentDetailPage", () => {
       },
     });
     hooks.hostModels.mockReturnValue({ data: [], isLoading: false, isError: false });
+    hooks.hostSkills.mockReturnValue({ data: [], isLoading: false, isError: false });
     hooks.create.mutateAsync.mockResolvedValue(data);
     hooks.update.mutateAsync.mockResolvedValue({ ...data, version: data.version + 1 });
     hooks.feishuConnection.mockReturnValue({ data: null, isLoading: false, error: null });
@@ -252,7 +255,7 @@ describe("MultiAgentDetailPage", () => {
     ) {
       throw new Error("test coordinator config must be an object");
     }
-    coordinatorConfig.skills = ["removed-skill"];
+    coordinatorConfig.remote_skills = ["removed-skill"];
     hooks.detail.mockReturnValue({ data, isLoading: false, isError: false });
     hooks.options.mockReturnValue({
       data: {
@@ -274,8 +277,6 @@ describe("MultiAgentDetailPage", () => {
     });
 
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: /Advanced properties/ }));
-
     expect(screen.getByText("removed-skill")).toBeVisible();
     expect(screen.getByText("Unavailable")).toBeVisible();
     fireEvent.click(screen.getByRole("combobox", { name: "Allowed skill names" }));
@@ -286,8 +287,33 @@ describe("MultiAgentDetailPage", () => {
     expect(hooks.update.mutateAsync.mock.calls[0][0].request.patches).toContainEqual({
       file: "config.yaml",
       op: "replace",
-      path: "/skills",
+      path: "/remote_skills",
       value: ["removed-skill", "proposal"],
+    });
+  });
+
+  it("inherits all runtime Skills by default and supports per-Skill exclusion", async () => {
+    hooks.hostSkills.mockReturnValue({
+      data: [
+        { name: "runtime-one", description: "First runtime Skill", source: "~/.codex/skills" },
+        { name: "runtime-two", description: "Second runtime Skill", source: "~/.codex/skills" },
+      ],
+      isLoading: false,
+      isError: false,
+    });
+
+    renderPage();
+
+    expect(screen.getByRole("switch", { name: "Inherit from runtime" })).toBeChecked();
+    fireEvent.click(screen.getByRole("switch", { name: "Inherit runtime-one" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(hooks.update.mutateAsync).toHaveBeenCalledOnce());
+    expect(hooks.update.mutateAsync.mock.calls[0][0].request.patches).toContainEqual({
+      file: "config.yaml",
+      op: "add",
+      path: "/skills",
+      value: ["runtime-two"],
     });
   });
 
@@ -860,8 +886,8 @@ describe("MultiAgentDetailPage", () => {
     first.card.version = 4;
     first.workers.push({
       path: "agents/worker-2/config.yaml",
-      content: "name: worker-2\n",
-      data: { name: "worker-2" },
+      content: "name: worker-2\nexecutor:\n  config:\n    harness: codex\n",
+      data: { name: "worker-2", executor: { config: { harness: "codex" } } },
     });
     first.coordinator!.data = {
       name: "My bundle",

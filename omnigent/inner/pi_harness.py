@@ -52,15 +52,14 @@ Env vars read at startup:
   unset, falls back to ``"all"``. The Pi executor translates
   the filter into Pi CLI args at construction time:
   ``"all"`` adds ``--skill <path>`` for every bundled skill
-  while leaving auto-discovery on, ``"none"`` adds
-  ``--no-skills`` to suppress everything, and a list adds
-  ``--no-skills`` plus ``--skill <path>`` for each named
-  bundle skill.
+  while leaving auto-discovery on. ``"none"`` and a name list
+  add ``--no-skills`` to disable host auto-discovery, while still
+  adding every explicitly assigned bundle skill. The name list is
+  resolved against inherited runtime skills before executor startup.
 - ``HARNESS_PI_BUNDLE_DIR``: Absolute path to the agent
   bundle's extracted root. When set, the executor sources
-  bundled skills from ``<bundle>/skills/<name>/`` for the
-  ``"all"`` and named-list cases. Unset for agents without a
-  bundled-skill directory.
+  bundled skills from ``<bundle>/skills/<name>/`` for every filter
+  mode. Unset for agents without a bundled-skill directory.
 - ``HARNESS_PI_AGENT_NAME``: Agent display name. Reserved for
   future use; currently unused by Pi.
 """

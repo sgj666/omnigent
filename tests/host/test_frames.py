@@ -34,6 +34,8 @@ from omnigent.host.frames import (
     HostRunnerExitedFrame,
     HostRunnerStatusFrame,
     HostRunnerStatusResultFrame,
+    HostSkillOptionsFrame,
+    HostSkillOptionsResultFrame,
     HostStatFrame,
     HostStatResultFrame,
     HostStopRunnerFrame,
@@ -80,6 +82,35 @@ def test_model_options_frames_round_trip() -> None:
             "displayName": "Sonnet 4.6",
         }
     ]
+
+
+def test_skill_options_frames_round_trip() -> None:
+    request = decode_host_frame(
+        encode_host_frame(
+            HostSkillOptionsFrame(
+                request_id="req_skills",
+                harness="codex-native",
+                workspace="/work/project",
+            )
+        )
+    )
+    assert request == HostSkillOptionsFrame(
+        request_id="req_skills",
+        harness="codex-native",
+        workspace="/work/project",
+    )
+
+    result = decode_host_frame(
+        encode_host_frame(
+            HostSkillOptionsResultFrame(
+                request_id="req_skills",
+                status="ok",
+                skills=[{"name": "review", "description": "Review", "source": "workspace"}],
+            )
+        )
+    )
+    assert isinstance(result, HostSkillOptionsResultFrame)
+    assert result.skills == [{"name": "review", "description": "Review", "source": "workspace"}]
 
 
 def test_encode_injects_traceparent_under_active_span() -> None:

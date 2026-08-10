@@ -36,6 +36,44 @@ describe("multi-agent visual draft patches", () => {
     expect(buildConfigPatches("config.yaml", original, readAgentConfig(original))).toEqual([]);
   });
 
+  it("treats normalized null optional fields as absent YAML keys", () => {
+    const original = {
+      name: "coordinator",
+      description: null,
+      executor: { config: { harness: "codex", model: null }, model: null },
+      prompt: null,
+      tools: null,
+      remote_skills: null,
+      skills: null,
+      os_env: null,
+      guardrails: null,
+      policies: null,
+      async: null,
+      timers: null,
+      spawn: null,
+    };
+    const visual: AgentConfigDraft = {
+      ...readAgentConfig(original),
+      remoteSkills: '["skill-reviewer"]',
+      skills: '["runtime-one"]',
+    };
+
+    expect(buildConfigPatches("config.yaml", original, visual)).toEqual([
+      {
+        file: "config.yaml",
+        op: "add",
+        path: "/remote_skills",
+        value: ["skill-reviewer"],
+      },
+      {
+        file: "config.yaml",
+        op: "add",
+        path: "/skills",
+        value: ["runtime-one"],
+      },
+    ]);
+  });
+
   it("keeps top-level policies separate from guardrail policies", () => {
     const original = {
       guardrails: { policies: { nested: true } },

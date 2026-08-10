@@ -2864,13 +2864,8 @@ def test_resolve_pi_skill_args_all(tmp_path: Path) -> None:
     assert str(skills_root / "beta") in paths
 
 
-def test_resolve_pi_skill_args_none(tmp_path: Path) -> None:
-    """``skills_filter='none'`` produces exactly ``['--no-skills']``.
-
-    No ``--skill`` flags either — explicit paths would override
-    ``--no-skills`` per Pi's flag semantics, so the hermetic case
-    must be empty everywhere.
-    """
+def test_resolve_pi_skill_args_none_keeps_bundle_skills(tmp_path: Path) -> None:
+    """``skills_filter='none'`` disables inheritance but keeps assigned Skills."""
     from omnigent.inner.pi_executor import _resolve_pi_skill_args
 
     bundle = tmp_path / "bundle"
@@ -2879,24 +2874,11 @@ def test_resolve_pi_skill_args_none(tmp_path: Path) -> None:
 
     args = _resolve_pi_skill_args("none", bundle)
 
-    # Exact equality: any leak would either drop --no-skills (Pi
-    # would auto-discover) or add stray --skill flags (Pi would
-    # load them despite --no-skills).
-    assert args == ["--no-skills"], (
-        f"skills='none' must produce exactly ['--no-skills']; "
-        f"got {args}. Stray --skill flags would override "
-        f"--no-skills and load skills anyway."
-    )
+    assert args == ["--no-skills", "--skill", str(skills_root / "alpha")]
 
 
-def test_resolve_pi_skill_args_named_subset(tmp_path: Path) -> None:
-    """``skills_filter=[name, ...]`` produces ``--no-skills`` plus
-    one ``--skill <path>`` per named bundle skill.
-
-    Names not present in the bundle are silently skipped — adding
-    a ``--skill`` flag pointing at a non-existent path would crash
-    Pi at startup.
-    """
+def test_resolve_pi_skill_args_named_subset_only_filters_inheritance(tmp_path: Path) -> None:
+    """A named inheritance subset still exposes every assigned Bundle Skill."""
     from omnigent.inner.pi_executor import _resolve_pi_skill_args
 
     bundle = tmp_path / "bundle"
@@ -2909,16 +2891,9 @@ def test_resolve_pi_skill_args_named_subset(tmp_path: Path) -> None:
     # Must start with --no-skills (suppress Pi auto-discovery so
     # only the named skills surface).
     assert args[0] == "--no-skills"
-    # Exactly one --skill, pointing at alpha. ``missing_skill`` is
-    # silently dropped.
-    assert args.count("--skill") == 1
+    assert args.count("--skill") == 2
     paths = [args[i + 1] for i, tok in enumerate(args) if tok == "--skill"]
-    assert paths == [str(skills_root / "alpha")], (
-        f"expected only ['{skills_root}/alpha'], got {paths}. "
-        f"If 'beta' appears, the per-name filter is matching too "
-        f"broadly. If empty, the resolver dropped a named skill "
-        f"that exists."
-    )
+    assert paths == [str(skills_root / "alpha"), str(skills_root / "beta")]
 
 
 def test_resolve_pi_skill_args_no_bundle() -> None:

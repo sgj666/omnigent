@@ -17,6 +17,7 @@ export interface AgentConfigDraft {
   model: string;
   prompt: string;
   tools: string;
+  remoteSkills: string;
   skills: string;
   mcp: string;
   environment: string;
@@ -79,6 +80,7 @@ const OWNED_SCHEMA_PATHS = new Set([
   "/prompt",
   "/instructions",
   "/tools",
+  "/remote_skills",
   "/skills",
   "/os_env",
   "/guardrails",
@@ -102,6 +104,7 @@ export function readAgentConfig(
     "prompt",
     "instructions",
     "tools",
+    "remote_skills",
     "skills",
     "os_env",
     "guardrails",
@@ -139,6 +142,7 @@ export function readAgentConfig(
     model: text(model),
     prompt: referencedPrompt ?? text(at(value, ["prompt"]) ?? at(value, ["instructions"])),
     tools: json(at(value, ["tools"])),
+    remoteSkills: json(at(value, ["remote_skills"])),
     skills: json(at(value, ["skills"])),
     mcp: json(at(value, ["tools", "mcp"])),
     environment: json(at(value, ["os_env"])),
@@ -157,7 +161,7 @@ export function readAgentConfig(
 
 function parseJsonField(
   draft: AgentConfigDraft,
-  field: "tools" | "skills" | "mcp" | "environment" | "guardrails" | "policies",
+  field: "tools" | "remoteSkills" | "skills" | "mcp" | "environment" | "guardrails" | "policies",
 ): AgentBundleValue | undefined {
   const source = draft[field].trim();
   if (!source) return undefined;
@@ -183,14 +187,20 @@ function patch(
   desired: AgentBundleValue | undefined,
 ): AgentBundlePatch | null {
   const current = at(original, path);
+  // Bundle detail responses normalize omitted optional fields to null, while
+  // patches are applied to the original YAML where those keys do not exist.
+  // Treat null like an absent value so a blank editor does not emit an invalid
+  // remove/replace operation; JSON Patch add also safely replaces an explicit
+  // null mapping value when the source YAML did contain one.
+  const present = current !== null && has(original, path);
   if (equal(current, desired)) return null;
   const pointer = `/${path.map((part) => part.replace(/~/g, "~0").replace(/\//g, "~1")).join("/")}`;
   if (desired === undefined) {
-    return has(original, path) ? { file, op: "remove", path: pointer } : null;
+    return present ? { file, op: "remove", path: pointer } : null;
   }
   return {
     file,
-    op: has(original, path) ? "replace" : "add",
+    op: present ? "replace" : "add",
     path: pointer,
     value: desired,
   };
@@ -221,6 +231,7 @@ export function buildConfigPatches(
         : { file: options.reference.path, op: "replace_file" as const, value: draft.prompt }
       : patch(file, original, ["prompt"], draft.prompt || undefined),
     patch(file, original, ["tools"], parseJsonField(draft, "tools")),
+    patch(file, original, ["remote_skills"], parseJsonField(draft, "remoteSkills")),
     patch(file, original, ["skills"], parseJsonField(draft, "skills")),
     patch(file, original, ["tools", "mcp"], parseJsonField(draft, "mcp")),
     patch(file, original, ["os_env"], parseJsonField(draft, "environment")),

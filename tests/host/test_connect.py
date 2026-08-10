@@ -41,6 +41,8 @@ from omnigent.host.frames import (
     HostRunnerExitedFrame,
     HostRunnerStatusFrame,
     HostRunnerStatusResultFrame,
+    HostSkillOptionsFrame,
+    HostSkillOptionsResultFrame,
     HostStatFrame,
     HostStatResultFrame,
     HostStopRunnerFrame,
@@ -61,6 +63,30 @@ from omnigent.runner.identity import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+def test_handle_skill_options_discovers_workspace_skills(tmp_path: Path) -> None:
+    skill_dir = tmp_path / ".claude" / "skills" / "review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: review\ndescription: Review a change.\n---\nBody\n"
+    )
+
+    result = _make_host_process()._handle_skill_options(
+        HostSkillOptionsFrame(
+            request_id="req_skills",
+            harness="claude-native",
+            workspace=str(tmp_path),
+        )
+    )
+
+    assert isinstance(result, HostSkillOptionsResultFrame)
+    assert result.status == "ok"
+    assert {
+        "name": "review",
+        "description": "Review a change.",
+        "source": str(skill_dir),
+    } in result.skills
 
 
 async def test_handle_model_options_uses_host_claude_configuration(

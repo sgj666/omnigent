@@ -15,6 +15,7 @@ from omnigent.agent_bundles.service import (
 )
 from omnigent.db.utils import builtin_agent_id
 from omnigent.entities import Agent, PagedList
+from omnigent.skills import SkillFile, SkillRecord, SkillRepositorySource, SkillSnapshot
 from omnigent.stores.agent_store import AgentVersionConflict
 
 
@@ -123,11 +124,64 @@ def _bundle(name: str = "editable", *, worker: bool = False) -> bytes:
     return BundleDocument(files).to_bytes()
 
 
-def _service() -> tuple[AgentBundleService, MemoryAgents, MemoryArtifacts]:
+def _service(
+    skills_reader: object | None = None,
+) -> tuple[AgentBundleService, MemoryAgents, MemoryArtifacts]:
     agents = MemoryAgents()
     artifacts = MemoryArtifacts()
-    service = AgentBundleService(agents, artifacts)  # type: ignore[arg-type]
+    service = AgentBundleService(  # type: ignore[arg-type]
+        agents,
+        artifacts,
+        skills_reader=skills_reader,
+    )
     return service, agents, artifacts
+
+
+class FakeSkillsReader:
+    def load(self, *, refresh: bool = False) -> SkillSnapshot:
+        assert refresh is False
+        return SkillSnapshot(
+            source=SkillRepositorySource(
+                remote_url="https://git.example.test/skills.git",
+                ref="main",
+                skills_path="skills",
+                commit_sha="a" * 40,
+                synced_at=1,
+                sync_status="current",
+                error=None,
+            ),
+            skills=[
+                SkillRecord(
+                    id="remote-review",
+                    name="remote-review",
+                    description="Review a change.",
+                    relative_path="skills/remote-review",
+                    validation_status="valid",
+                    diagnostics=[],
+                    files=[
+                        SkillFile(
+                            path="SKILL.md",
+                            content=(
+                                "---\nname: remote-review\n"
+                                "description: Review a change.\n---\nBody\n"
+                            ),
+                            size=72,
+                        ),
+                        SkillFile(
+                            path="references/checklist.md",
+                            content="# Checklist\n",
+                            size=12,
+                        ),
+                    ],
+                )
+            ],
+        )
+
+
+class EmptySkillsReader(FakeSkillsReader):
+    def load(self, *, refresh: bool = False) -> SkillSnapshot:
+        snapshot = super().load(refresh=refresh)
+        return SkillSnapshot(source=snapshot.source, skills=[])
 
 
 def test_create_get_update_and_export_are_content_addressed() -> None:
@@ -154,6 +208,86 @@ def test_create_get_update_and_export_are_content_addressed() -> None:
     assert "# ROOT COMMENT" in updated.coordinator.advanced_yaml
     assert updated.coordinator.config["future_root"] == "keep"
     assert updated.coordinator.config["timers"] == {"enabled": True}
+
+
+def test_remote_skills_materialize_per_agent_and_preserve_manual_bundle_skills() -> None:
+    service, _, _ = _service(FakeSkillsReader())
+    document = BundleDocument.from_bytes(_bundle(worker=True))
+    document.replace_file_bytes(
+        "config.yaml",
+        document.read_bytes("config.yaml") + b"remote_skills: [remote-review]\n",
+    )
+    document.replace_file_bytes(
+        "agents/alpha/config.yaml",
+        document.read_bytes("agents/alpha/config.yaml") + b"remote_skills: [remote-review]\n",
+    )
+    document.add_file_bytes(
+        "skills/manual/SKILL.md",
+        b"---\nname: manual\ndescription: Existing manual Skill.\n---\nBody\n",
+    )
+
+    created = service.import_bundle(document.to_bytes(), name="editable")
+    detail = service.get(created.id)
+    paths = {file.path for file in detail.files}
+
+    assert "skills/remote-review/SKILL.md" in paths
+    assert "skills/remote-review/references/checklist.md" in paths
+    assert "skills/remote-review/.omnigent-remote-skill.json" in paths
+    assert "agents/alpha/skills/remote-review/SKILL.md" in paths
+    assert "skills/manual/SKILL.md" in paths
+
+    updated = service.update(
+        created.id,
+        expected_version=1,
+        patches=(
+            BundlePatch("config.yaml", "remove", "/remote_skills"),
+            BundlePatch("agents/alpha/config.yaml", "remove", "/remote_skills"),
+        ),
+    )
+    updated_paths = {file.path for file in updated.files}
+
+    assert not any("remote-review" in path for path in updated_paths)
+    assert "skills/manual/SKILL.md" in updated_paths
+
+
+def test_remote_skill_selection_rejects_names_missing_from_inventory() -> None:
+    service, agents, artifacts = _service(FakeSkillsReader())
+    document = BundleDocument.from_bytes(_bundle())
+    document.replace_file_bytes(
+        "config.yaml",
+        document.read_bytes("config.yaml") + b"remote_skills: [missing]\n",
+    )
+
+    with pytest.raises(BundleValidationFailure) as raised:
+        service.import_bundle(document.to_bytes(), name="editable")
+
+    assert raised.value.issues[0].code == "remote_skill_unavailable"
+    assert agents.data == {}
+    assert artifacts.data == {}
+
+
+def test_existing_remote_skill_remains_editable_when_inventory_entry_disappears() -> None:
+    service, agents, artifacts = _service(FakeSkillsReader())
+    document = BundleDocument.from_bytes(_bundle())
+    document.replace_file_bytes(
+        "config.yaml",
+        document.read_bytes("config.yaml") + b"remote_skills: [remote-review]\n",
+    )
+    created = service.import_bundle(document.to_bytes(), name="editable")
+    stale_service = AgentBundleService(  # type: ignore[arg-type]
+        agents,
+        artifacts,
+        skills_reader=EmptySkillsReader(),
+    )
+
+    updated = stale_service.update(
+        created.id,
+        expected_version=1,
+        coordinator_changes={"description": "still editable"},
+    )
+
+    assert updated.coordinator.config["description"] == "still editable"
+    assert "skills/remote-review/SKILL.md" in {file.path for file in updated.files}
 
 
 def test_optimistic_conflict_keeps_unreferenced_artifact_without_dangerous_delete() -> None:

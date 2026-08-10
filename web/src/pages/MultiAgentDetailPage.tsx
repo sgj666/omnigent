@@ -38,8 +38,8 @@ import {
   useMultiAgent,
   useUpdateMultiAgent,
 } from "@/hooks/useMultiAgents";
-import { useAgentFeishuConnection } from "@/hooks/useFeishuInstall";
-import { useHostModelOptions, useHosts } from "@/hooks/useHosts";
+import { useAgentDefaultWorkspaceScope, useAgentFeishuConnection } from "@/hooks/useFeishuInstall";
+import { useHostModelOptions, useHostSkillOptions, useHosts } from "@/hooks/useHosts";
 import {
   buildConfigPatches,
   DraftJsonError,
@@ -69,6 +69,17 @@ function activityTimestamp(value: number | null, language: string): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value * 1000));
+}
+
+function bundledSkillNames(configPath: string, files: AgentBundleFile[]): string[] {
+  const scope = configPath.split("/").slice(0, -1).join("/");
+  const prefix = scope ? `${scope}/skills/` : "skills/";
+  return files
+    .map((file) => file.path)
+    .filter((path) => path.startsWith(prefix) && path.endsWith("/SKILL.md"))
+    .map((path) => path.slice(prefix.length, -"/SKILL.md".length))
+    .filter((name) => name.length > 0 && !name.includes("/"))
+    .sort();
 }
 
 function AgentActivityPanel({ agentId }: { agentId: string }) {
@@ -468,6 +479,7 @@ export function MultiAgentDetailPage() {
   const bundleOptions = useAgentBundleOptions(!isNew);
   const hosts = useHosts({ enabled: !isNew });
   const feishuConnection = useAgentFeishuConnection(agentId ?? "", !isNew && Boolean(agentId));
+  const defaultWorkspace = useAgentDefaultWorkspaceScope(agentId ?? "", !isNew && Boolean(agentId));
   const update = useUpdateMultiAgent();
   const [mode, setMode] = useState("visual");
   const [coordinator, setCoordinator] = useState<EditableFile | null>(null);
@@ -564,11 +576,23 @@ export function MultiAgentDetailPage() {
   const selected =
     allFiles.find((file) => file.path === selectedPath) ??
     (selectedRaw ? undefined : (coordinator ?? workers[0]));
-  const previewHostId = hosts.data?.find((host) => host.status === "online")?.host_id ?? null;
+  const previewHost =
+    hosts.data?.find(
+      (host) => host.status === "online" && host.host_id === defaultWorkspace.data?.host_id,
+    ) ??
+    hosts.data?.find((host) => host.status === "online") ??
+    null;
+  const previewHostId = previewHost?.host_id ?? null;
   const previewHarness = modelPreviewHarness(selected?.visual.harness ?? "");
   const hostModels = useHostModelOptions(
     previewHostId,
     previewHarness ?? "",
+    !isNew && previewHarness !== null,
+  );
+  const hostSkills = useHostSkillOptions(
+    previewHostId,
+    previewHarness ?? "",
+    defaultWorkspace.data?.workspace,
     !isNew && previewHarness !== null,
   );
   const modelOptions = useMemo(() => {
@@ -796,10 +820,16 @@ export function MultiAgentDetailPage() {
             (worker) => workerName(worker.path, worker.data) === name,
           );
           if (!savedWorker?.data) continue;
+          const savedVisual = readAgentConfig(savedWorker.data, undefined, formSchema.data);
           postOperationPatches.push(
             ...buildConfigPatches(savedWorker.path, savedWorker.data, {
               ...pendingWorker.visual,
               name,
+              // A minimal worker inherits the coordinator executor on the
+              // server. Keep those materialized defaults when the user left
+              // the worker selectors on "Use local default".
+              harness: pendingWorker.visual.harness || savedVisual.harness,
+              model: pendingWorker.visual.model || savedVisual.model,
             }),
           );
         }
@@ -1162,6 +1192,13 @@ export function MultiAgentDetailPage() {
                           harnesses={bundleOptions.data?.harnesses}
                           models={modelOptions}
                           skills={bundleOptions.data?.skills}
+                          runtimeSkills={hostSkills.data}
+                          runtimeLabel={
+                            previewHost && previewHarness
+                              ? `${previewHarness} (${previewHost.name})`
+                              : undefined
+                          }
+                          bundledSkills={bundledSkillNames(selected.path, bundle.data.files)}
                           workerNames={workers.map(draftWorkerName)}
                           value={selected.visual}
                           onChange={(visual) =>
