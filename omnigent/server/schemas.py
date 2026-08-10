@@ -1240,6 +1240,8 @@ class SessionCreateRequest(BaseModel):
     :param title: Optional human-readable title for the session,
         e.g. ``"debugging auth flow"``.
     :param labels: Initial guardrails labels to set on the session.
+    :param project_id: Optional first-class project to file the new session
+        into. The project must exist and belong to the caller.
     :param parent_session_id: Parent session for sub-agent spawns.
         When set, the server inherits the parent's ``runner_id``
         affinity and sets ``parent_conversation_id`` on the child
@@ -1339,6 +1341,7 @@ class SessionCreateRequest(BaseModel):
     initial_items: list[SessionEventInput] = Field(default_factory=list)
     title: str | None = None
     labels: dict[str, str] = Field(default_factory=dict)
+    project_id: str | None = Field(default=None, min_length=1)
     parent_session_id: str | None = None
     sub_agent_name: str | None = None
     host_type: Literal["external", "managed"] = "external"
@@ -1428,6 +1431,8 @@ class SessionCreateMetadata(BaseModel):
         e.g. ``"debugging auth flow"``.
     :param labels: Initial guardrails labels to set on the
         session. Empty dict (the default) starts with no labels.
+    :param project_id: Optional first-class project to file the new session
+        into. The project must exist and belong to the caller.
     :param reasoning_effort: Optional per-session reasoning-effort
         hint. Accepted metadata values are ``"none"``,
         ``"minimal"``, ``"low"``, ``"medium"``, ``"high"``,
@@ -1462,6 +1467,7 @@ class SessionCreateMetadata(BaseModel):
 
     title: str | None = None
     labels: dict[str, str] = Field(default_factory=dict)
+    project_id: str | None = Field(default=None, min_length=1)
     reasoning_effort: str | None = None
     host_id: str | None = None
     workspace: str | None = None

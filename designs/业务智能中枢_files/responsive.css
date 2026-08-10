@@ -1,0 +1,93 @@
+/* 窄窗口下内容区必须收缩到主栏宽度，避免页面整体横向溢出。 */
+.ap-content {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 950px) {
+  /* index.html 为桌面侧栏设置了固定 flex-basis；中等宽度必须同步收窄。 */
+  .app .ap-side {
+    flex-basis: 205px;
+  }
+
+  .ap-head {
+    display: block;
+  }
+
+  .ap-head > * {
+    min-width: 0;
+  }
+
+  .ap-head .ap-actions {
+    margin-top: 12px;
+  }
+
+  .ap-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ap-grid > * {
+    min-width: 0;
+  }
+
+  /* .ap-route.six 的五列定义优先级高于通用 .ap-route，需单独覆盖。 */
+  .ap-route.six {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .credential-table-scroll {
+    overflow-x: auto;
+  }
+
+  .credential-table {
+    min-width: 980px;
+  }
+
+  /* 接入示例包含不可分隔的长 ID，滚动应限制在代码块内部。 */
+  .ap-card pre {
+    box-sizing: border-box;
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
+
+@media (max-width: 680px) {
+  .ap-route.six {
+    grid-template-columns: 1fr;
+  }
+
+  .credential-filters {
+    display: grid;
+    padding: 12px;
+  }
+
+  .credential-filters label,
+  .credential-filters label:nth-child(3),
+  .credential-filters input,
+  .credential-filters select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .credential-pagination {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+
+  .credential-drawer {
+    width: 100vw;
+  }
+
+  .credential-form-grid,
+  .credential-field-row {
+    grid-template-columns: 1fr;
+  }
+
+  .credential-field-row .ap-btn {
+    justify-self: start;
+  }
+}

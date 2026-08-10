@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Orvia monochrome brand mark</title>
+  <desc id="desc">Two coordinated orbits forming the Orvia mark.</desc>
+  <g fill="none" stroke="#11171C" stroke-width="58" stroke-linecap="round">
+    <circle cx="256" cy="256" r="166" pathLength="1000" stroke-dasharray="476 524" transform="rotate(-40 256 256)"/>
+    <circle cx="256" cy="256" r="166" pathLength="1000" stroke-dasharray="476 524" transform="rotate(140 256 256)"/>
+  </g>
+</svg>

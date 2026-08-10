@@ -118,10 +118,9 @@ export async function updateProjectConfig(id: string, config: ProjectConfig): Pr
 }
 
 /**
- * Delete a project. Only the container is removed; member sessions are kept
- * (never cascade-deleted). Their `project_id` is left dangling server-side, but
- * the dual-read listing joins against the (now-absent) project, so they surface
- * as unfiled. Returns 404 if not found / not owned.
+ * Delete a project. Member sessions are kept (never cascade-deleted) and the
+ * server clears their first-class `project_id` membership atomically with the
+ * container deletion. Returns 404 if not found / not owned.
  */
 export async function deleteProject(id: string): Promise<void> {
   const res = await authenticatedFetch(`/v1/projects/${encodeURIComponent(id)}`, {

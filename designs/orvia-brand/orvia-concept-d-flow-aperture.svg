@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Orvia Flow Aperture concept</title>
+  <desc id="desc">Three flowing bands create a calm aperture for coordinated intelligence.</desc>
+  <defs>
+    <linearGradient id="bandA" x1="108" y1="93" x2="415" y2="246" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#64D8ED"/>
+      <stop offset="0.52" stop-color="#7A8DF5"/>
+      <stop offset="1" stop-color="#B87DE7"/>
+    </linearGradient>
+    <linearGradient id="bandB" x1="418" y1="189" x2="272" y2="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E88DC5"/>
+      <stop offset="0.55" stop-color="#F2A391"/>
+      <stop offset="1" stop-color="#F1D9A6"/>
+    </linearGradient>
+    <linearGradient id="bandC" x1="250" y1="426" x2="90" y2="192" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F0D3A0"/>
+      <stop offset="0.38" stop-color="#97DDBA"/>
+      <stop offset="1" stop-color="#5ED7EC"/>
+    </linearGradient>
+    <filter id="softGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+  </defs>
+  <g fill="none" stroke-width="56" stroke-linecap="round">
+    <path d="M120 173C165 91 274 66 356 113C385 130 407 153 422 181" stroke="url(#bandA)" opacity="0.16" filter="url(#softGlow)"/>
+    <path d="M420 180C469 270 426 378 337 416C307 429 275 433 244 428" stroke="url(#bandB)" opacity="0.16" filter="url(#softGlow)"/>
+    <path d="M245 428C142 427 73 342 83 246C86 214 98 187 120 164" stroke="url(#bandC)" opacity="0.16" filter="url(#softGlow)"/>
+    <path d="M120 173C165 91 274 66 356 113C385 130 407 153 422 181" stroke="url(#bandA)"/>
+    <path d="M420 180C469 270 426 378 337 416C307 429 275 433 244 428" stroke="url(#bandB)"/>
+    <path d="M245 428C142 427 73 342 83 246C86 214 98 187 120 164" stroke="url(#bandC)"/>
+  </g>
+</svg>

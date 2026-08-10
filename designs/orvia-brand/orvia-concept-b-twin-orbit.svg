@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Orvia Twin Orbit concept</title>
+  <desc id="desc">Two coordinated spectral paths form one continuous working orbit.</desc>
+  <defs>
+    <linearGradient id="upper" x1="84" y1="280" x2="428" y2="86" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5CD8F2"/>
+      <stop offset="0.42" stop-color="#748DF8"/>
+      <stop offset="0.75" stop-color="#B47DEB"/>
+      <stop offset="1" stop-color="#F1A3B1"/>
+    </linearGradient>
+    <linearGradient id="lower" x1="428" y1="232" x2="84" y2="426" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F3D8A5"/>
+      <stop offset="0.28" stop-color="#F0A18F"/>
+      <stop offset="0.6" stop-color="#C57EDC"/>
+      <stop offset="1" stop-color="#62D4E8"/>
+    </linearGradient>
+    <filter id="softGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+  </defs>
+  <g fill="none" stroke-linecap="round" stroke-width="58">
+    <path d="M92 265C92 158 164 87 257 87C357 87 420 161 420 250" stroke="url(#upper)" opacity="0.16" filter="url(#softGlow)"/>
+    <path d="M420 247C420 354 348 425 255 425C155 425 92 351 92 262" stroke="url(#lower)" opacity="0.16" filter="url(#softGlow)"/>
+    <path d="M92 265C92 158 164 87 257 87C357 87 420 161 420 250" stroke="url(#upper)"/>
+    <path d="M420 247C420 354 348 425 255 425C155 425 92 351 92 262" stroke="url(#lower)"/>
+  </g>
+  <path d="M107 202C127 139 184 101 251 101" fill="none" stroke="#FFFFFF" stroke-opacity="0.24" stroke-width="4" stroke-linecap="round"/>
+</svg>

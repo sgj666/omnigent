@@ -397,14 +397,14 @@ describe("Sidebar session list", () => {
     expect(within(sessionsSection!).queryByRole("button", { name: "Select sessions" })).toBeNull();
   });
 
-  it("renders the 'Automations' nav row directly under 'New session' and routes to /tasks", () => {
+  it("renders the 'Automations' nav row directly under 'New session'", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
     renderSidebar();
 
     const scheduled = screen.getByTestId("scheduled-tasks-nav");
-    // Full-width nav ROW (a link), labeled "Automations", pointing at /tasks —
+    // Full-width nav ROW (a link), labeled "Automations", pointing at /automations —
     // not the old top-right icon button.
-    expect(scheduled).toHaveAttribute("href", "/tasks");
+    expect(scheduled).toHaveAttribute("href", "/automations");
     expect(scheduled).toHaveTextContent("Automations");
     // The removed icon-button version must be gone.
     expect(screen.queryByTestId("scheduled-tasks-button")).toBeNull();
@@ -423,9 +423,9 @@ describe("Sidebar session list", () => {
     );
   });
 
-  it("marks the 'Automations' nav row active when on /tasks", () => {
+  it("marks the 'Automations' nav row active when on /automations", () => {
     mockConversations(THREE_TYPE_CONVERSATIONS);
-    renderSidebar(true, "/tasks");
+    renderSidebar(true, "/automations");
 
     // Active/selected state uses the SAME shared active-highlight as the sibling
     // nav rows (New session / Inbox) — the `--sidebar-active` pill, not an

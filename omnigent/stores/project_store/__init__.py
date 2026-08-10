@@ -110,10 +110,11 @@ class ProjectStore(ABC):
     @abstractmethod
     def delete(self, project_id: str, *, owner_user_id: str | None) -> bool:
         """
-        Delete an owned project. Idempotent.
+        Delete an owned project and clear its member-session memberships.
 
-        Deleting a project does not delete its member sessions; unfiling them
-        (clearing ``project_id``) is the caller's responsibility.
+        Member sessions are preserved. Implementations must clear their
+        ``project_id`` in the same transaction as the project deletion when
+        the persistence backend supports it.
 
         :param project_id: Opaque project identifier.
         :param owner_user_id: The requesting owner.

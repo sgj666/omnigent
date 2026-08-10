@@ -1,5 +1,5 @@
 /**
- * Scheduled tasks page (`/tasks`) — the list of the user's recurring agent
+ * Automations page (`/automations`) — the list of the user's recurring agent
  * tasks, a search + Active/Paused filter, a "New task" manual-create action,
  * and a static Suggestions section below.
  *
@@ -40,7 +40,7 @@ const FILTER_TABS: { value: FilterTab; label: string }[] = [
   { value: "paused", label: "Paused" },
 ];
 
-export function TasksPage() {
+export function AutomationsPage() {
   const { data: tasks, isLoading, isError, refetch } = useScheduledTasks();
   // A single shared, slowly-ticking clock for the whole list. Passing it down to
   // each row (rather than each row owning a timer) keeps the relative next-run

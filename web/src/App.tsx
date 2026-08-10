@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { ChatPage } from "@/pages/ChatPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
+import { APP_ROUTES } from "@/lib/navigation";
 import { AppShell } from "@/shell/AppShell";
 
 // Lazy-load the accounts pages so the bundle a header / OIDC
@@ -22,7 +23,9 @@ const ApprovePage = lazy(() =>
   import("@/pages/ApprovePage").then((m) => ({ default: m.ApprovePage })),
 );
 const InboxPage = lazy(() => import("@/pages/InboxPage").then((m) => ({ default: m.InboxPage })));
-const TasksPage = lazy(() => import("@/pages/TasksPage").then((m) => ({ default: m.TasksPage })));
+const AutomationsPage = lazy(() =>
+  import("@/pages/AutomationsPage").then((m) => ({ default: m.AutomationsPage })),
+);
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 );
@@ -119,8 +122,12 @@ function App({ basename }: AppProps = {}) {
         <Route element={<AppShell />}>
           <Route path={prefix || "/"} element={<ChatPage />} />
           <Route path={`${prefix}/c/:conversationId`} element={<ChatPage />} />
-          <Route path={`${prefix}/inbox`} element={<InboxPage />} />
-          <Route path={`${prefix}/tasks`} element={<TasksPage />} />
+          <Route path={`${prefix}${APP_ROUTES.inbox}`} element={<InboxPage />} />
+          <Route path={`${prefix}${APP_ROUTES.automations}`} element={<AutomationsPage />} />
+          <Route
+            path={`${prefix}/tasks`}
+            element={<Navigate to={`${prefix}${APP_ROUTES.automations}`} replace />}
+          />
           {/* Settings renders into the chat outlet so the conversations
               sidebar stays put — entering settings only swaps the card's
               content (the section nav) and the main area. The active section

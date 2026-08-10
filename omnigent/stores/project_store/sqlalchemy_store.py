@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import asc, select
+from sqlalchemy import asc, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from omnigent.db.db_models import SqlProject, current_workspace_id
+from omnigent.db.db_models import SqlConversationMetadata, SqlProject, current_workspace_id
 from omnigent.db.utils import (
     get_or_create_engine,
     make_managed_session_maker,
@@ -262,10 +262,16 @@ class SqlAlchemyProjectStore(ProjectStore):
             return _to_entity(row)
 
     def delete(self, project_id: str, *, owner_user_id: str | None) -> bool:
-        """Delete an owned project. Idempotent; returns ``False`` if not found."""
+        """Delete an owned project and atomically unfile its member sessions."""
         with self._session() as session:
             row = session.get(SqlProject, (current_workspace_id(), project_id))
             if row is None or row.owner_user_id != owner_user_id:
                 return False
+            session.execute(
+                update(SqlConversationMetadata)
+                .where(SqlConversationMetadata.workspace_id == current_workspace_id())
+                .where(SqlConversationMetadata.project_id == project_id)
+                .values(project_id=None)
+            )
             session.delete(row)
             return True

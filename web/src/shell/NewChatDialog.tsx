@@ -145,12 +145,7 @@ import { useNativeServerSwitcherForMainSurface } from "@/hooks/useNativeServerSw
 import type { WorkspaceFile } from "@/hooks/useWorkspaceChangedFiles";
 import type { Conversation } from "@/hooks/useConversations";
 import type { NativeModelOption } from "@/lib/types";
-import {
-  useProjectConfig,
-  useProjects,
-  moveConversationToProject,
-  PROJECT_LABEL_KEY,
-} from "@/hooks/useConversations";
+import { useProjectConfig, useProjects, resolveOrCreateProjectId } from "@/hooks/useConversations";
 import { FileMentionMenu } from "@/components/FileMentionMenu";
 import { useMentionBrowser } from "@/hooks/useMentionBrowser";
 import {
@@ -2920,15 +2915,9 @@ export function NewChatLandingScreen() {
         agentSupportsApprovalMode && bypassSandbox
           ? { ...(nativeLabels ?? {}), [CODEX_NATIVE_BYPASS_SANDBOX_LABEL_KEY]: "1" }
           : nativeLabels;
-      // When filing into a project, stamp its legacy `omni_project` label at
-      // create so the session is BORN FILED. The sidebar dual-reads project
-      // membership from this label OR the first-class `project_id` the follow-up
-      // move sets, so the row groups under its project from its very first
-      // sidebar appearance instead of flashing through the ungrouped "Sessions"
-      // section while the search-indexed session list catches up to the move.
-      const createLabels = selectedProject
-        ? { ...(baseLabels ?? {}), [PROJECT_LABEL_KEY]: selectedProject }
-        : baseLabels;
+      const createProjectId = selectedProject
+        ? await resolveOrCreateProjectId(selectedProject)
+        : undefined;
 
       let data: { id: string };
 
@@ -2941,10 +2930,8 @@ export function NewChatLandingScreen() {
         const bundle = await buildAgentBundle(pendingAgent);
         const metadata: Record<string, unknown> = {};
         if (workspaceTrimmed) metadata.workspace = workspaceTrimmed;
-        // Born-filed: stamp the project's `omni_project` label so a bundled
-        // session groups under its project from its first sidebar appearance,
-        // same as the JSON path (see `createLabels`).
-        if (selectedProject) metadata.labels = { [PROJECT_LABEL_KEY]: selectedProject };
+        if (baseLabels) metadata.labels = baseLabels;
+        if (createProjectId) metadata.project_id = createProjectId;
         data = await createBundledSession(
           bundle,
           metadata as Parameters<typeof createBundledSession>[1],
@@ -2988,9 +2975,8 @@ export function NewChatLandingScreen() {
                       ? { branch_name: trimmedBranch, existing_worktree: true }
                       : undefined,
                 }),
-            // Native-wrapper labels + codex bypass + the born-filed project
-            // label (see `createLabels` above).
-            labels: createLabels,
+            labels: baseLabels,
+            project_id: createProjectId,
             // Permission / approval / cursor mode → CLI flag pair, persisted as
             // terminal_launch_args. Omitted for the default and non-native agents.
             terminal_launch_args:
@@ -3033,29 +3019,11 @@ export function NewChatLandingScreen() {
         }
         data = (await res.json()) as { id: string };
       }
-      // Promote the born-filed session to first-class project membership. The
-      // create above already stamped the `omni_project` label (so the row
-      // groups under its project immediately); this move sets the first-class
-      // `project_id` and clears that label — the single source of truth after
-      // the dual-read transition. Non-fatal if it fails: the session stays
-      // filed by its label, so it still shows under the project either way.
       if (selectedProject) {
-        try {
-          // File via first-class project_id; the helper resolves the picked
-          // name to a project id, creating an empty project on demand when the
-          // name is new or label-only.
-          await moveConversationToProject(data.id, selectedProject);
-          void queryClient.invalidateQueries({ queryKey: ["projects"] });
-          // Refetch the target project folder's own paginated list so the new
-          // session shows up immediately (the folder fetches via
-          // useProjectSessions, separate from the global conversations list).
-          void queryClient.invalidateQueries({ queryKey: ["project-sessions"] });
-        } catch {
-          // Non-fatal: the create already stamped the `omni_project` label, so
-          // the session stays filed under its project by label even if this
-          // `project_id` promotion fails — the sidebar's dual-read grouping
-          // still shows it under the project.
-        }
+        void queryClient.invalidateQueries({ queryKey: ["projects"] });
+        // The target folder owns a separate paginated query and needs to see
+        // the newly-created, already-filed session immediately.
+        void queryClient.invalidateQueries({ queryKey: ["project-sessions"] });
       }
       // Sandbox creates have no user-picked workspace to remember.
       if (!sandboxSelected) addRecent(workspaceTrimmed);

@@ -204,6 +204,23 @@ async def test_delete_project(project_client: httpx.AsyncClient) -> None:
     assert second_delete.status_code == 404
 
 
+async def test_delete_project_unfiles_member_sessions(
+    project_client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """Deleting the container preserves its sessions and clears membership."""
+    project = (await project_client.post("/v1/projects", json={"name": "Doomed"})).json()
+    store = SqlAlchemyConversationStore(db_uri)
+    session = store.create_conversation(project_id=project["id"])
+
+    resp = await project_client.delete(f"/v1/projects/{project['id']}")
+
+    assert resp.status_code == 200
+    preserved = store.get_conversation(session.id)
+    assert preserved is not None
+    assert preserved.project_id is None
+
+
 async def test_session_projects_unions_first_class_and_labels(
     project_client: httpx.AsyncClient,
     db_uri: str,

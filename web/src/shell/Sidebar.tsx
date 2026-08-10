@@ -146,6 +146,7 @@ import {
   useUnseenTick,
 } from "@/hooks/useUnseenConversations";
 import { cn } from "@/lib/utils";
+import { getGlobalNavigationItem } from "@/lib/navigation";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { useResizableSidebar } from "@/hooks/useResizableSidebar";
 import { useSessionSwitchHotkey } from "@/hooks/useSessionSwitchHotkey";
@@ -251,7 +252,7 @@ interface SidebarProps {
 }
 
 /**
- * Which top-level nav button (New session / Inbox) is active for the current
+ * Which top-level nav button (New session / Inbox / Automations) is active for the current
  * route.
  *
  * The inbox route has no param to key off, and the sidebar is basename-agnostic
@@ -264,16 +265,16 @@ interface SidebarProps {
 function useActiveNavItem(): {
   isNewChatPage: boolean;
   isInboxPage: boolean;
-  isTasksPage: boolean;
+  isAutomationsPage: boolean;
 } {
   const { conversationId: activeConversationId } = useParams<{ conversationId: string }>();
   const leaf = useLocation().pathname.split("/").filter(Boolean).at(-1);
   const isInboxPage = leaf === "inbox";
-  const isTasksPage = leaf === "tasks";
-  // Exclude inbox/tasks: they also have no `:conversationId`, so they would
+  const isAutomationsPage = leaf === "automations";
+  // Exclude inbox/automations: they also have no `:conversationId`, so they would
   // otherwise light up the "New session" button.
-  const isNewChatPage = activeConversationId == null && !isInboxPage && !isTasksPage;
-  return { isNewChatPage, isInboxPage, isTasksPage };
+  const isNewChatPage = activeConversationId == null && !isInboxPage && !isAutomationsPage;
+  return { isNewChatPage, isInboxPage, isAutomationsPage };
 }
 
 /**
@@ -526,7 +527,7 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
   }
 
   // Which top-level nav button to highlight for the current route.
-  const { isNewChatPage, isInboxPage, isTasksPage } = useActiveNavItem();
+  const { isNewChatPage, isInboxPage, isAutomationsPage } = useActiveNavItem();
 
   // On /settings the card keeps its chrome but swaps the conversation list
   // for the settings section nav (see settingsNav.tsx) — entering settings
@@ -721,7 +722,10 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                   >
                     {/* No onNavClick: on mobile, entering Settings keeps the
                     drawer open and swaps it to the section list. */}
-                    <Link to="/settings" data-testid="settings-button">
+                    <Link
+                      to={getGlobalNavigationItem("settings").href}
+                      data-testid="settings-button"
+                    >
                       <SettingsIcon className="size-4" />
                     </Link>
                   </Button>
@@ -794,14 +798,14 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
                 // all match post-refactor.
                 "sidebar-compact-text h-7 w-full justify-start gap-2 rounded-[var(--radius-otto-button)] border-0 px-2 font-normal",
                 SIDEBAR_HOVER_HIGHLIGHT,
-                isTasksPage && SIDEBAR_ACTIVE_HIGHLIGHT,
+                isAutomationsPage && SIDEBAR_ACTIVE_HIGHLIGHT,
               )}
               variant="ghost"
               data-testid="scheduled-tasks-nav"
             >
-              <Link to="/tasks" onClick={onNavClick}>
+              <Link to={getGlobalNavigationItem("automations").href} onClick={onNavClick}>
                 <ClockIcon className="size-3.5 text-muted-foreground" />
-                Automations
+                {getGlobalNavigationItem("automations").label}
               </Link>
             </Button>
             <Button
@@ -814,9 +818,9 @@ export function Sidebar({ open, onClose, dragProgress = null, onOpenSearch }: Si
               )}
               data-testid="inbox-button"
             >
-              <Link to="/inbox" onClick={onNavClick}>
+              <Link to={getGlobalNavigationItem("inbox").href} onClick={onNavClick}>
                 <InboxIcon className="size-3.5 text-muted-foreground" />
-                Inbox
+                {getGlobalNavigationItem("inbox").label}
                 {inboxCount > 0 && (
                   <span
                     aria-label={

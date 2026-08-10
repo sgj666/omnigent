@@ -112,6 +112,37 @@ def test_file_and_unfile_session_single_user(db_uri: str) -> None:
     assert conv.id in [s["id"] for s in unfiled.json()["data"]]
 
 
+def test_create_session_with_project_membership(db_uri: str) -> None:
+    """POST persists project membership with the initial session metadata."""
+    _ensure_agent(db_uri)
+    client = TestClient(_single_user_app(db_uri))
+    project = client.post("/v1/projects", json={"name": "Work"}).json()
+
+    resp = client.post(
+        "/v1/sessions",
+        json={"agent_id": AGENT_ID, "project_id": project["id"]},
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["project_id"] == project["id"]
+    persisted = SqlAlchemyConversationStore(db_uri).get_conversation(resp.json()["id"])
+    assert persisted is not None
+    assert persisted.project_id == project["id"]
+
+
+def test_create_session_rejects_unknown_project(db_uri: str) -> None:
+    """POST validates project ownership/existence before creating a session."""
+    _ensure_agent(db_uri)
+    client = TestClient(_single_user_app(db_uri))
+
+    resp = client.post(
+        "/v1/sessions",
+        json={"agent_id": AGENT_ID, "project_id": "f" * 32},
+    )
+
+    assert resp.status_code == 404
+
+
 def test_omitting_project_id_leaves_membership_unchanged(db_uri: str) -> None:
     """A PATCH that doesn't mention project_id must not clear the filing."""
     _ensure_agent(db_uri)
@@ -305,6 +336,21 @@ def test_cannot_file_into_another_owners_project(db_uri: str) -> None:
     # Still unfiled — the rejected filing had no side effect.
     snap = client.get(f"/v1/sessions/{conv_id}", headers=_hdr(ALICE))
     assert snap.json()["project_id"] is None
+
+
+def test_cannot_create_session_in_another_owners_project(db_uri: str) -> None:
+    """Create-time membership uses the same owner boundary as PATCH."""
+    _ensure_agent(db_uri)
+    client = TestClient(_multi_user_app(db_uri))
+    bob_project = client.post("/v1/projects", json={"name": "Bob"}, headers=_hdr(BOB)).json()
+
+    resp = client.post(
+        "/v1/sessions",
+        json={"agent_id": AGENT_ID, "project_id": bob_project["id"]},
+        headers=_hdr(ALICE),
+    )
+
+    assert resp.status_code == 404
 
 
 def test_editor_cannot_file_shared_session(db_uri: str) -> None:

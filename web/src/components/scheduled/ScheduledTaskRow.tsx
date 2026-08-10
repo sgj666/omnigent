@@ -72,7 +72,7 @@ export function ScheduledTaskRow({
         // Card chrome — matching the app's card vocabulary (`rounded-xl border
         // border-border bg-card`, see InboxPage rows / the Card component): a
         // visible border, subtle card background, rounded corners, and internal
-        // padding. The list container (TasksPage) stacks these with a `gap` so
+        // padding. The list container (AutomationsPage) stacks these with a `gap` so
         // there is vertical spacing between cards. `group relative` lets the
         // absolutely-positioned ⋯ trigger hover-reveal; `pr-12` keeps the text
         // clear of the inset button, whose `right-3` matches the card's `px-4`

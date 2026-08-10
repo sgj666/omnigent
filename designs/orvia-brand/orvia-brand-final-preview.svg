@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" role="img" aria-labelledby="title desc">
+  <title id="title">Orvia final brand preview</title>
+  <desc id="desc">The final Orvia spectral twin-orbit mark across app icon, light and dark wordmarks, and small sizes.</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="25" flood-color="#03070D" flood-opacity="0.2"/>
+    </filter>
+  </defs>
+  <rect width="1600" height="1100" fill="#EEF1F5"/>
+  <text x="92" y="88" fill="#11171C" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="42" font-weight="650" letter-spacing="-1.5">Orvia · Final brand direction</text>
+  <text x="94" y="126" fill="#687384" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="19">Twin orbit geometry · seven-color intelligence spectrum · Intent in motion.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="80" y="176" width="520" height="520" rx="42" fill="#FFFFFF"/>
+    <rect x="640" y="176" width="880" height="245" rx="42" fill="#FFFFFF"/>
+    <rect x="640" y="451" width="880" height="245" rx="42" fill="#0D151F"/>
+    <rect x="80" y="738" width="1440" height="270" rx="42" fill="#FFFFFF"/>
+  </g>
+
+  <image href="orvia-app-icon.svg" x="144" y="222" width="392" height="392"/>
+  <text x="340" y="660" text-anchor="middle" fill="#667180" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="16" font-weight="600" letter-spacing="1.2">APP ICON</text>
+
+  <image href="orvia-wordmark-on-light.svg" x="688" y="193" width="790" height="226" preserveAspectRatio="xMinYMid meet"/>
+  <image href="orvia-wordmark-on-dark.svg" x="688" y="468" width="790" height="226" preserveAspectRatio="xMinYMid meet"/>
+
+  <text x="132" y="800" fill="#11171C" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15" font-weight="650" letter-spacing="1.3">SIZE &amp; SURFACE TEST</text>
+  <image href="orvia-mark.svg" x="130" y="826" width="132" height="132"/>
+  <image href="orvia-mark.svg" x="310" y="844" width="96" height="96"/>
+  <image href="orvia-mark.svg" x="448" y="860" width="64" height="64"/>
+  <image href="orvia-mark.svg" x="552" y="872" width="40" height="40"/>
+  <image href="orvia-mark.svg" x="632" y="878" width="28" height="28"/>
+  <text x="760" y="866" fill="#11171C" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="38" font-weight="610" letter-spacing="-1.5">Orvia</text>
+  <text x="760" y="906" fill="#667180" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="18">A workspace for agents, tasks, and runs.</text>
+  <text x="760" y="942" fill="#8993A1" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15">Spectral color belongs to the brand mark; product surfaces stay calm and neutral.</text>
+</svg>

@@ -9,7 +9,7 @@
 // anchor to match for INTERVAL>1 rules (the server anchors to the query day;
 // this uses a fixed dtstart), so a shown countdown could be off by a period.
 // It survives ONLY as the sort key for ordering active tasks by soonest run in
-// TasksPage, where an approximate relative ordering is acceptable.
+// AutomationsPage, where an approximate relative ordering is acceptable.
 //
 // We use the `rrule` library only for the next-occurrence math (parsing the
 // rule and stepping to the next firing). The summary text is hand-formatted:

@@ -3,7 +3,7 @@
 //
 // The row is fully props-driven, so these render it directly with a built task
 // object — no hook mocking needed. The ⋯ menu is a Radix dropdown; opening it
-// uses pointerDown on the trigger (matching the TasksPage tests).
+// uses pointerDown on the trigger (matching the AutomationsPage tests).
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";

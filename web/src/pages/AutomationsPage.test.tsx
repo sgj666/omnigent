@@ -1,4 +1,4 @@
-// Tests for the Scheduled tasks page (`/tasks`): list rendering, the
+// Tests for the Automations page (`/automations`): list rendering, the
 // Active/Paused filter + search, the Paused badge/dimming, the New task
 // manual create action, and the pause/delete row actions dispatching the
 // mutation hooks.
@@ -10,7 +10,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TasksPage } from "./TasksPage";
+import { AutomationsPage } from "./AutomationsPage";
 import * as hooks from "@/hooks/useScheduledTasks";
 import type { ScheduledTask } from "@/lib/scheduledTasksApi";
 
@@ -22,7 +22,7 @@ vi.mock("@/hooks/useScheduledTasks", () => ({
 }));
 
 // Stub the create dialog — its internals are covered separately; here we only
-// need to know it opened and WHICH prefill (initialName/initialPrompt) TasksPage
+// need to know it opened and WHICH prefill (initialName/initialPrompt) AutomationsPage
 // passed, so we can assert chip-click seeds it and manual open does not.
 vi.mock("@/components/scheduled/CreateScheduledTaskDialog", () => ({
   CreateScheduledTaskDialog: ({
@@ -110,12 +110,12 @@ afterEach(() => cleanup());
 function renderPage() {
   return render(
     <MemoryRouter>
-      <TasksPage />
+      <AutomationsPage />
     </MemoryRouter>,
   );
 }
 
-describe("TasksPage list", () => {
+describe("AutomationsPage list", () => {
   it("renders the title, subtitle and task rows with schedule text", () => {
     setTasks([task()]);
     renderPage();

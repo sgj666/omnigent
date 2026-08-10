@@ -143,8 +143,7 @@ def create_projects_router(
     async def delete_project(request: Request, project_id: str) -> dict[str, Any]:
         """Delete one of the caller's projects.
 
-        Member sessions are not deleted; they are left for the caller to
-        unfile (clearing their ``project_id``).
+        Member sessions are preserved and atomically unfiled by the store.
 
         :param request: The incoming request, used to identify the user.
         :param project_id: The project to delete.
