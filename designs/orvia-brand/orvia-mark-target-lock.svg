@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Orvia target lock brand mark</title>
+  <desc id="desc">Two coordinated spectral orbits with an arrow precisely striking the shared target.</desc>
+  <defs>
+    <linearGradient id="coolOrbit" x1="126" y1="374" x2="388" y2="134" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#83DDC4"/><stop offset="0.2" stop-color="#59D8EC"/><stop offset="0.48" stop-color="#70A6FA"/><stop offset="0.74" stop-color="#927CF1"/><stop offset="1" stop-color="#D887D2"/>
+    </linearGradient>
+    <linearGradient id="warmOrbit" x1="388" y1="134" x2="126" y2="374" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#D887D2"/><stop offset="0.3" stop-color="#F1A095"/><stop offset="0.58" stop-color="#F1C891"/><stop offset="0.8" stop-color="#A7DEAD"/><stop offset="1" stop-color="#59D8EC"/>
+    </linearGradient>
+    <linearGradient id="targetArrow" x1="100" y1="412" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F1C891"/>
+      <stop offset="0.38" stop-color="#F1A095"/>
+      <stop offset="0.72" stop-color="#D887D2"/>
+      <stop offset="1" stop-color="#927CF1"/>
+    </linearGradient>
+  </defs>
+  <path d="M100 412L231 281" fill="none" stroke="url(#targetArrow)" stroke-width="15" stroke-linecap="round"/>
+  <circle cx="256" cy="256" r="166" pathLength="1000" fill="none" stroke="url(#warmOrbit)" stroke-width="58" stroke-linecap="round" stroke-dasharray="476 524" transform="rotate(-40 256 256)"/>
+  <circle cx="256" cy="256" r="166" pathLength="1000" fill="none" stroke="url(#coolOrbit)" stroke-width="58" stroke-linecap="round" stroke-dasharray="476 524" transform="rotate(140 256 256)"/>
+  <circle cx="256" cy="256" r="25" fill="none" stroke="#927CF1" stroke-opacity="0.18" stroke-width="7"/>
+  <circle cx="256" cy="256" r="8" fill="#927CF1" opacity="0.34"/>
+  <path d="M211 272L240 301L256 256Z" fill="url(#targetArrow)" stroke="#B888DE" stroke-width="2" stroke-linejoin="round"/>
+</svg>

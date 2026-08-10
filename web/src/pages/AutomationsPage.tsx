@@ -28,26 +28,20 @@ import {
   useUpdateScheduledTask,
 } from "@/hooks/useScheduledTasks";
 import { useNow } from "@/hooks/useNow";
-import { isPermissionDenied } from "@/lib/httpErrors";
 import type { ScheduledTask } from "@/lib/scheduledTasksApi";
 import { nextRunAtMs } from "@/lib/scheduleText";
-import { useSearchParams } from "@/lib/routing";
 import { cn } from "@/lib/utils";
-import { useTranslation } from "react-i18next";
 
 type FilterTab = "all" | "active" | "paused";
 
 const FILTER_TABS: { value: FilterTab; label: string }[] = [
-  { value: "all", label: "all" },
-  { value: "active", label: "active" },
-  { value: "paused", label: "paused" },
+  { value: "all", label: "All" },
+  { value: "active", label: "Active" },
+  { value: "paused", label: "Paused" },
 ];
 
 export function AutomationsPage() {
-  const { t } = useTranslation("tasks");
-  const { t: commonT } = useTranslation("common");
-  const [params, setParams] = useSearchParams();
-  const { data: tasks, isLoading, isError, error, refetch } = useScheduledTasks();
+  const { data: tasks, isLoading, isError, refetch } = useScheduledTasks();
   // A single shared, slowly-ticking clock for the whole list. Passing it down to
   // each row (rather than each row owning a timer) keeps the relative next-run
   // labels fresh with ONE interval regardless of how many rows are on screen.
@@ -56,22 +50,14 @@ export function AutomationsPage() {
   const deleteMutation = useDeleteScheduledTask();
   const runNowMutation = useRunScheduledTaskNow();
 
-  const search = params.get("q") ?? "";
-  const rawFilter = params.get("status");
-  const filter: FilterTab = rawFilter === "active" || rawFilter === "paused" ? rawFilter : "all";
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<FilterTab>("all");
   const [manualOpen, setManualOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
   // Prefill for the manual create dialog when opened from a "Suggestions" chip.
   // Null → the normal manual path (empty fields). Cleared on dialog close so a
   // stale prefill never leaks into a subsequent plain "New task" open.
-  const [prefill, setPrefill] = useState<{ name: string; prompt: string } | null>(null);
-
-  function updateParam(key: string, value: string, defaultValue = "") {
-    const next = new URLSearchParams(params);
-    if (!value || value === defaultValue) next.delete(key);
-    else next.set(key, value);
-    setParams(next, { replace: true });
-  }
+  const [prefill, setPrefill] = useState<ScheduledTaskSuggestion["prefill"] | null>(null);
 
   function openManual() {
     setPrefill(null);
@@ -80,7 +66,7 @@ export function AutomationsPage() {
   }
 
   function openFromSuggestion(s: ScheduledTaskSuggestion) {
-    setPrefill({ name: t(s.prefill.nameKey), prompt: t(s.prefill.promptKey) });
+    setPrefill(s.prefill);
     setEditingTask(null);
     setManualOpen(true);
   }
@@ -96,16 +82,16 @@ export function AutomationsPage() {
   const filtered = useMemo(() => {
     const all = tasks ?? [];
     const q = search.trim().toLowerCase();
-    const matches = all.filter((task) => {
-      if (filter === "active" && task.state !== "active") return false;
-      if (filter === "paused" && task.state !== "paused") return false;
-      if (q && !task.name.toLowerCase().includes(q)) return false;
+    const matches = all.filter((t) => {
+      if (filter === "active" && t.state !== "active") return false;
+      if (filter === "paused" && t.state !== "paused") return false;
+      if (q && !t.name.toLowerCase().includes(q)) return false;
       return true;
     });
     const nextRunByTaskId = new Map(
       matches
-        .filter((task) => task.state === "active")
-        .map((task) => [task.id, nextRunAtMs(task.rrule, task.timezone)]),
+        .filter((t) => t.state === "active")
+        .map((t) => [t.id, nextRunAtMs(t.rrule, t.timezone)]),
     );
     // Sort: ACTIVE first (soonest next-run at the top), PAUSED last. The
     // least-actionable (paused) rows sink to the bottom rather than leading the
@@ -164,11 +150,13 @@ export function AutomationsPage() {
     <PageScroll contentClassName="px-6">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold">{t("automations")}</h1>
-          <p className="text-sm text-muted-foreground">{t("description")}</p>
+          <h1 className="text-2xl font-semibold">Automations</h1>
+          <p className="text-sm text-muted-foreground">
+            Run agent sessions on a recurring schedule. Tasks fire on a connected host.
+          </p>
         </div>
         <Button data-testid="new-task-button" className="shrink-0" onClick={openManual}>
-          {t("newTask")}
+          New task
         </Button>
       </div>
 
@@ -180,21 +168,21 @@ export function AutomationsPage() {
           <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={search}
-            onChange={(e) => updateParam("q", e.target.value)}
-            placeholder={t("search")}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search automations…"
             data-testid="tasks-search"
             className="pl-9"
           />
         </div>
         {hasAnyTasks && (
-          <div aria-label={t("filterTasks")} className="flex items-center gap-1">
+          <div aria-label="Filter tasks" className="flex items-center gap-1">
             {FILTER_TABS.map((tab) => (
               <button
                 key={tab.value}
                 type="button"
                 aria-pressed={filter === tab.value}
                 data-testid={`tasks-filter-${tab.value}`}
-                onClick={() => updateParam("status", tab.value, "all")}
+                onClick={() => setFilter(tab.value)}
                 className={cn(
                   "rounded-md px-3 py-1 text-sm font-medium transition-colors",
                   filter === tab.value
@@ -202,7 +190,7 @@ export function AutomationsPage() {
                     : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
                 )}
               >
-                {t(tab.label)}
+                {tab.label}
               </button>
             ))}
           </div>
@@ -216,22 +204,15 @@ export function AutomationsPage() {
           className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm"
         >
           <TriangleAlertIcon className="size-4 shrink-0 text-destructive" />
-          <span className="flex-1">
-            {isPermissionDenied(error) ? commonT("collection.permissionDenied") : t("loadError")}
-            {isPermissionDenied(error) ? (
-              <span className="mt-0.5 block text-xs text-muted-foreground">
-                {commonT("collection.permissionDeniedDescription")}
-              </span>
-            ) : null}
-          </span>
+          <span className="flex-1">Couldn’t load automations.</span>
           <Button variant="outline" size="sm" onClick={() => void refetch()}>
-            {t("retry")}
+            Retry
           </Button>
         </div>
       ) : isLoading ? (
         <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
           <Loader2Icon className="size-4 animate-spin" />
-          {t("loading")}
+          Loading automations…
         </div>
       ) : filtered.length === 0 ? (
         <EmptyState
@@ -287,17 +268,18 @@ function EmptyState({
   showSuggestions: boolean;
   onPickSuggestion: (s: ScheduledTaskSuggestion) => void;
 }) {
-  const { t } = useTranslation("tasks");
   return (
     <div className="py-8" data-testid="tasks-empty-state">
       {hasAny && (
-        <div className="py-10 text-center text-sm text-muted-foreground">{t("noFound")}</div>
+        <div className="py-10 text-center text-sm text-muted-foreground">No automations found</div>
       )}
       {!hasAny && (
         <div className="flex flex-col items-center gap-2 py-12 text-center">
           <ClockIcon className="size-8 text-muted-foreground/50" />
-          <p className="text-sm font-medium">{t("noYet")}</p>
-          <p className="max-w-sm text-xs text-muted-foreground">{t("emptyDescription")}</p>
+          <p className="text-sm font-medium">No automations yet</p>
+          <p className="max-w-sm text-xs text-muted-foreground">
+            Create a task to run an agent session automatically on a recurring schedule.
+          </p>
           {showSuggestions && (
             <SuggestionsSection
               onPick={onPickSuggestion}
@@ -321,7 +303,6 @@ function SuggestionsSection({
   showHeading?: boolean;
   className?: string;
 }) {
-  const { t } = useTranslation("tasks");
   return (
     // The single divider on the page: a `border-t` separating the task list
     // from the section. `mt-4 pt-4` keeps the gap tight.
@@ -329,7 +310,7 @@ function SuggestionsSection({
       className={cn("mt-4 border-t border-border/60 pt-4", className)}
       data-testid="tasks-suggestions"
     >
-      {showHeading && <h2 className="mb-3 text-sm text-muted-foreground">{t("suggestions")}</h2>}
+      {showHeading && <h2 className="mb-3 text-sm text-muted-foreground">Suggestions</h2>}
       {/* Compact chips that wrap onto multiple lines. */}
       <div className="flex flex-wrap gap-2">
         {SCHEDULED_TASK_SUGGESTIONS.map((s) => {
@@ -343,7 +324,7 @@ function SuggestionsSection({
               className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-normal transition-colors hover:bg-muted hover:text-foreground"
             >
               <Icon className={cn("size-4 shrink-0", s.iconClassName)} />
-              <span className="truncate">{t(s.titleKey)}</span>
+              <span className="truncate">{s.title}</span>
             </button>
           );
         })}

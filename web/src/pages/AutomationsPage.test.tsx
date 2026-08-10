@@ -65,7 +65,6 @@ function task(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
     state: "active",
     lastRunAt: null,
     lastRunStatus: null,
-    lastRunErrorCode: null,
     lastRunConversationId: null,
     nextRunAt: null,
     ...overrides,
@@ -76,15 +75,11 @@ const mutate = vi.fn();
 const deleteMutate = vi.fn();
 const runNowMutate = vi.fn();
 
-function setTasks(
-  tasks: ScheduledTask[],
-  state: { isLoading?: boolean; isError?: boolean; error?: Error } = {},
-) {
+function setTasks(tasks: ScheduledTask[], state: { isLoading?: boolean; isError?: boolean } = {}) {
   vi.mocked(hooks.useScheduledTasks).mockReturnValue({
     data: tasks,
     isLoading: state.isLoading ?? false,
     isError: state.isError ?? false,
-    error: state.error ?? null,
     refetch: vi.fn(),
   } as unknown as ReturnType<typeof hooks.useScheduledTasks>);
 }
@@ -112,9 +107,9 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-function renderPage(path = "/automations") {
+function renderPage() {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <MemoryRouter>
       <AutomationsPage />
     </MemoryRouter>,
   );
@@ -153,26 +148,6 @@ describe("AutomationsPage list", () => {
     expect(line).not.toContain("Next run");
   });
 
-  it("shows the target Agent and the latest run result with a link to its session", () => {
-    setTasks([
-      task({
-        agentId: "ag_reviewer",
-        lastRunAt: 1_786_000_000,
-        lastRunStatus: "failed",
-        lastRunConversationId: "conv_failed",
-      }),
-    ]);
-    renderPage();
-
-    const row = screen.getByTestId("scheduled-task-row");
-    expect(within(row).getByText("Agent ag_reviewer")).toBeInTheDocument();
-    expect(within(row).getByText("Failed")).toBeInTheDocument();
-    expect(within(row).getByRole("link", { name: "Open last run" })).toHaveAttribute(
-      "href",
-      "/c/conv_failed",
-    );
-  });
-
   it("resumes a paused task via the row menu (Resume label reflects state)", () => {
     setTasks([task({ id: "st_2", state: "paused" })]);
     renderPage();
@@ -197,17 +172,6 @@ describe("AutomationsPage list", () => {
     expect(screen.queryByTestId("tasks-filter-active")).toBeNull();
     expect(screen.queryByTestId("tasks-filter-paused")).toBeNull();
     expect(screen.queryAllByTestId("new-task-button")).toHaveLength(1);
-  });
-
-  it("shows a dedicated permission state when automations are forbidden", () => {
-    setTasks([], { isError: true, error: new Error("403 Forbidden") });
-
-    renderPage();
-
-    expect(screen.getByText("You don’t have access to this collection")).toBeInTheDocument();
-    expect(
-      screen.getByText("Ask an administrator for access, then try again."),
-    ).toBeInTheDocument();
   });
 
   it("shows compact suggestion chips in the true empty state", () => {
@@ -318,17 +282,6 @@ describe("filtering + search", () => {
     const rows = screen.getAllByTestId("scheduled-task-row");
     expect(rows).toHaveLength(1);
     expect(within(rows[0]).getByText("PR sweep")).toBeInTheDocument();
-  });
-
-  it("restores search and status filters from the URL", () => {
-    setTasks([task(), task({ id: "st_2", name: "Weekly review", state: "paused" })]);
-
-    renderPage("/automations?status=paused&q=weekly");
-
-    expect(screen.getByTestId("tasks-search")).toHaveValue("weekly");
-    expect(screen.getByTestId("tasks-filter-paused")).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByText("Weekly review")).toBeInTheDocument();
-    expect(screen.queryByText("Nightly triage")).toBeNull();
   });
 });
 

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 320" role="img" aria-labelledby="title desc">
+  <title id="title">Orvia wordmark on light</title>
+  <desc id="desc">Orvia spectral mark, product name, and Intent in motion slogan for light surfaces.</desc>
+  <defs>
+    <linearGradient id="coolOrbit" x1="75" y1="235" x2="235" y2="78" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#83DDC4"/><stop offset="0.2" stop-color="#59D8EC"/><stop offset="0.48" stop-color="#70A6FA"/><stop offset="0.74" stop-color="#927CF1"/><stop offset="1" stop-color="#D887D2"/>
+    </linearGradient>
+    <linearGradient id="warmOrbit" x1="235" y1="78" x2="75" y2="235" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#D887D2"/><stop offset="0.3" stop-color="#F1A095"/><stop offset="0.58" stop-color="#F1C891"/><stop offset="0.8" stop-color="#A7DEAD"/><stop offset="1" stop-color="#59D8EC"/>
+    </linearGradient>
+  </defs>
+  <g>
+    <circle cx="160" cy="160" r="102" pathLength="1000" fill="none" stroke="url(#warmOrbit)" stroke-width="38" stroke-linecap="round" stroke-dasharray="476 524" transform="rotate(-40 160 160)"/>
+    <circle cx="160" cy="160" r="102" pathLength="1000" fill="none" stroke="url(#coolOrbit)" stroke-width="38" stroke-linecap="round" stroke-dasharray="476 524" transform="rotate(140 160 160)"/>
+  </g>
+  <text x="330" y="158" fill="#11171C" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="104" font-weight="610" letter-spacing="-5">Orvia</text>
+  <text x="336" y="216" fill="#667180" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="29" font-weight="450" letter-spacing="-0.4">Intent in motion.</text>
+</svg>

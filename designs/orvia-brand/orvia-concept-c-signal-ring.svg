@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Orvia Signal Ring concept</title>
+  <desc id="desc">Five intelligent signals align into a precise task and agent loop.</desc>
+  <defs>
+    <filter id="softGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+  </defs>
+  <g fill="none" stroke-width="54" stroke-linecap="round" transform="rotate(-18 256 256)">
+    <circle cx="256" cy="256" r="165" stroke="#59D8EC" stroke-dasharray="168 869" stroke-dashoffset="0" opacity="0.16" filter="url(#softGlow)"/>
+    <circle cx="256" cy="256" r="165" stroke="#70A6FA" stroke-dasharray="168 869" stroke-dashoffset="-207" opacity="0.16" filter="url(#softGlow)"/>
+    <circle cx="256" cy="256" r="165" stroke="#997CF1" stroke-dasharray="168 869" stroke-dashoffset="-414" opacity="0.16" filter="url(#softGlow)"/>
+    <circle cx="256" cy="256" r="165" stroke="#E38DC7" stroke-dasharray="168 869" stroke-dashoffset="-621" opacity="0.16" filter="url(#softGlow)"/>
+    <circle cx="256" cy="256" r="165" stroke="#F1C091" stroke-dasharray="168 869" stroke-dashoffset="-828" opacity="0.16" filter="url(#softGlow)"/>
+    <circle cx="256" cy="256" r="165" stroke="#59D8EC" stroke-dasharray="168 869" stroke-dashoffset="0"/>
+    <circle cx="256" cy="256" r="165" stroke="#70A6FA" stroke-dasharray="168 869" stroke-dashoffset="-207"/>
+    <circle cx="256" cy="256" r="165" stroke="#997CF1" stroke-dasharray="168 869" stroke-dashoffset="-414"/>
+    <circle cx="256" cy="256" r="165" stroke="#E38DC7" stroke-dasharray="168 869" stroke-dashoffset="-621"/>
+    <circle cx="256" cy="256" r="165" stroke="#F1C091" stroke-dasharray="168 869" stroke-dashoffset="-828"/>
+  </g>
+</svg>

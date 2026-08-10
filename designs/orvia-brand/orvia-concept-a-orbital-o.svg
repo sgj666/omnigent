@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Orvia Orbital O concept</title>
+  <desc id="desc">An open spectral orbit with a subtle forward-moving gap.</desc>
+  <defs>
+    <linearGradient id="spectrum" x1="88" y1="408" x2="424" y2="104" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#55D8F3"/>
+      <stop offset="0.22" stop-color="#6EA7FF"/>
+      <stop offset="0.47" stop-color="#9278F4"/>
+      <stop offset="0.7" stop-color="#E08AD6"/>
+      <stop offset="0.88" stop-color="#F2A49A"/>
+      <stop offset="1" stop-color="#F3DDAD"/>
+    </linearGradient>
+    <filter id="softGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+  </defs>
+  <circle cx="256" cy="256" r="166" fill="none" stroke="url(#spectrum)" stroke-width="58" stroke-linecap="round" stroke-dasharray="945 98" transform="rotate(-39 256 256)" opacity="0.18" filter="url(#softGlow)"/>
+  <circle cx="256" cy="256" r="166" fill="none" stroke="url(#spectrum)" stroke-width="58" stroke-linecap="round" stroke-dasharray="945 98" transform="rotate(-39 256 256)"/>
+  <circle cx="256" cy="256" r="166" fill="none" stroke="#FFFFFF" stroke-opacity="0.28" stroke-width="4" stroke-linecap="round" stroke-dasharray="245 798" transform="rotate(205 256 256)"/>
+</svg>

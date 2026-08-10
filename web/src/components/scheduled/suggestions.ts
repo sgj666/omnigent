@@ -10,10 +10,11 @@ export interface ScheduledTaskSuggestion {
   id: string;
   icon: LucideIcon;
   iconClassName: string;
-  /** Translation key for the short chip label (1–2 words) shown on the pill. */
-  titleKey: string;
-  /** Translation keys for the editable name and prompt seeded by the chip. */
-  prefill: { nameKey: string; promptKey: string };
+  /** Short chip label (1-2 words) shown on the pill. The fuller name used for
+   *  the created task lives in `prefill.name`, not here. */
+  title: string;
+  /** Prefill applied to the manual create dialog when the suggestion is picked. */
+  prefill: { name: string; prompt: string };
 }
 
 export const SCHEDULED_TASK_SUGGESTIONS: ScheduledTaskSuggestion[] = [
@@ -21,30 +22,33 @@ export const SCHEDULED_TASK_SUGGESTIONS: ScheduledTaskSuggestion[] = [
     id: "follow-up-monitor",
     icon: CalendarClockIcon,
     iconClassName: "text-blue-600 dark:text-blue-400",
-    titleKey: "suggestionItems.followUpMonitor.title",
+    title: "Follow-up monitor",
     prefill: {
-      nameKey: "suggestionItems.followUpMonitor.name",
-      promptKey: "suggestionItems.followUpMonitor.prompt",
+      name: "Follow-up monitor",
+      prompt:
+        "Review recent email and calendar activity every weekday morning. Summarize anything that needs my attention and call out follow-ups I should handle today.",
     },
   },
   {
     id: "pr-sweep",
     icon: GitPullRequestIcon,
     iconClassName: "text-emerald-600 dark:text-emerald-500",
-    titleKey: "suggestionItems.prSweep.title",
+    title: "PR sweep",
     prefill: {
-      nameKey: "suggestionItems.prSweep.name",
-      promptKey: "suggestionItems.prSweep.prompt",
+      name: "PR sweep",
+      prompt:
+        "List open pull requests waiting on review. Highlight stale PRs that need a nudge and summarize the next action for each one.",
     },
   },
   {
     id: "news-digest",
     icon: NewspaperIcon,
     iconClassName: "text-amber-600 dark:text-amber-500",
-    titleKey: "suggestionItems.newsDigest.title",
+    title: "News digest",
     prefill: {
-      nameKey: "suggestionItems.newsDigest.name",
-      promptKey: "suggestionItems.newsDigest.prompt",
+      name: "News digest",
+      prompt:
+        "Summarize notable news from the last day. Keep it concise, group related items, and flag anything worth reading more closely.",
     },
   },
 ];

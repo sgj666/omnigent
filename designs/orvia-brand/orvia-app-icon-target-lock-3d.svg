@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Orvia dimensional target lock application icon</title>
+  <desc id="desc">A perspective arrow strikes the spectral Orvia target from the foreground on a graphite app tile.</desc>
+  <defs>
+    <linearGradient id="tile" x1="80" y1="28" x2="440" y2="484" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#172231"/><stop offset="0.52" stop-color="#0D151F"/><stop offset="1" stop-color="#090F17"/></linearGradient>
+    <radialGradient id="aura" cx="0" cy="0" r="1" gradientTransform="translate(256 244) rotate(90) scale(230)" gradientUnits="userSpaceOnUse"><stop stop-color="#6A82F4" stop-opacity="0.12"/><stop offset="1" stop-color="#6A82F4" stop-opacity="0"/></radialGradient>
+    <linearGradient id="coolOrbit" x1="156" y1="351" x2="357" y2="160" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#83DDC4"/><stop offset="0.2" stop-color="#59D8EC"/><stop offset="0.48" stop-color="#70A6FA"/><stop offset="0.74" stop-color="#927CF1"/><stop offset="1" stop-color="#D887D2"/></linearGradient>
+    <linearGradient id="warmOrbit" x1="357" y1="160" x2="156" y2="351" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#D887D2"/><stop offset="0.3" stop-color="#F1A095"/><stop offset="0.58" stop-color="#F1C891"/><stop offset="0.8" stop-color="#A7DEAD"/><stop offset="1" stop-color="#59D8EC"/></linearGradient>
+    <linearGradient id="shaft" x1="119" y1="397" x2="252" y2="264" gradientUnits="userSpaceOnUse"><stop stop-color="#F5D59D"/><stop offset="0.38" stop-color="#F1A095"/><stop offset="0.72" stop-color="#D887D2"/><stop offset="1" stop-color="#927CF1"/></linearGradient>
+    <linearGradient id="shaftHighlight" x1="130" y1="382" x2="244" y2="269" gradientUnits="userSpaceOnUse"><stop stop-color="#FFF2D2" stop-opacity="0.76"/><stop offset="1" stop-color="#F0C7FF" stop-opacity="0.12"/></linearGradient>
+    <linearGradient id="arrowHead" x1="224" y1="291" x2="258" y2="255" gradientUnits="userSpaceOnUse"><stop stop-color="#C379E1"/><stop offset="1" stop-color="#7E6FE9"/></linearGradient>
+    <radialGradient id="targetFace" cx="0" cy="0" r="1" gradientTransform="translate(247 246) rotate(45) scale(48)" gradientUnits="userSpaceOnUse"><stop stop-color="#283554"/><stop offset="0.62" stop-color="#1C2740"/><stop offset="1" stop-color="#111A2C"/></radialGradient>
+    <radialGradient id="impact" cx="0" cy="0" r="1" gradientTransform="translate(256 256) rotate(90) scale(15)" gradientUnits="userSpaceOnUse"><stop stop-color="#B5A9F7" stop-opacity="0.72"/><stop offset="0.48" stop-color="#927CF1" stop-opacity="0.3"/><stop offset="1" stop-color="#927CF1" stop-opacity="0"/></radialGradient>
+    <filter id="ringGlow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="8"/></filter>
+    <filter id="targetShadow" x="-60%" y="-60%" width="220%" height="230%"><feDropShadow dx="3" dy="7" stdDeviation="6" flood-color="#000000" flood-opacity="0.4"/></filter>
+    <filter id="arrowShadow" x="-40%" y="-40%" width="190%" height="200%"><feDropShadow dx="7" dy="9" stdDeviation="6" flood-color="#000000" flood-opacity="0.42"/></filter>
+  </defs>
+
+  <rect x="12" y="12" width="488" height="488" rx="112" fill="url(#tile)"/>
+  <rect x="13" y="13" width="486" height="486" rx="111" fill="none" stroke="#FFFFFF" stroke-opacity="0.1" stroke-width="2"/>
+  <rect x="12" y="12" width="488" height="488" rx="112" fill="url(#aura)"/>
+  <g opacity="0.2" filter="url(#ringGlow)">
+    <circle cx="256" cy="256" r="127" pathLength="1000" fill="none" stroke="url(#warmOrbit)" stroke-width="48" stroke-linecap="round" stroke-dasharray="476 524" transform="rotate(-40 256 256)"/>
+    <circle cx="256" cy="256" r="127" pathLength="1000" fill="none" stroke="url(#coolOrbit)" stroke-width="48" stroke-linecap="round" stroke-dasharray="476 524" transform="rotate(140 256 256)"/>
+  </g>
+  <circle cx="256" cy="256" r="127" pathLength="1000" fill="none" stroke="url(#warmOrbit)" stroke-width="48" stroke-linecap="round" stroke-dasharray="476 524" transform="rotate(-40 256 256)"/>
+  <circle cx="256" cy="256" r="127" pathLength="1000" fill="none" stroke="url(#coolOrbit)" stroke-width="48" stroke-linecap="round" stroke-dasharray="476 524" transform="rotate(140 256 256)"/>
+  <circle cx="256" cy="256" r="34" fill="url(#targetFace)" stroke="#AFA6E9" stroke-opacity="0.28" stroke-width="2.5" filter="url(#targetShadow)"/>
+  <circle cx="256" cy="256" r="21" fill="none" stroke="#9C8CE5" stroke-opacity="0.36" stroke-width="6"/>
+  <circle cx="256" cy="256" r="12" fill="url(#impact)"/>
+
+  <g filter="url(#arrowShadow)">
+    <path d="M121 385L135 399L242 288L232 278Z" fill="url(#shaft)"/>
+    <path d="M129 382L134 387L238 283L234 279Z" fill="url(#shaftHighlight)"/>
+    <path d="M121 387L98 367L114 360L144 377Z" fill="#F1C891"/>
+    <path d="M130 396L150 420L158 403L143 375Z" fill="#E9A890"/>
+    <path d="M105 368L115 367L138 379L128 385Z" fill="#FFE8B7" opacity="0.64"/>
+    <path d="M220 269L244 294L258 254Z" fill="url(#arrowHead)" stroke="#A977DA" stroke-width="1.7" stroke-linejoin="round"/>
+    <path d="M231 274L243 286L253 260Z" fill="#E1B2F1" opacity="0.32"/>
+  </g>
+  <path d="M248 263A12 12 0 0 1 263 248" fill="none" stroke="#B2A5F1" stroke-opacity="0.42" stroke-width="4" stroke-linecap="round"/>
+</svg>

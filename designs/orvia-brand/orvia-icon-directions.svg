@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1040" role="img" aria-labelledby="title desc">
+  <title id="title">Orvia icon directions</title>
+  <desc id="desc">Four spectral circular logo concepts shown on dark and light surfaces with the Orvia wordmark and Intent in motion slogan.</desc>
+  <defs>
+    <linearGradient id="spectrumA" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#55D8F3"/>
+      <stop offset="0.22" stop-color="#6EA7FF"/>
+      <stop offset="0.47" stop-color="#9278F4"/>
+      <stop offset="0.7" stop-color="#E08AD6"/>
+      <stop offset="0.88" stop-color="#F2A49A"/>
+      <stop offset="1" stop-color="#F3DDAD"/>
+    </linearGradient>
+    <linearGradient id="upperB" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#5CD8F2"/>
+      <stop offset="0.42" stop-color="#748DF8"/>
+      <stop offset="0.75" stop-color="#B47DEB"/>
+      <stop offset="1" stop-color="#F1A3B1"/>
+    </linearGradient>
+    <linearGradient id="lowerB" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F3D8A5"/>
+      <stop offset="0.28" stop-color="#F0A18F"/>
+      <stop offset="0.6" stop-color="#C57EDC"/>
+      <stop offset="1" stop-color="#62D4E8"/>
+    </linearGradient>
+    <linearGradient id="bandA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#64D8ED"/>
+      <stop offset="0.52" stop-color="#7A8DF5"/>
+      <stop offset="1" stop-color="#B87DE7"/>
+    </linearGradient>
+    <linearGradient id="bandB" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E88DC5"/>
+      <stop offset="0.55" stop-color="#F2A391"/>
+      <stop offset="1" stop-color="#F1D9A6"/>
+    </linearGradient>
+    <linearGradient id="bandC" x1="1" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#F0D3A0"/>
+      <stop offset="0.38" stop-color="#97DDBA"/>
+      <stop offset="1" stop-color="#5ED7EC"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+    <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="14" stdDeviation="22" flood-color="#05080D" flood-opacity="0.18"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="1040" fill="#0A1019"/>
+  <circle cx="1480" cy="80" r="260" fill="#6B5EE7" opacity="0.05"/>
+  <circle cx="70" cy="970" r="320" fill="#4ACCEB" opacity="0.04"/>
+  <text x="100" y="92" fill="#F7F8FA" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="42" font-weight="650" letter-spacing="-1.4">Orvia</text>
+  <text x="100" y="132" fill="#8F9AAC" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="20" font-weight="450">Icon directions · Intent in motion.</text>
+
+  <g filter="url(#cardShadow)">
+    <rect x="80" y="182" width="700" height="350" rx="30" fill="#111A28" stroke="#263246"/>
+    <rect x="820" y="182" width="700" height="350" rx="30" fill="#F7F7F4"/>
+    <rect x="80" y="570" width="700" height="350" rx="30" fill="#F7F7F4"/>
+    <rect x="820" y="570" width="700" height="350" rx="30" fill="#111A28" stroke="#263246"/>
+  </g>
+
+  <!-- A: Orbital O -->
+  <g transform="translate(142 242)">
+    <circle cx="112" cy="112" r="79" fill="none" stroke="url(#spectrumA)" stroke-width="28" stroke-linecap="round" stroke-dasharray="452 44" transform="rotate(-39 112 112)" opacity="0.22" filter="url(#glow)"/>
+    <circle cx="112" cy="112" r="79" fill="none" stroke="url(#spectrumA)" stroke-width="28" stroke-linecap="round" stroke-dasharray="452 44" transform="rotate(-39 112 112)"/>
+    <circle cx="112" cy="112" r="79" fill="none" stroke="#FFFFFF" stroke-opacity="0.26" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="120 376" transform="rotate(205 112 112)"/>
+  </g>
+  <text x="410" y="322" fill="#FFFFFF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="50" font-weight="610" letter-spacing="-2">Orvia</text>
+  <text x="410" y="363" fill="#94A0B3" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="19">Intent in motion.</text>
+  <text x="410" y="425" fill="#FFFFFF" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15" font-weight="650" letter-spacing="1.5">A · ORBITAL O</text>
+  <text x="410" y="454" fill="#778397" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15">Calm, complete, quietly directional</text>
+
+  <!-- B: Twin Orbit -->
+  <g transform="translate(874 244) scale(.53)">
+    <g fill="none" stroke-linecap="round" stroke-width="58">
+      <path d="M92 265C92 158 164 87 257 87C357 87 420 161 420 250" stroke="url(#upperB)"/>
+      <path d="M420 247C420 354 348 425 255 425C155 425 92 351 92 262" stroke="url(#lowerB)"/>
+    </g>
+  </g>
+  <text x="1150" y="322" fill="#151A22" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="50" font-weight="610" letter-spacing="-2">Orvia</text>
+  <text x="1150" y="363" fill="#667080" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="19">Intent in motion.</text>
+  <text x="1150" y="425" fill="#151A22" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15" font-weight="650" letter-spacing="1.5">B · TWIN ORBIT</text>
+  <text x="1150" y="454" fill="#7A8290" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15">Two coordinated paths, one outcome</text>
+
+  <!-- C: Signal Ring -->
+  <g transform="translate(145 628) scale(.53)">
+    <g fill="none" stroke-width="54" stroke-linecap="round" transform="rotate(-18 256 256)">
+      <circle cx="256" cy="256" r="165" stroke="#59D8EC" stroke-dasharray="168 869" stroke-dashoffset="0"/>
+      <circle cx="256" cy="256" r="165" stroke="#70A6FA" stroke-dasharray="168 869" stroke-dashoffset="-207"/>
+      <circle cx="256" cy="256" r="165" stroke="#997CF1" stroke-dasharray="168 869" stroke-dashoffset="-414"/>
+      <circle cx="256" cy="256" r="165" stroke="#E38DC7" stroke-dasharray="168 869" stroke-dashoffset="-621"/>
+      <circle cx="256" cy="256" r="165" stroke="#F1C091" stroke-dasharray="168 869" stroke-dashoffset="-828"/>
+    </g>
+  </g>
+  <text x="410" y="710" fill="#151A22" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="50" font-weight="610" letter-spacing="-2">Orvia</text>
+  <text x="410" y="751" fill="#667080" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="19">Intent in motion.</text>
+  <text x="410" y="813" fill="#151A22" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15" font-weight="650" letter-spacing="1.5">C · SIGNAL RING</text>
+  <text x="410" y="842" fill="#7A8290" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15">Distinct agents aligned in one system</text>
+
+  <!-- D: Flow Aperture -->
+  <g transform="translate(878 628) scale(.53)">
+    <g fill="none" stroke-width="56" stroke-linecap="round">
+      <path d="M120 173C165 91 274 66 356 113C385 130 407 153 422 181" stroke="url(#bandA)"/>
+      <path d="M420 180C469 270 426 378 337 416C307 429 275 433 244 428" stroke="url(#bandB)"/>
+      <path d="M245 428C142 427 73 342 83 246C86 214 98 187 120 164" stroke="url(#bandC)"/>
+    </g>
+  </g>
+  <text x="1150" y="710" fill="#FFFFFF" font-family="Inter, SF Pro Display, Arial, sans-serif" font-size="50" font-weight="610" letter-spacing="-2">Orvia</text>
+  <text x="1150" y="751" fill="#94A0B3" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="19">Intent in motion.</text>
+  <text x="1150" y="813" fill="#FFFFFF" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15" font-weight="650" letter-spacing="1.5">D · FLOW APERTURE</text>
+  <text x="1150" y="842" fill="#778397" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15">More expressive, fluid intelligence</text>
+
+  <text x="100" y="985" fill="#687487" font-family="Inter, SF Pro Text, Arial, sans-serif" font-size="15">Spectral color is reserved for the brand mark; the product interface remains calm and neutral.</text>
+</svg>
