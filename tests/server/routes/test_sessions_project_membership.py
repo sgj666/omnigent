@@ -30,6 +30,7 @@ from omnigent.server.auth import (
     LEVEL_OWNER,
     UnifiedAuthProvider,
 )
+from omnigent.server.routes._sessions import orchestration as session_orchestration
 from omnigent.server.routes.projects import create_projects_router
 from omnigent.server.routes.sessions import create_sessions_router
 from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
@@ -140,6 +141,111 @@ def test_create_session_with_project_membership(db_uri: str) -> None:
     persisted = SqlAlchemyConversationStore(db_uri).get_conversation(resp.json()["id"])
     assert persisted is not None
     assert persisted.project_id == project["id"]
+
+
+def test_create_session_inherits_project_workspace(db_uri: str, monkeypatch) -> None:
+    """A Project-bound create derives host + directory from the Project row.
+
+    The request deliberately omits both execution fields.  Host filesystem
+    validation is stubbed because this route-level test has no connected host;
+    the assertion is the server-side Project resolution and persisted result.
+    """
+    _ensure_agent(db_uri)
+
+    async def _canonical_workspace(**kwargs) -> str:
+        return kwargs["workspace"]
+
+    monkeypatch.setattr(
+        session_orchestration,
+        "_validate_session_workspace",
+        _canonical_workspace,
+    )
+    client = TestClient(_single_user_app(db_uri))
+    project_host = "11111111111111111111111111111111"
+    project = client.post(
+        "/v1/projects",
+        json={
+            "name": "Bound",
+            "config": {"host_id": project_host, "workspace": "/work/project"},
+        },
+    ).json()
+
+    resp = client.post(
+        "/v1/sessions",
+        json={"agent_id": AGENT_ID, "project_id": project["id"]},
+    )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["project_id"] == project["id"]
+    assert resp.json()["host_id"] == project_host
+    assert resp.json()["workspace"] == "/work/project"
+    persisted = SqlAlchemyConversationStore(db_uri).get_conversation(resp.json()["id"])
+    assert persisted is not None
+    assert persisted.host_id == project_host
+    assert persisted.workspace == "/work/project"
+
+
+def test_create_session_rejects_project_workspace_override(db_uri: str) -> None:
+    """A caller cannot file into one Project while launching elsewhere."""
+    _ensure_agent(db_uri)
+    client = TestClient(_single_user_app(db_uri))
+    project = client.post(
+        "/v1/projects",
+        json={
+            "name": "Bound",
+            "config": {
+                "host_id": "11111111111111111111111111111111",
+                "workspace": "/work/project",
+            },
+        },
+    ).json()
+
+    resp = client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": AGENT_ID,
+            "project_id": project["id"],
+            "host_id": "22222222222222222222222222222222",
+            "workspace": "/work/other",
+        },
+    )
+
+    assert resp.status_code == 409
+    assert "does not match its project workspace" in resp.json()["error"]["message"]
+
+
+def test_create_session_rejects_partial_project_workspace_binding(db_uri: str) -> None:
+    """A host-only Project cannot make the session borrow a random directory."""
+    _ensure_agent(db_uri)
+    client = TestClient(_single_user_app(db_uri))
+    project = client.post(
+        "/v1/projects",
+        json={
+            "name": "Partial",
+            "config": {"host_id": "11111111111111111111111111111111"},
+        },
+    ).json()
+
+    resp = client.post(
+        "/v1/sessions",
+        json={"agent_id": AGENT_ID, "project_id": project["id"]},
+    )
+
+    assert resp.status_code == 400
+    assert "must include workspace" in resp.json()["error"]["message"]
+
+
+def test_create_session_without_project_or_workspace(db_uri: str) -> None:
+    """The core model supports a pure, unfiled session with no directory."""
+    _ensure_agent(db_uri)
+    client = TestClient(_single_user_app(db_uri))
+
+    resp = client.post("/v1/sessions", json={"agent_id": AGENT_ID})
+
+    assert resp.status_code == 201
+    assert resp.json()["project_id"] is None
+    assert resp.json()["host_id"] is None
+    assert resp.json()["workspace"] is None
 
 
 def test_create_session_rejects_unknown_project(db_uri: str) -> None:

@@ -1567,7 +1567,8 @@ export function useDeleteProject() {
 export function useCreateProject() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) => apiCreateProject(name),
+    mutationFn: ({ name, config }: { name: string; config?: ProjectConfig }) =>
+      apiCreateProject(name, config),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
     },

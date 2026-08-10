@@ -3,14 +3,14 @@
 // the new-chat composer pre-fill host / working directory / agent and the
 // isolated-worktree default when starting a session in the project.
 //
-// Scope mirrors what the composer prefills today: host, workspace, agent, and
-// whether new sessions start in a fresh git worktree. Model / reasoning-effort
-// / harness are per-agent run config, and the worktree BASE branch is a global
-// preference (Settings › Git) — both deliberately out of scope here. The host
-// and agent pickers reuse the composer's components; the working directory
-// reuses its filesystem browser (inline, so it scrolls inside the modal).
-// Fields are optional: an unset one stores no default (an absent key), and an
-// all-default dialog stores an empty config.
+// Scope mirrors what the composer consumes today: host + workspace form the
+// project's execution binding, while agent and whether new sessions start in a
+// fresh git worktree are optional defaults. Model / reasoning-effort / harness
+// are per-agent run config, and the worktree BASE branch is a global preference
+// (Settings › Git) — both deliberately out of scope here. The host and agent
+// pickers reuse the composer's components; the working directory reuses its
+// filesystem browser (inline, so it scrolls inside the modal). Empty config is
+// retained for older or intentionally unbound projects.
 
 import { ChevronDownIcon } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -241,7 +241,10 @@ export function ProjectSettingsDialog({
           <Field label={t("projectSettings.host")} hint={t("projectSettings.hostHint")}>
             <Select
               value={hostId}
-              onValueChange={setHostId}
+              onValueChange={(next) => {
+                setHostId(next);
+                if (next !== hostId) setWorkspace("");
+              }}
               onOpenChange={onDropdownOpenChange}
               disabled={isLoading}
             >

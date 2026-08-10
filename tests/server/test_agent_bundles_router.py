@@ -18,6 +18,11 @@ from omnigent.agent_bundles.service import (
 )
 from omnigent.agent_bundles.workers import BundleAgentView
 from omnigent.server.routes.agent_bundles import create_agent_bundles_router
+from omnigent.skills.reader import (
+    SkillRecord,
+    SkillRepositorySource,
+    SkillSnapshot,
+)
 from omnigent.stores.agent_store import AgentVersionConflict
 
 
@@ -115,6 +120,73 @@ def test_static_metadata_and_validate_routes_are_not_captured_as_agent_ids() -> 
     assert validation.status_code == 200
     assert validation.json() == {"valid": True, "diagnostics": []}
     assert service.calls == [("validate", b"candidate")]
+
+
+def test_options_expose_skills_from_the_shared_inventory_reader() -> None:
+    service = FakeService()
+
+    class FakeSkillsReader:
+        def load(self, *, refresh: bool = False) -> SkillSnapshot:
+            assert refresh is False
+            return SkillSnapshot(
+                source=SkillRepositorySource(
+                    remote_url="https://git.example.test/skills.git",
+                    ref="feature-skills",
+                    skills_path="skills",
+                    commit_sha="a" * 40,
+                    synced_at=1,
+                    sync_status="current",
+                    error=None,
+                ),
+                skills=[
+                    SkillRecord(
+                        id="skill-1",
+                        name="review-helper",
+                        description="Review a change safely.",
+                        relative_path="skills/review-helper",
+                        validation_status="valid",
+                        diagnostics=[],
+                        files=[],
+                    ),
+                    SkillRecord(
+                        id="skill-invalid",
+                        name="duplicate-helper",
+                        description="Ambiguous duplicate.",
+                        relative_path="skills/duplicate-helper",
+                        validation_status="error",
+                        diagnostics=["Duplicate skill name: duplicate-helper"],
+                        files=[],
+                    ),
+                ],
+            )
+
+    app = FastAPI()
+    app.include_router(
+        create_agent_bundles_router(
+            service,  # type: ignore[arg-type]
+            options_provider=lambda: {
+                "harnesses": [{"id": "real-harness", "label": "Real"}],
+            },
+            skills_reader=FakeSkillsReader(),  # type: ignore[arg-type]
+        ),
+        prefix="/v1",
+    )
+
+    response = TestClient(app).get("/v1/agent-bundles/options")
+
+    assert response.status_code == 200
+    assert response.json()["skills"] == [
+        {
+            "id": "skill-1",
+            "object": "skill",
+            "name": "review-helper",
+            "description": "Review a change safely.",
+            "relative_path": "skills/review-helper",
+            "validation_status": "valid",
+            "diagnostics": [],
+            "file_count": 0,
+        }
+    ]
 
 
 def test_crud_clone_import_and_export_routes_use_service_contract() -> None:

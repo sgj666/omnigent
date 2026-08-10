@@ -13,20 +13,18 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   MonitorIcon,
   MonitorCloudIcon,
-  CircleHelpIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  GitBranchIcon,
   ArrowUpIcon,
   Loader2Icon,
   FileTextIcon,
+  BriefcaseBusinessIcon,
   FolderIcon,
   ImageIcon,
   PaperclipIcon,
   PlusIcon,
   SettingsIcon,
-  ShuffleIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -71,7 +69,6 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { authenticatedFetch } from "@/lib/identity";
 import { isImeCompositionKeyEvent } from "@/lib/ime";
 import { attachmentKey } from "@/lib/attachments";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useServerInfo } from "@/lib/CapabilitiesContext";
 import { HarnessSetupDialog } from "@/shell/HarnessSetupDialog";
 import {
@@ -94,7 +91,6 @@ import { setPendingInitialPrompt } from "@/store/chatStore";
 import { appendPromptHistoryEntry } from "@/hooks/usePromptHistory";
 import { useIsMobileViewport } from "@/hooks/useIsMobileViewport";
 import { CliCommandBlock } from "./CliCommandBlock";
-import { WorkspacePicker, isNavigablePath } from "./WorkspacePicker";
 import {
   initialPrefillState,
   prefillDone,
@@ -102,13 +98,8 @@ import {
   type ProjectPrefillConfig,
   type ProjectPrefillState,
 } from "./projectPrefill";
-import { getCliServerUrl, getOmnigentHostConfig } from "@/lib/host";
 import { readLastAgentId, writeLastAgentId } from "@/lib/agentPreferences";
-import {
-  readLastHostChoice,
-  writeLastHostChoice,
-  SANDBOX_HOST_CHOICE,
-} from "@/lib/hostPreferences";
+import { SANDBOX_HOST_CHOICE } from "@/lib/hostPreferences";
 import { readLastHarness, writeLastHarness } from "@/lib/harnessPreferences";
 import { readHideUnconfiguredHarnesses } from "@/lib/harnessVisibilityPreferences";
 import { readDefaultBaseBranch } from "@/lib/baseBranchPreferences";
@@ -125,23 +116,14 @@ import {
 } from "@/lib/nativeCodingAgents";
 import { useHostModelOptions, useHosts, type Host } from "@/hooks/useHosts";
 import {
-  controlHost,
-  getHostIdentity,
-  isElectronShell,
-  onHostStatusChanged,
-  type HostIdentity,
-} from "@/lib/nativeBridge";
-import {
   useAvailableAgents,
   prefetchAvailableAgentDetails,
   type AvailableAgent,
 } from "@/hooks/useAvailableAgents";
 import { useAutoGrowTextarea } from "@/hooks/useAutoGrowTextarea";
 import { useDictationInsert } from "@/hooks/useDictationInsert";
-import { useRecentWorkspaces } from "@/hooks/useRecentWorkspaces";
-import { useDirectorySessions } from "@/hooks/useDirectorySessions";
-import { useRunnerHealthRegistration } from "@/hooks/RunnerHealthProvider";
-import { useHostFilesystem, type HostFilesystemEntry } from "@/hooks/useHostFilesystem";
+import { useHostFilesystem } from "@/hooks/useHostFilesystem";
+import type { HostFilesystemEntry } from "@/hooks/useHostFilesystem";
 import { useHostWorktrees } from "@/hooks/useHostWorktrees";
 import { useNativeServerSwitcherForMainSurface } from "@/hooks/useNativeServerSwitcher";
 import type { WorkspaceFile } from "@/hooks/useWorkspaceChangedFiles";
@@ -324,35 +306,6 @@ function defaultModelLabel(
   return dflt ? `Default (${display(dflt)})` : "Default";
 }
 
-function HostOption({ host, subtitle }: { host: Host; subtitle?: string }) {
-  const isOnline = host.status === "online";
-  return (
-    <span className="flex min-w-0 items-center gap-2">
-      {host.name.toLowerCase().includes("cloud") ? (
-        <MonitorCloudIcon className="size-4 shrink-0 text-muted-foreground" />
-      ) : (
-        <MonitorIcon className="size-4 shrink-0 text-muted-foreground" />
-      )}
-      <span className="flex min-w-0 flex-col">
-        <span className="flex items-center gap-2">
-          <span className="truncate text-xs">{host.name}</span>
-          <span
-            className={`inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold uppercase tracking-wider ${isOnline ? "text-green-600" : "text-muted-foreground"}`}
-          >
-            <span
-              className={`inline-block size-1.5 rounded-full ${isOnline ? "bg-green-500" : "bg-muted-foreground"}`}
-            />
-            {host.status}
-          </span>
-        </span>
-        {subtitle && (
-          <span className="text-[10px] leading-tight text-muted-foreground">{subtitle}</span>
-        )}
-      </span>
-    </span>
-  );
-}
-
 export function ConnectHostInstructions({
   serverUrl,
   label,
@@ -402,24 +355,6 @@ export function ConnectHostInstructions({
       )}
     </div>
   );
-}
-
-/**
- * Return true when ``workspace`` is acceptable to send to the backend.
- *
- * Per designs/SESSION_WORKSPACE_SELECTION.md: only fully-absolute
- * paths (starting with ``/``) are accepted. Tilde-prefixed and
- * relative paths are rejected because the server never expands ``~``
- * — that's the host's job, and the workspace request body must be
- * an unambiguous absolute path. Empty / whitespace-only input is
- * also rejected so the submit button is disabled until the user
- * has typed something usable.
- *
- * @param workspace Value the user typed in the workspace input.
- * @returns true when ``workspace.trim()`` starts with ``/``.
- */
-export function isValidWorkspace(workspace: string): boolean {
-  return workspace.trim().startsWith("/");
 }
 
 /**
@@ -510,6 +445,11 @@ export function sessionsSharingDirectory(
       // that could write here — same connectivity signal as the sidebar.
       isRunnerOnline(s.id),
   );
+}
+
+/** Return true for a fully-qualified absolute workspace path. */
+export function isValidWorkspace(workspace: string): boolean {
+  return workspace.trim().startsWith("/");
 }
 
 /**
@@ -768,16 +708,9 @@ export function matchSkillInvocation(
 }
 
 /**
- * Derive a host's home directory from a listing of its home contents.
- *
- * The filesystem endpoint returns home's entries with absolute paths (e.g.
- * ``"/Users/you/projects"``), so home is the parent of any entry. Returns
- * ``null`` for an empty listing — a literally empty home dir is the one case
- * this can't resolve, and the caller falls back to a blank field (the picker
- * still opens straight onto home).
- *
- * @param entries Entries from listing the host's home directory.
- * @returns The home directory path, or ``null`` when it can't be derived.
+ * Derive a host home directory from one absolute child entry. Kept as a small
+ * filesystem utility for consumers that still render a host directory picker;
+ * the new-session screen no longer uses it to seed a Project workspace.
  */
 export function deriveHomeDir(entries: HostFilesystemEntry[]): string | null {
   const first = entries[0];
@@ -1668,8 +1601,6 @@ interface LandingDraft {
   pickedAgentId: string | null;
   selectedHostId: string | null;
   sandboxSelected: boolean;
-  sandboxRepoUrl: string;
-  sandboxRepoBranch: string;
   workspace: string;
   branchName: string;
   prefilledBranch: string;
@@ -1694,10 +1625,10 @@ export function resetLandingDraft(): void {
 
 export function NewChatLandingScreen() {
   const { t } = useTranslation("models");
+  const { t: commonT } = useTranslation("common");
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const serverUrl = getCliServerUrl();
   const { data: agents } = useAvailableAgents();
   // refetchOnFocus: returning from a terminal `omni setup` must clear the
   // readiness badge even if the live push was missed while the tab was hidden.
@@ -1802,15 +1733,6 @@ export function NewChatLandingScreen() {
   // falling back to the generic "New Sandbox" when the server names no
   // provider.
   const sandboxLabel = sandboxOptionLabel(info !== "loading" ? info.sandbox_provider : null);
-  // Embed-only docs seam: when the host passes additional docs and managed
-  // sandboxes are unavailable, keep the sandbox row visible but disabled and
-  // attach a help tooltip with a clickable link.
-  const docsLinks = getOmnigentHostConfig().docsLinks;
-  const newSandboxTooltipContent = docsLinks?.newSandbox;
-  // Embed-only docs seam for Databricks git auth setup. Standalone leaves this
-  // undefined, so no tooltip is rendered.
-  const databricksGitCredentialsTooltipContent = docsLinks?.databricksGitCredentials;
-  const showDisabledSandboxWithDocs = !managedSandboxesEnabled && !!newSandboxTooltipContent;
 
   // Project driving this visit, when the sidebar's per-project "new session"
   // pencil landed here with a `?project=` query param. Empty otherwise.
@@ -1820,20 +1742,19 @@ export function NewChatLandingScreen() {
   // effectiveAgentId below (a stale id falls back to the default). A
   // project-driven visit defers to the project-prefill effect instead
   // (which falls back to the same last pick).
-  const [pickedAgentId, setPickedAgentId] = useState<string | null>(
-    () => landingDraft?.pickedAgentId ?? (projectParam !== "" ? null : readLastAgentId()),
+  const [pickedAgentId, setPickedAgentId] = useState<string | null>(() =>
+    projectParam === "" ? (landingDraft?.pickedAgentId ?? readLastAgentId()) : null,
   );
-  const [selectedHostId, setSelectedHostId] = useState<string | null>(
-    () => landingDraft?.selectedHostId ?? null,
+  const [selectedHostId, setSelectedHostId] = useState<string | null>(() =>
+    projectParam === "" ? (landingDraft?.selectedHostId ?? null) : null,
   );
   // Sessions on the selected host — fetched only when a host is selected,
   // to avoid registering hundreds of sessions into the health poll at idle.
-  const { data: directorySessions } = useDirectorySessions(selectedHostId !== null);
   // True when the user picked the sandbox option instead of a connected
   // host — the server provisions a sandbox host at create time
   // (host_type: "managed"), so no host_id or workspace is sent.
-  const [sandboxSelected, setSandboxSelected] = useState(
-    () => landingDraft?.sandboxSelected ?? false,
+  const [sandboxSelected, setSandboxSelected] = useState(() =>
+    projectParam === "" ? (landingDraft?.sandboxSelected ?? false) : false,
   );
   const { data: hostClaudeModelOptions, isLoading: hostClaudeModelsLoading } = useHostModelOptions(
     selectedHostId,
@@ -1862,42 +1783,21 @@ export function NewChatLandingScreen() {
     () => (sandboxSelected ? [] : (hostCodexModelOptions ?? [])),
     [hostCodexModelOptions, sandboxSelected],
   );
-  // Desktop-shell host status for THIS machine (null outside Electron), so the
-  // picker can tag the current machine and offer to auto-connect it.
-  const [desktopHost, setDesktopHost] = useState<HostIdentity | null>(null);
-  const [connectingThisMachine, setConnectingThisMachine] = useState(false);
-  // Defer the connect until the dropdown has actually closed (set on select,
-  // consumed in the menu's onOpenChange) — connecting while the menu is open
-  // looks janky. A ref so the close handler sees it synchronously.
-  const pendingConnectRef = useRef(false);
-  // Sandbox repository inputs — composed into the managed create's
-  // `workspace` string (`<url>[#<branch>]`); both blank = empty
-  // server-created workspace.
-  const [sandboxRepoUrl, setSandboxRepoUrl] = useState<string>(
-    () => landingDraft?.sandboxRepoUrl ?? "",
+  const [workspace, setWorkspace] = useState<string>(() =>
+    projectParam === "" ? (landingDraft?.workspace ?? "") : "",
   );
-  const [sandboxRepoBranch, setSandboxRepoBranch] = useState<string>(
-    () => landingDraft?.sandboxRepoBranch ?? "",
+  const [branchName, setBranchName] = useState<string>(() =>
+    projectParam === "" ? (landingDraft?.branchName ?? "") : "",
   );
-  const [workspace, setWorkspace] = useState<string>(() => landingDraft?.workspace ?? "");
-  const [branchName, setBranchName] = useState<string>(() => landingDraft?.branchName ?? "");
-  // The base branch auto-fills from the configured default (Settings › Git)
-  // when the user names a worktree branch, and is left alone once the user
-  // touches it — clearing the branch name re-arms the auto-fill (see the effect
-  // below). `baseBranchEdited` tracks that hand-off; any edit (including
-  // clearing the field) sets it so a later re-seed won't clobber the choice.
+  // A Project may opt into an isolated worktree. The branch is generated from
+  // that project policy; it is not a Session-level location control.
   const [baseBranch, _setBaseBranch] = useState<string>("");
-  const [baseBranchEdited, setBaseBranchEdited] = useState<boolean>(false);
-  const setBaseBranch = useCallback((next: string) => {
-    _setBaseBranch(next);
-    setBaseBranchEdited(true);
-  }, []);
   // Branch prefilled from the existing worktree the current workspace points
   // at. When `branchName` still equals this, the session starts directly in
   // that worktree (no git opts). Editing the field away from it means the user
   // wants a *new* worktree off that name.
-  const [prefilledBranch, setPrefilledBranch] = useState<string>(
-    () => landingDraft?.prefilledBranch ?? "",
+  const [prefilledBranch, setPrefilledBranch] = useState<string>(() =>
+    projectParam === "" ? (landingDraft?.prefilledBranch ?? "") : "",
   );
   // Project to file the new session under. Empty = unfiled. Stamped as the
   // `omni_project` label at create (so the row is filed from its first sidebar
@@ -1968,14 +1868,8 @@ export function NewChatLandingScreen() {
     _setCostControlMode(mode);
     if (mode === "on") _setPickedModel("");
   }, []);
-  // Controls the working-directory popover so picking a directory closes it.
-  const [workspacePopoverOpen, setWorkspacePopoverOpen] = useState(false);
-  // Controlled so selecting an existing worktree can close the popover.
-  const [worktreePopoverOpen, setWorktreePopoverOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  // "Connect a host" instructions modal, opened from the host dropdown.
-  const [connectOpen, setConnectOpen] = useState(false);
   // Harness "Set up" dialog target, opened from the composer notice or a picker
   // row; null when closed. One dialog serves every entry point.
   const [setupTarget, setSetupTarget] = useState<{
@@ -1998,8 +1892,6 @@ export function NewChatLandingScreen() {
     pickedAgentId,
     selectedHostId,
     sandboxSelected,
-    sandboxRepoUrl,
-    sandboxRepoBranch,
     workspace,
     branchName,
     prefilledBranch,
@@ -2018,38 +1910,8 @@ export function NewChatLandingScreen() {
     };
   }, []);
 
-  const { recent, addRecent } = useRecentWorkspaces(selectedHostId);
-
   const allHosts = hosts ?? [];
   const onlineHosts = allHosts.filter((h) => h.status === "online");
-  const offlineHosts = allHosts.filter((h) => h.status === "offline");
-
-  // Identify the current desktop machine and whether we can connect it. When
-  // it's already in the host list (online or offline) we connect via that row;
-  // only when it's absent do we show a standalone "Run on this machine" item —
-  // so the machine never appears twice.
-  const thisMachineHostId = desktopHost?.hostId ?? null;
-  const thisMachineInList =
-    thisMachineHostId != null && allHosts.some((h) => h.host_id === thisMachineHostId);
-  const canConnectThisMachine = Boolean(desktopHost?.cliInstalled);
-  const showConnectThisMachine = canConnectThisMachine && !thisMachineInList;
-
-  // Track this machine's host status from the desktop shell (no-op in a browser).
-  useEffect(() => {
-    if (!isElectronShell()) return;
-    let cancelled = false;
-    const refresh = () => {
-      void getHostIdentity().then((s) => {
-        if (!cancelled) setDesktopHost(s);
-      });
-    };
-    refresh();
-    const unsubscribe = onHostStatusChanged(refresh);
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, []);
 
   // Project prefill: a project-driven visit seeds the composer from the
   // project's stored defaults (host / working directory / agent / worktree).
@@ -2112,6 +1974,41 @@ export function NewChatLandingScreen() {
     projectConfigLoading,
     storedProjectConfig,
   ]);
+  const selectedProjectRecord = useMemo(
+    () => (projectList ?? []).find((project) => project.name === selectedProject) ?? null,
+    [projectList, selectedProject],
+  );
+  const selectedProjectId = selectedProjectRecord?.id ?? null;
+  // A first-class Project with a persisted execution target is a binding, not
+  // merely a set of composer defaults. External hosts require a source folder;
+  // a managed sandbox can intentionally have none (the server creates an empty
+  // workspace). Keep execution chips out of this path: the Project chip is the
+  // single place to change the session's location.
+  const projectBoundHostId = selectedProject ? storedProjectConfig?.host_id : undefined;
+  const projectBoundWorkspace = selectedProject ? storedProjectConfig?.workspace : undefined;
+  const projectUsesManagedWorkspace = projectBoundHostId === SANDBOX_HOST_CHOICE;
+  const projectWorkspaceBound = Boolean(
+    selectedProject && projectBoundHostId && (projectUsesManagedWorkspace || projectBoundWorkspace),
+  );
+  const projectWorkspaceMalformed = Boolean(
+    selectedProject &&
+    !projectListLoading &&
+    !projectConfigLoading &&
+    (!projectWorkspaceBound ||
+      (projectBoundHostId && !projectUsesManagedWorkspace && !projectBoundWorkspace) ||
+      (!projectBoundHostId && projectBoundWorkspace)),
+  );
+  const projectBoundHostAvailable = projectUsesManagedWorkspace
+    ? managedSandboxesEnabled
+    : Boolean(
+        projectBoundHostId && onlineHosts.some((host) => host.host_id === projectBoundHostId),
+      );
+  const projectHostAvailabilityKnown = projectUsesManagedWorkspace
+    ? info !== "loading"
+    : !hostsLoading;
+  const projectWorkspaceLoading = projectWorkspaceBound && !projectHostAvailabilityKnown;
+  const projectWorkspaceUnavailable =
+    projectWorkspaceBound && projectHostAvailabilityKnown && !projectBoundHostAvailable;
   // State machine driving the project prefill: a location seed (host +
   // workspace from config) plus an independent agent seed. The generic
   // host/workspace defaults below hold off until it settles so they can't win
@@ -2122,9 +2019,6 @@ export function NewChatLandingScreen() {
   // The generic defaults gate on the location track only — the agent seed
   // waits on its own fetch and must not hold up the host/workspace fill.
   const prefillSettled = prefill.phase === "settled";
-  // Host whose workspace was already seeded once, so a host re-pick doesn't
-  // clobber the field (used by the per-host seeding effect below).
-  const seededHostRef = useRef<string | null>(null);
   // Workspace the opt-in worktree effect already acted on, so it fires at most
   // once per settled workspace (and can't loop once it sets a branch name).
   const worktreeSeededForRef = useRef<string | null>(null);
@@ -2140,100 +2034,37 @@ export function NewChatLandingScreen() {
     setPickedAgentId(projectParam !== "" ? null : readLastAgentId());
     setWorkspace("");
     setBranchName("");
-    seededHostRef.current = null;
     worktreeSeededForRef.current = null;
     setPrefill(initialPrefillState(projectParam));
   }, [projectParam, prefill.project]);
 
-  // Auto-select an option so a session can be started without an explicit
-  // pick. Prefer the user's last explicit choice (persisted across visits);
-  // otherwise fall back to the FIRST AVAILABLE option in menu order — the
-  // sandbox when the server supports it (it's pinned first in the picker),
-  // else the first online host. Only fills an empty slot; an explicit choice
-  // already in state (or restored from the in-memory draft) is never
-  // overridden. Holds off while a project prefill is deciding.
+  // An unfiled session is always a managed sandbox. A Project session gets its
+  // execution target from the Project config and never falls back to another
+  // host or a recent directory.
   useEffect(() => {
     if (!prefillSettled) return;
-    if (sandboxSelected) return;
-    if (selectedHostId !== null) return;
-
-    // Read the persisted pick once, as a mount-time seed — deliberately NOT a
-    // dependency: it only matters until the slot is filled, and re-running on
-    // its value would fight an explicit in-session selection.
-    const lastChoice = readLastHostChoice();
-    if (lastChoice === SANDBOX_HOST_CHOICE) {
-      // Wait for the server-info probe before acting on a sandbox pick: until
-      // it resolves we don't know whether the sandbox is offered, and falling
-      // through to a connected host would strand the returning sandbox user
-      // (this effect wouldn't re-run to correct it once a host is set).
+    // An unfiled session has no user-selected execution location. It is an
+    // intentionally empty managed sandbox; external hosts require a Project
+    // because their runner needs a Project-owned absolute workspace.
+    if (!selectedProject) {
       if (info === "loading") return;
-      if (managedSandboxesEnabled) {
-        setSandboxSelected(true);
-        return;
-      }
-      // Sandbox no longer offered (e.g. an OSS server) — fall through.
-    } else if (lastChoice) {
-      // A persisted host pick can only be honored once the host list has
-      // loaded and shows it online. Wait for the load rather than defaulting
-      // past it — defaulting to the sandbox here would set sandboxSelected and
-      // this effect would then never re-run to restore the host.
-      if (hostsLoading) return;
-      const stored = (hosts ?? []).find((h) => h.host_id === lastChoice && h.status === "online");
-      if (stored) {
-        setSelectedHostId(stored.host_id);
-        return;
-      }
-      // Stored host is gone or offline — fall through to the default.
-    }
-
-    if (managedSandboxesEnabled) {
-      setSandboxSelected(true);
+      setSandboxSelected(managedSandboxesEnabled);
+      setSelectedHostId(null);
+      setWorkspace("");
       return;
     }
-    const firstOnline = (hosts ?? []).find((h) => h.status === "online");
-    if (firstOnline) setSelectedHostId(firstOnline.host_id);
+    // A bound Project is authoritative even when its host is offline. Never
+    // fall back to another host: that would display one location while the
+    // server correctly rejects the override against the Project binding.
+    if (projectWorkspaceBound || projectWorkspaceMalformed) return;
   }, [
-    hosts,
-    hostsLoading,
-    selectedHostId,
-    sandboxSelected,
     managedSandboxesEnabled,
     info,
     prefillSettled,
+    selectedProject,
+    projectWorkspaceBound,
+    projectWorkspaceMalformed,
   ]);
-
-  // Fall back to the host's home directory when it has no recorded recents, so
-  // the working-directory field is pre-filled and the user can send in one
-  // click. Derived from the same home listing the picker uses (entries carry
-  // absolute paths); only fetched when there's no recent to fall back to.
-  const needsHomeFallback = selectedHostId !== null && recent.length === 0;
-  const { data: homeListing, isPlaceholderData: homeListingIsPlaceholder } = useHostFilesystem(
-    selectedHostId,
-    needsHomeFallback ? "" : null,
-  );
-  // The hook serves the PREVIOUS query's data as a placeholder while a new
-  // fetch is in flight (an anti-flicker nicety for the picker), so right
-  // after a host switch the listing briefly belongs to the old host.
-  // Deriving home from it would seed the old host's path and lock the
-  // once-per-host guard below — treat placeholder data as not-yet-loaded.
-  const derivedHome = useMemo(
-    () => (homeListingIsPlaceholder ? null : deriveHomeDir(homeListing?.entries ?? [])),
-    [homeListing, homeListingIsPlaceholder],
-  );
-
-  // Seed the working directory once per host, into an empty field only, so an
-  // explicit pick isn't clobbered. Prefer the most-recent path; else the
-  // derived home (which can arrive a render later, hence the dep). Holds
-  // off while a project prefill is deciding on a workspace of its own.
-  useEffect(() => {
-    if (!prefillSettled) return;
-    if (selectedHostId === null) return;
-    if (seededHostRef.current === selectedHostId) return;
-    const candidate = recent[0] ?? derivedHome;
-    if (!candidate) return;
-    seededHostRef.current = selectedHostId;
-    setWorkspace((cur) => (cur === "" ? candidate : cur));
-  }, [selectedHostId, recent, derivedHome, prefillSettled]);
 
   // A pick only wins while it exists in the list — a persisted id whose
   // agent has since been unregistered (or hidden) falls back to the default.
@@ -2479,58 +2310,33 @@ export function NewChatLandingScreen() {
     harnessWarningHost,
   );
   const workspaceTrimmed = workspace.trim();
-  const workspaceValid = isValidWorkspace(workspace);
-  const isCloudHost =
-    sandboxSelected || (selectedHost?.name?.toLowerCase().includes("cloud") ?? false);
 
-  // Sessions on the selected host that have a workspace — the narrow set
-  // the health poll needs to check for live directory conflicts. Much
-  // smaller than all 200 directorySessions (only host-matched + workspace
-  // rows), so registering them into the /health poll is cheap.
-  const conflictCandidates = useMemo(
-    () =>
-      (directorySessions ?? []).filter((s) => s.host_id === selectedHostId && s.workspace != null),
-    [directorySessions, selectedHostId],
-  );
-  const runnerHealth = useRunnerHealthRegistration(conflictCandidates);
-  // Count of live agents per normalized directory on this host. The file
-  // browser uses this to warn when you navigate into an occupied directory.
-  const occupancyByDir = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const s of conflictCandidates) {
-      if (s.workspace == null || runnerHealth.get(s.id) !== true) continue;
-      const dir = normalizeWorkspacePath(s.workspace);
-      if (dir === null) continue;
-      counts.set(dir, (counts.get(dir) ?? 0) + 1);
-    }
-    return counts;
-  }, [conflictCandidates, runnerHealth]);
-
-  // Existing git worktrees of the picked directory's repo, for the
-  // worktree picker. Skipped for sandbox sessions (server-managed) and
-  // when no directory is picked. A non-git path resolves to [].
-  const worktreesEnabled = !sandboxSelected && selectedHostId !== null && workspaceTrimmed !== "";
+  // Project worktree policy is resolved automatically. The Session composer
+  // never exposes a directory or branch picker; this probe is only used to
+  // avoid asking the runner for a worktree when the Project workspace is not a
+  // git repository, or to preserve an existing worktree binding.
+  const worktreesEnabled =
+    Boolean(selectedProject) &&
+    !sandboxSelected &&
+    selectedHostId !== null &&
+    workspaceTrimmed !== "";
   const { data: hostWorktrees, isPlaceholderData: hostWorktreesArePlaceholder } = useHostWorktrees(
     worktreesEnabled ? selectedHostId : null,
     worktreesEnabled ? workspaceTrimmed : null,
   );
-  // Linked worktrees (exclude the main work tree — "starting in the main
-  // repo" is just picking that directory, not selecting a worktree).
-  const linkedWorktrees = useMemo(
-    () => (hostWorktrees ?? []).filter((w) => !w.is_main),
-    [hostWorktrees],
-  );
-  // The worktree the picked directory currently points at, if any. Set when
-  // the user navigated the picker straight into a worktree folder, or clicked
-  // one in the list below.
+  // The Project workspace may already be an existing worktree. Detect that
+  // state without exposing a Session-level worktree control.
   const activeWorktree = useMemo(() => {
-    const target = normalizeWorkspacePath(workspaceTrimmed);
+    const target = workspaceTrimmed.replace(/\/+$/, "") || null;
     if (target === null) return null;
-    return linkedWorktrees.find((w) => normalizeWorkspacePath(w.path) === target) ?? null;
-  }, [linkedWorktrees, workspaceTrimmed]);
-  // When the workspace lands on an existing worktree, prefill the branch
-  // field with its branch and remember it as the prefill. Leaving the
-  // worktree clears the prefill (but not a name the user typed themselves).
+    return (
+      (hostWorktrees ?? []).find(
+        (w) => !w.is_main && (w.path.replace(/\/+$/, "") || "/") === target,
+      ) ?? null
+    );
+  }, [hostWorktrees, workspaceTrimmed]);
+  // Preserve an existing Project worktree's branch for the server-side launch
+  // contract. This is derived data, not user-editable Session state.
   useEffect(() => {
     const branch = activeWorktree?.branch ?? "";
     if (branch !== "") {
@@ -2538,8 +2344,8 @@ export function NewChatLandingScreen() {
       setBranchName(branch);
     } else {
       setPrefilledBranch((prev) => {
-        // Only clear the field if it still holds the previous prefill —
-        // don't wipe a branch name the user typed for a new worktree.
+        // Only clear the field if it still holds the previous Project-derived
+        // value; there is no Session input that could need preserving here.
         setBranchName((cur) => (cur === prev ? "" : cur));
         return "";
       });
@@ -2551,41 +2357,18 @@ export function NewChatLandingScreen() {
   // prefilled branch (the user hasn't edited it to request a new worktree).
   const startInExistingWorktree =
     activeWorktree !== null && prefilledBranch !== "" && branchName.trim() === prefilledBranch;
-  // A new, isolated worktree is created only when a branch is named and the
-  // workspace isn't already sitting on that existing worktree.
+  // A new isolated worktree is created only when the Project policy generated
+  // a branch and the configured workspace is not already that worktree.
   const shouldCreateWorktree = branchName.trim() !== "" && !startInExistingWorktree;
-  // Auto-fill the base branch from the configured default (Settings › Git) when
-  // a new-worktree branch is named, but only until the user touches the base
-  // field — then their choice (including a cleared field) stands. Clearing the
-  // branch name (so the base field goes away) re-arms the auto-fill, so naming
-  // a branch again starts fresh from the current default.
+  // Base branch is also a Project policy/default, never a Session input.
   useEffect(() => {
     if (!shouldCreateWorktree) {
-      // No base field shown: reset so the next named branch re-seeds cleanly.
-      setBaseBranchEdited(false);
       _setBaseBranch("");
       return;
     }
-    if (!baseBranchEdited) {
-      _setBaseBranch(readDefaultBaseBranch() ?? "");
-    }
-  }, [shouldCreateWorktree, baseBranchEdited]);
-  // The branch input doubles as a combobox: focusing it reveals existing
-  // worktrees, and what the user types filters them (match on branch or path
-  // substring, case-insensitive). Typing a name that matches none = a new
-  // worktree; picking a match = start in that existing worktree.
-  const [branchInputFocused, setBranchInputFocused] = useState(false);
-  const filteredWorktrees = useMemo(() => {
-    const q = branchName.trim().toLowerCase();
-    if (q === "") return linkedWorktrees;
-    return linkedWorktrees.filter(
-      (w) => (w.branch ?? "").toLowerCase().includes(q) || w.path.toLowerCase().includes(q),
-    );
-  }, [linkedWorktrees, branchName]);
-  // Fill the branch field with a unique auto-generated name so the user can
-  // spin up a throwaway worktree without inventing one. crypto.randomUUID is
-  // available in every browser the app targets; the short prefix keeps the
-  // dir/branch readable (worktree-1a2b3c4d).
+    _setBaseBranch(readDefaultBaseBranch() ?? "");
+  }, [shouldCreateWorktree]);
+  // Generate the branch required by a Project's use_worktree policy.
   const generateBranchName = useCallback(() => {
     const suffix = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
     setBranchName(`worktree-${suffix}`);
@@ -2664,16 +2447,6 @@ export function NewChatLandingScreen() {
     generateBranchName,
   ]);
 
-  // Sandbox repo inputs are valid when blank (empty workspace), or when
-  // the URL passes the shape check; a branch without a URL is dangling.
-  const sandboxRepoValid =
-    sandboxRepoUrl.trim() === ""
-      ? sandboxRepoBranch.trim() === ""
-      : isValidSandboxRepoUrl(sandboxRepoUrl);
-
-  // Sandbox creates need no host or path workspace — the server
-  // provisions both; only the message, agent, and (optional) repo
-  // inputs gate the submit.
   // Slash-command suggestions for the chosen agent's bundled skills.
   // Mirrors the in-session composer's menu mechanics (open while the
   // command name is still being typed: leading "/", no second "/", no
@@ -2737,7 +2510,12 @@ export function NewChatLandingScreen() {
   // prepended to the first message, which the runner reads from that workspace.
   const [mention, setMention] = useState<MentionState | null>(null);
   const mentionEnabled =
-    isNativeTerminalAgent && !sandboxSelected && !!selectedHostId && workspaceValid;
+    isNativeTerminalAgent &&
+    !!selectedProject &&
+    !sandboxSelected &&
+    !!selectedHostId &&
+    projectWorkspaceBound &&
+    workspaceTrimmed !== "";
   const { dir: mentionDir, filter: mentionFilter } = parseMentionToken(mention?.query ?? "");
   const workspaceRoot = workspaceTrimmed.replace(/\/+$/, "");
   // Absolute dir to list = workspace root + the drilled sub-path.
@@ -2811,11 +2589,15 @@ export function NewChatLandingScreen() {
     textareaRef,
   });
 
+  const projectLocationReady = selectedProject
+    ? prefillDone(prefill) &&
+      projectWorkspaceBound &&
+      !projectWorkspaceLoading &&
+      !projectWorkspaceMalformed &&
+      !projectWorkspaceUnavailable
+    : managedSandboxesEnabled && sandboxSelected && selectedHostId === null;
   const canSubmit =
-    message.trim().length > 0 &&
-    selectedAgent != null &&
-    (sandboxSelected ? sandboxRepoValid : !!selectedHostId && workspaceValid) &&
-    !creating;
+    message.trim().length > 0 && selectedAgent != null && projectLocationReady && !creating;
 
   // Why submit is disabled, surfaced as the button's tooltip. Checked in the
   // order a user fills the form — location first, then message — so the
@@ -2823,43 +2605,52 @@ export function NewChatLandingScreen() {
   // actionable (submitting, or mid-create).
   const submitDisabledReason = canSubmit
     ? null
-    : sandboxSelected && !sandboxRepoValid
-      ? "Please enter a valid repository URL"
-      : !sandboxSelected && (!selectedHostId || !workspaceValid)
-        ? "Please choose a host and working directory"
-        : message.trim().length === 0
-          ? "Enter a message to get started"
-          : null;
+    : !selectedProject && !managedSandboxesEnabled
+      ? commonT("shell.noProjectSandboxUnavailable")
+      : selectedProject && (!prefillDone(prefill) || projectWorkspaceLoading)
+        ? commonT("shell.projectLoading")
+        : projectWorkspaceMalformed
+          ? commonT("shell.projectWorkspaceInvalid")
+          : projectWorkspaceUnavailable
+            ? commonT("shell.projectHostUnavailable")
+            : message.trim().length === 0
+              ? "Enter a message to get started"
+              : null;
 
-  // Chip display labels.
-  const workspaceLabel = workspaceTrimmed
-    ? (workspaceTrimmed.split("/").filter(Boolean).pop() ?? workspaceTrimmed)
-    : t("picker.workingDirectory", { ns: "agents" });
-  const hostLabel = connectingThisMachine
-    ? t("picker.connecting", { ns: "agents" })
-    : sandboxSelected
-      ? sandboxLabel
-      : (selectedHost?.name ??
-        (onlineHosts.length === 0
-          ? t("picker.noHosts", { ns: "agents" })
-          : t("picker.selectHost", { ns: "agents" })));
-  // The chip shows just the branch (the "(existing)" distinction lives in the
-  // popover's warning; appending it here only gets clipped by the chip's cap).
-  const worktreeLabel = branchName.trim() || t("picker.noWorktree", { ns: "agents" });
-  // Sandbox repository chip label: repo name (server's clone-dir rule)
-  // plus the pinned branch, e.g. "repo#main"; placeholder when unset.
-  const sandboxRepoName = deriveRepoName(sandboxRepoUrl);
-  const sandboxRepoLabel = sandboxRepoName
-    ? sandboxRepoBranch.trim()
-      ? `${sandboxRepoName}#${sandboxRepoBranch.trim()}`
-      : sandboxRepoName
-    : t("picker.repository", { ns: "agents" });
   // The trigger label is just the agent name; the run-config knobs live in
   // the picker's per-entry submenu, so duplicating their values here would be
   // redundant.
   const agentLabel = selectedAgent
     ? selectedAgent.display_name
     : t("picker.selectAgent", { ns: "agents" });
+  const boundHost = projectBoundHostId
+    ? (allHosts.find((host) => host.host_id === projectBoundHostId) ?? selectedHost)
+    : selectedHost;
+  const inheritedHostLabel = !selectedProject
+    ? sandboxLabel
+    : projectUsesManagedWorkspace
+      ? sandboxLabel
+      : (boundHost?.name ?? projectBoundHostId ?? commonT("shell.projectLoading"));
+  const inheritedHostHealthy = !selectedProject
+    ? managedSandboxesEnabled
+    : projectUsesManagedWorkspace
+      ? managedSandboxesEnabled
+      : boundHost?.status === "online";
+  const inheritedHostStatus =
+    info === "loading" || (selectedProject && projectHostAvailabilityKnown === false)
+      ? "loading"
+      : inheritedHostHealthy
+        ? "online"
+        : "offline";
+  const inheritedWorkspaceLabel = selectedProject
+    ? projectWorkspaceBound
+      ? projectUsesManagedWorkspace
+        ? commonT("shell.managedWorkspace")
+        : (projectBoundWorkspace ?? commonT("shell.projectLoading"))
+      : projectWorkspaceMalformed
+        ? commonT("shell.projectWorkspaceInvalid")
+        : commonT("shell.projectLoading")
+    : null;
 
   // Wrap the harness setter so every explicit pick is persisted to
   // localStorage. The caller can pass an explicit `agentId` for the
@@ -2890,57 +2681,12 @@ export function NewChatLandingScreen() {
     setPickedHarness(null);
   };
 
-  function selectHost(hostId: string) {
-    // Persist the explicit pick even when it matches the current selection, so
-    // clicking the auto-selected host still records it as the sticky default
-    // for the next visit.
-    writeLastHostChoice(hostId);
-    // Re-selecting the current host is a no-op. Clearing the workspace here
-    // would empty the field for good: the seeding effect's deps (host id,
-    // recents, derived home) are all unchanged on a same-host pick, so it
-    // never re-runs to fill the field back in — and a host the user already
-    // has selected (e.g. the auto-picked first online host) is exactly the
-    // one they're most likely to click in the menu.
-    if (hostId === selectedHostId) return;
-    setSandboxSelected(false);
-    setSelectedHostId(hostId);
-    // Workspace is host-specific — clear it and let the seeding effect run for
-    // the new host.
-    setWorkspace("");
-    seededHostRef.current = null;
-  }
-
-  function selectSandbox() {
-    // Persist the explicit sandbox pick (as the reserved sentinel) even when
-    // it's already selected, mirroring selectHost — so the sandbox becomes the
-    // sticky default for the next visit.
-    writeLastHostChoice(SANDBOX_HOST_CHOICE);
-    if (sandboxSelected) return;
-    // Mirror selectHost: a managed session's host and workspace are both
-    // server-chosen, so clear any prior host pick and its workspace.
-    setSandboxSelected(true);
-    setSelectedHostId(null);
-    setWorkspace("");
-    seededHostRef.current = null;
-  }
-
-  // Connect THIS desktop machine as a host for the current server, then select
-  // it — so the user doesn't have to run `omni host` in a terminal first. The
-  // bridge's controlHost resolves once the host is connected; we then read its
-  // id, refresh the host list, and pick it.
-  async function connectThisMachine() {
-    if (connectingThisMachine) return;
-    setConnectingThisMachine(true);
-    try {
-      const res = await controlHost("start");
-      if (!res.ok) return;
-      const identity = await getHostIdentity();
-      setDesktopHost(identity);
-      await queryClient.invalidateQueries({ queryKey: ["hosts"] });
-      if (identity?.hostId) selectHost(identity.hostId);
-    } finally {
-      setConnectingThisMachine(false);
-    }
+  function selectProject(projectName: string) {
+    const next = new URLSearchParams(searchParams);
+    if (projectName === "") next.delete("project");
+    else next.set("project", projectName);
+    setSelectedProject(projectName);
+    setSearchParams(next, { replace: true });
   }
 
   async function handleCreate() {
@@ -2977,8 +2723,25 @@ export function NewChatLandingScreen() {
           ? { ...(nativeLabels ?? {}), [CODEX_NATIVE_BYPASS_SANDBOX_LABEL_KEY]: "1" }
           : nativeLabels;
       const createProjectId = selectedProject
-        ? await resolveOrCreateProjectId(selectedProject)
+        ? (selectedProjectId ?? (await resolveOrCreateProjectId(selectedProject)))
         : undefined;
+      // Project sessions may carry the Project-resolved external location so
+      // the existing git/worktree contract can validate before binding. An
+      // unfiled session has no caller-owned location at all: the server must
+      // provision an empty managed sandbox.
+      const sessionLocation = selectedProject
+        ? sandboxSelected
+          ? { host_type: "managed" as const }
+          : {
+              host_id: selectedHostId,
+              workspace: workspaceTrimmed,
+              git: shouldCreateWorktree
+                ? { branch_name: trimmedBranch, base_branch: baseBranch.trim() || undefined }
+                : startInExistingWorktree
+                  ? { branch_name: trimmedBranch, existing_worktree: true }
+                  : undefined,
+            }
+        : { host_type: "managed" as const };
 
       let data: { id: string };
 
@@ -2990,7 +2753,7 @@ export function NewChatLandingScreen() {
         // same way the fork-resume path does.
         const bundle = await buildAgentBundle(pendingAgent);
         const metadata: Record<string, unknown> = {};
-        if (workspaceTrimmed) metadata.workspace = workspaceTrimmed;
+        if (selectedProject && workspaceTrimmed) metadata.workspace = workspaceTrimmed;
         if (baseLabels) metadata.labels = baseLabels;
         if (createProjectId) metadata.project_id = createProjectId;
         data = await createBundledSession(
@@ -2999,7 +2762,7 @@ export function NewChatLandingScreen() {
         );
         // Launch the runner on the selected host. The multipart create
         // only stores DB rows — launchRunner binds + starts the runner.
-        if (!sandboxSelected && selectedHostId && workspaceTrimmed) {
+        if (selectedProject && !sandboxSelected && selectedHostId && workspaceTrimmed) {
           // Create a new worktree, bind an existing one (records the branch
           // for the sidebar + delete flow without creating anything), or
           // neither — mirrored on the `git` block.
@@ -3019,23 +2782,7 @@ export function NewChatLandingScreen() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             agent_id: effectiveAgentId,
-            ...(sandboxSelected
-              ? {
-                  host_type: "managed",
-                  workspace: composeSandboxWorkspace(sandboxRepoUrl, sandboxRepoBranch),
-                }
-              : {
-                  host_id: selectedHostId,
-                  workspace: workspaceTrimmed,
-                  // Create a new worktree, or bind an existing one
-                  // (`existing_worktree` records the branch for the sidebar +
-                  // delete flow without creating anything), or neither.
-                  git: shouldCreateWorktree
-                    ? { branch_name: trimmedBranch, base_branch: baseBranch.trim() || undefined }
-                    : startInExistingWorktree
-                      ? { branch_name: trimmedBranch, existing_worktree: true }
-                      : undefined,
-                }),
+            ...sessionLocation,
             labels: baseLabels,
             project_id: createProjectId,
             // Permission / approval / cursor mode → CLI flag pair, persisted as
@@ -3086,8 +2833,6 @@ export function NewChatLandingScreen() {
         // newly-created, already-filed session immediately.
         void queryClient.invalidateQueries({ queryKey: projectQueryKeys.sessionsRoot });
       }
-      // Sandbox creates have no user-picked workspace to remember.
-      if (!sandboxSelected) addRecent(workspaceTrimmed);
       // Fire-and-forget: don't block navigation on the sidebar list refresh.
       // The background refetch (or the WS session_added push) backfills the
       // new session's row within ~1s of landing in the chat; the chat itself
@@ -3130,28 +2875,6 @@ export function NewChatLandingScreen() {
     }
   }
 
-  // The working-directory chip — a single Popover trigger button that opens
-  // the file browser. The directory-conflict warning lives inside the browser
-  // (a banner on the occupied folder), not on the chip.
-  const workspaceChip = (
-    <button
-      type="button"
-      className="flex h-6 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground transition-colors hover:text-foreground"
-      data-testid="new-chat-landing-workspace-chip"
-    >
-      <FolderIcon className="size-4 shrink-0" />
-      {/* Label collapses to icon-only on narrow viewports (mobile). Capped
-          tight so a long working-directory path truncates instead of pushing
-          the chip row onto a second line. */}
-      <span
-        className={`hidden max-w-40 truncate sm:block ${workspaceTrimmed !== "" ? "text-foreground" : ""}`}
-      >
-        {workspaceLabel}
-      </span>
-      <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
-    </button>
-  );
-
   return (
     // pb-12 lifts the content slightly above the geometric center, where
     // the hero reads better optically.
@@ -3159,6 +2882,7 @@ export function NewChatLandingScreen() {
       ref={setLandingSurface}
       className="flex flex-1 items-center justify-center"
       data-testid="new-chat-landing"
+      data-location-ready={projectLocationReady ? "true" : "false"}
     >
       {/* Padding lives inside the 840px cap, so the composer renders at
           840 − 80 = 760px max on desktop. px-4 on phones (16px gutters)
@@ -3167,12 +2891,12 @@ export function NewChatLandingScreen() {
       <div className="flex w-full max-w-[840px] flex-col items-center gap-8 px-4 pt-8 pb-16 md:select-none md:px-10">
         <div className="flex w-full flex-col items-center justify-center gap-3.5 sm:flex-row">
           {selectedProject ? (
-            // Landing inside a project: swap Otto's eyes for the same folder
-            // icon the sidebar uses for a project, and name the project. Sized
+            // Landing inside a project: swap Otto's eyes for a project icon
+            // and name the project. Sized
             // to Otto's h-18 box so the centered composer doesn't shift when
             // toggling between the two landings.
             <span className="flex h-18 shrink-0 items-center">
-              <FolderIcon className="size-12 text-muted-foreground" />
+              <BriefcaseBusinessIcon className="size-12 text-muted-foreground" />
             </span>
           ) : (
             <OttoEyes className="h-18 w-auto shrink-0" />
@@ -3573,481 +3297,111 @@ export function NewChatLandingScreen() {
               </div>
             </div>
           </form>
-          {/* Composer footer tray — host / working directory / worktree
-              selectors. Renders below the pill at z-0 while the pill sits
-              at z-10: -mt-9 cancels the wrapper's gap-3 (12px) and tucks
-              the tray's top 24px underneath the pill's rounded bottom
-              edge. Height is padding-driven (pt-8 + h-6 chips + pb-2 =
-              the same 64px as before when the chips fit one row) so the
-              chip row can wrap on narrow screens — with a fixed h-16 the
-              chips overflowed the viewport on phones, widening the whole
-              page (#sidebar-wider-than-screen on the landing page). */}
+          {/* The tray exposes only project membership and the inherited Host.
+              The Host chip is intentionally read-only; changing an execution
+              target belongs in Project settings. */}
           <div className="relative z-0 -mt-9 flex w-full items-center rounded-b-2xl bg-tray/40 pt-8 pr-3 pb-2 pl-2">
             <div className="flex flex-wrap items-center gap-1">
-              {/* Host chip */}
-              <DropdownMenu
-                onOpenChange={(open) => {
-                  // Run a requested "connect this machine" only once the menu
-                  // has closed.
-                  if (!open && pendingConnectRef.current) {
-                    pendingConnectRef.current = false;
-                    void connectThisMachine();
-                  }
-                }}
-              >
+              <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
                     className="flex h-6 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground transition-colors hover:text-foreground"
-                    data-testid="new-chat-landing-host-chip"
+                    data-testid="new-chat-landing-project-chip"
                   >
-                    {isCloudHost ? (
-                      <MonitorCloudIcon className="size-4 shrink-0" />
-                    ) : (
-                      <MonitorIcon className="size-4 shrink-0" />
-                    )}
+                    <BriefcaseBusinessIcon className="size-4 shrink-0" />
                     <span
-                      className={`hidden max-w-32 truncate sm:block ${sandboxSelected || selectedHost != null || connectingThisMachine ? "text-foreground" : ""}`}
+                      className={`max-w-40 truncate ${selectedProject ? "text-foreground" : ""}`}
                     >
-                      {hostLabel}
+                      {selectedProject || commonT("shell.noProject")}
                     </span>
                     <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="min-w-52">
-                  {/* Server-provisioned sandbox — only advertised when
-                    /v1/info reports managed_sandboxes_enabled. Pinned
-                    first, above the connected-host list. */}
-                  {(managedSandboxesEnabled || showDisabledSandboxWithDocs) && (
-                    <>
-                      {managedSandboxesEnabled ? (
-                        <DropdownMenuItem
-                          onSelect={selectSandbox}
-                          data-testid="new-chat-landing-sandbox-option"
-                          data-active={sandboxSelected ? "true" : undefined}
-                          className="text-xs data-[active=true]:bg-accent/60"
-                        >
-                          <span className="flex items-center gap-2">
-                            <MonitorCloudIcon className="size-4 text-muted-foreground" />
-                            <span className="text-xs">{sandboxLabel}</span>
-                          </span>
-                        </DropdownMenuItem>
-                      ) : (
-                        <DropdownMenuItem
-                          aria-disabled="true"
-                          onSelect={(e) => e.preventDefault()}
-                          className="flex items-center justify-between px-2 py-1.5 text-xs text-muted-foreground opacity-60"
-                          data-testid="new-chat-landing-sandbox-option-disabled"
-                        >
-                          <span className="flex items-center gap-2">
-                            <MonitorCloudIcon className="size-4 text-muted-foreground" />
-                            <span className="text-xs">
-                              {t("picker.newSandbox", { ns: "agents" })}
-                            </span>
-                          </span>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                className="inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground/80 hover:text-foreground"
-                                aria-label={t("picker.newSandboxUnavailable", { ns: "agents" })}
-                                onClick={(e) => e.stopPropagation()}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-                                }}
-                              >
-                                <CircleHelpIcon className="size-3.5" />
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-64">
-                              {newSandboxTooltipContent}
-                            </TooltipContent>
-                          </Tooltip>
-                        </DropdownMenuItem>
-                      )}
-                      <DropdownMenuSeparator />
-                    </>
-                  )}
-                  {allHosts.length === 0 && !showConnectThisMachine && (
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                      No hosts connected yet.
-                    </div>
-                  )}
-                  {onlineHosts.map((host) => (
+                  <DropdownMenuItem
+                    onSelect={() => selectProject("")}
+                    data-testid="new-chat-landing-no-project"
+                    data-active={!selectedProject ? "true" : undefined}
+                    className="text-xs data-[active=true]:bg-accent/60"
+                  >
+                    {commonT("shell.noProject")}
+                  </DropdownMenuItem>
+                  {projectList && projectList.length > 0 && <DropdownMenuSeparator />}
+                  {(projectList ?? []).map((project) => (
                     <DropdownMenuItem
-                      key={host.host_id}
-                      onSelect={() => selectHost(host.host_id)}
-                      data-testid={`new-chat-landing-host-${host.host_id}`}
-                      data-active={host.host_id === selectedHostId ? "true" : undefined}
+                      key={project.id ?? `legacy:${project.name}`}
+                      onSelect={() => selectProject(project.name)}
+                      data-testid={`new-chat-landing-project-${project.name}`}
+                      data-active={project.name === selectedProject ? "true" : undefined}
                       className="text-xs data-[active=true]:bg-accent/60"
                     >
-                      <HostOption
-                        host={host}
-                        subtitle={host.host_id === thisMachineHostId ? "this machine" : undefined}
-                      />
+                      <span className="flex min-w-0 items-center gap-2">
+                        <BriefcaseBusinessIcon className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{project.name}</span>
+                      </span>
                     </DropdownMenuItem>
                   ))}
-                  {offlineHosts.map((host) => {
-                    // This machine, offline: make the row itself the connect
-                    // affordance instead of a disabled entry + a duplicate "Run
-                    // on this machine" item. Connect after the menu closes.
-                    if (host.host_id === thisMachineHostId && canConnectThisMachine) {
-                      return (
-                        <DropdownMenuItem
-                          key={host.host_id}
-                          onSelect={() => {
-                            pendingConnectRef.current = true;
-                          }}
-                          disabled={connectingThisMachine}
-                          data-testid="new-chat-landing-run-on-this-machine"
-                          className="text-xs"
-                        >
-                          <HostOption
-                            host={host}
-                            subtitle={
-                              connectingThisMachine
-                                ? "connecting…"
-                                : "this machine · select to connect"
-                            }
-                          />
-                        </DropdownMenuItem>
-                      );
-                    }
-                    return (
-                      <DropdownMenuItem key={host.host_id} disabled className="text-xs">
-                        <HostOption
-                          host={host}
-                          subtitle={host.host_id === thisMachineHostId ? "this machine" : undefined}
-                        />
-                      </DropdownMenuItem>
-                    );
-                  })}
-                  {/* Desktop shell, machine not in the list yet: offer to connect
-                    it in one click. */}
-                  {showConnectThisMachine && (
-                    <DropdownMenuItem
-                      onSelect={() => {
-                        pendingConnectRef.current = true;
-                      }}
-                      disabled={connectingThisMachine}
-                      data-testid="new-chat-landing-run-on-this-machine"
-                      className="gap-2 text-xs"
-                    >
-                      <MonitorIcon className="size-4 shrink-0 text-muted-foreground" />
-                      <span className="text-xs">
-                        {connectingThisMachine ? "Connecting this machine…" : "Run on this machine"}
-                      </span>
-                    </DropdownMenuItem>
+                  {projectListLoading && (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                      {commonT("shell.loading")}
+                    </div>
                   )}
-                  {(allHosts.length > 0 || showConnectThisMachine) && <DropdownMenuSeparator />}
-                  {/* Persistent escape hatch: open the connect-a-host
-                    instructions. Present even with zero hosts so a fresh user
-                    is never stuck. */}
-                  <DropdownMenuItem
-                    onSelect={() => setConnectOpen(true)}
-                    data-testid="new-chat-landing-connect-host"
-                    className="gap-2 text-xs text-muted-foreground"
-                  >
-                    <PlusIcon className="size-3.5" />
-                    Connect new host
-                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-
-              {/* Sandbox repository chip — the sandbox counterpart of the
-                working-directory chip. There is no filesystem to browse
-                before the sandbox exists, so the workspace is specified as
-                a git repository URL (+ optional branch) the server clones
-                at create time. Blank = empty server-created workspace. */}
-              {sandboxSelected && (
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex h-6 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground transition-colors hover:text-foreground"
-                      data-testid="new-chat-landing-repo-chip"
-                    >
-                      <GitBranchIcon className="size-4 shrink-0" />
-                      <span
-                        className={`hidden max-w-40 truncate sm:block ${sandboxRepoName ? "text-foreground" : "text-muted-foreground"}`}
+              <div
+                className="flex h-6 min-w-0 max-w-56 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground"
+                data-testid="new-chat-landing-host-chip"
+                title={
+                  selectedProject
+                    ? "Execution host is inherited from Project settings"
+                    : "Unfiled sessions run in a managed sandbox"
+                }
+              >
+                {!selectedProject || sandboxSelected || projectUsesManagedWorkspace ? (
+                  <MonitorCloudIcon className="size-4 shrink-0" />
+                ) : (
+                  <MonitorIcon className="size-4 shrink-0" />
+                )}
+                <span
+                  className={`inline-block size-1.5 shrink-0 rounded-full ${
+                    inheritedHostStatus === "online"
+                      ? "bg-green-500"
+                      : inheritedHostStatus === "loading"
+                        ? "animate-pulse bg-muted-foreground/50"
+                        : "bg-destructive"
+                  }`}
+                  aria-label={inheritedHostStatus}
+                  data-testid="new-chat-landing-host-status"
+                />
+                <span className="min-w-0 truncate text-foreground">{inheritedHostLabel}</span>
+              </div>
+              {selectedProject && inheritedWorkspaceLabel && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div
+                        className="flex h-6 max-w-72 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground"
+                        data-testid="new-chat-landing-workspace-chip"
+                        title={projectBoundWorkspace ?? inheritedWorkspaceLabel}
                       >
-                        {sandboxRepoLabel}
-                      </span>
-                      <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-96 p-3">
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <label
-                          htmlFor="landing-repo-url"
-                          className="text-xs font-medium text-foreground"
-                        >
-                          Repository (optional)
-                        </label>
-                        {databricksGitCredentialsTooltipContent && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button
-                                type="button"
-                                className="inline-flex size-4 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:text-foreground"
-                                aria-label="How to set up Databricks git credentials"
-                              >
-                                <CircleHelpIcon className="size-3.5" />
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-64">
-                              {databricksGitCredentialsTooltipContent}
-                            </TooltipContent>
-                          </Tooltip>
-                        )}
+                        <FolderIcon className="size-4 shrink-0" />
+                        <span className="truncate text-foreground">{inheritedWorkspaceLabel}</span>
                       </div>
-                      <input
-                        id="landing-repo-url"
-                        type="text"
-                        value={sandboxRepoUrl}
-                        onChange={(e) => setSandboxRepoUrl(e.target.value)}
-                        placeholder="https://github.com/org/repo"
-                        className="rounded-md border border-input bg-background px-3 py-2 text-xs outline-none transition-colors focus-visible:border-ring"
-                        data-testid="new-chat-landing-repo-input"
-                      />
-                      <input
-                        type="text"
-                        value={sandboxRepoBranch}
-                        onChange={(e) => setSandboxRepoBranch(e.target.value)}
-                        placeholder="Branch (defaults to the repo's default)"
-                        aria-label="Repository branch"
-                        className="rounded-md border border-input bg-background px-3 py-2 text-xs outline-none transition-colors focus-visible:border-ring"
-                        data-testid="new-chat-landing-repo-branch-input"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Cloned into the sandbox as the session's working directory. Leave blank to
-                        start in an empty workspace.
-                      </p>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              )}
-
-              {/* Working directory chip — opens the file browser directly (no
-                separate "browse" toggle). onNavigate updates the workspace
-                live as the user browses (no "Select" button); the popover
-                closes on click-out. The directory-conflict warning shows as a
-                banner inside the browser on the occupied folder. Hidden for
-                sandbox sessions — the repository chip above replaces it (the
-                server creates the directory inside the sandbox). */}
-              {!sandboxSelected && (
-                <Popover open={workspacePopoverOpen} onOpenChange={setWorkspacePopoverOpen}>
-                  <PopoverTrigger asChild>{workspaceChip}</PopoverTrigger>
-                  {/* Cap to the viewport so the 420px browser can't overflow a
-                  narrow screen; desktop still gets the full width. */}
-                  <PopoverContent align="start" className="w-[min(420px,calc(100vw-2rem))] p-0">
-                    {selectedHostId ? (
-                      <WorkspacePicker
-                        hostId={selectedHostId}
-                        initialPath={
-                          isNavigablePath(workspaceTrimmed) ? workspaceTrimmed : undefined
-                        }
-                        onNavigate={setWorkspace}
-                        // Warn when browsing into a directory other live agents
-                        // occupy. Suppressed only when a NEW isolated worktree
-                        // will be created (no shared-dir conflict then). When
-                        // starting directly in an existing worktree the branch
-                        // is prefilled but the dir IS shared, so keep warning.
-                        occupancyForPath={
-                          !shouldCreateWorktree
-                            ? (abs) => occupancyByDir.get(normalizeWorkspacePath(abs) ?? "") ?? 0
-                            : undefined
-                        }
-                      />
-                    ) : (
-                      <p className="p-3 text-xs text-muted-foreground">Select a host first.</p>
-                    )}
-                  </PopoverContent>
-                </Popover>
-              )}
-
-              {/* Git worktree chip — hidden for sandbox sessions (worktree
-                creation requires a caller-supplied host_id). */}
-              {!sandboxSelected && (
-                <Popover open={worktreePopoverOpen} onOpenChange={setWorktreePopoverOpen}>
-                  <PopoverTrigger asChild>
-                    <button
-                      type="button"
-                      className="flex h-6 items-center gap-1 rounded-full px-2.5 text-13 font-normal text-muted-foreground transition-colors hover:text-foreground"
-                      data-testid="new-chat-landing-branch-chip"
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="top"
+                      align="start"
+                      className="max-w-[min(90vw,48rem)] whitespace-normal break-all font-mono text-xs"
+                      data-testid="new-chat-landing-workspace-tooltip"
                     >
-                      <GitBranchIcon className="size-4 shrink-0" />
-                      <span
-                        className={`hidden max-w-32 truncate sm:block ${branchName.trim() ? "text-foreground" : ""}`}
-                      >
-                        {worktreeLabel}
-                      </span>
-                      <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
-                    </button>
-                  </PopoverTrigger>
-                  <PopoverContent
-                    align="start"
-                    collisionPadding={16}
-                    // No overflow clip here — the worktree dropdown floats as an
-                    // absolute overlay (below) and must be able to escape the
-                    // popover's padding box.
-                    className="w-[min(20rem,calc(100vw-2rem))] p-3"
-                  >
-                    <div className="flex flex-col gap-2">
-                      <label
-                        htmlFor="landing-branch-name"
-                        className="text-xs font-medium text-foreground"
-                      >
-                        Git worktree branch (optional)
-                      </label>
-                      {/* Help text sits above the field. The warning for a picked
-                        existing worktree stays below the input (contextual to the
-                        selection). */}
-                      <p className="text-xs text-muted-foreground">
-                        New branch name, or pick an existing worktree. Leave blank to start directly
-                        in the working directory.
-                      </p>
-                      {/* The branch field is a combobox: focusing it reveals the
-                        repo's existing worktrees, and typing filters them.
-                        Picking one starts in that worktree; a name matching none
-                        creates a new worktree. */}
-                      <div className="relative flex flex-col">
-                        <input
-                          id="landing-branch-name"
-                          type="text"
-                          value={branchName}
-                          onChange={(e) => setBranchName(e.target.value)}
-                          onFocus={() => setBranchInputFocused(true)}
-                          // Delay so a click on a dropdown option registers
-                          // before the list unmounts on blur.
-                          onBlur={() => setTimeout(() => setBranchInputFocused(false), 120)}
-                          placeholder="feature/my-branch"
-                          role="combobox"
-                          aria-expanded={branchInputFocused && filteredWorktrees.length > 0}
-                          aria-autocomplete="list"
-                          // Suppress the browser's native autofill dropdown so it
-                          // doesn't overlay our worktree combobox. `off` alone is
-                          // ignored by some browsers, so also disable spellcheck /
-                          // autocorrect and give it an unrecognized name.
-                          autoComplete="off"
-                          autoCorrect="off"
-                          autoCapitalize="off"
-                          spellCheck={false}
-                          name="omnigent-worktree-branch"
-                          // pr-9 leaves room for the generate button overlaid at
-                          // the right edge.
-                          className="rounded-md border border-input bg-background py-2 pr-9 pl-3 text-xs outline-none transition-colors focus-visible:border-ring"
-                          data-testid="new-chat-landing-branch-input"
-                        />
-                        {/* Fill a unique branch name for a throwaway worktree.
-                          onMouseDown so it fires before the input's blur closes
-                          the combobox and preventDefault keeps focus on the
-                          input. */}
-                        <button
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            generateBranchName();
-                          }}
-                          title="Generate a unique branch name"
-                          aria-label="Generate a unique branch name"
-                          className="absolute top-0 right-0 flex h-9 w-9 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-                          data-testid="new-chat-landing-branch-generate"
-                        >
-                          <ShuffleIcon className="size-4" />
-                        </button>
-                        {branchInputFocused && filteredWorktrees.length > 0 && (
-                          <div
-                            // Floats over the popover as a combobox popup, so it
-                            // doesn't stretch the box. Bounded height + internal
-                            // scroll keep it from running off the viewport.
-                            className="absolute top-full right-0 left-0 z-20 mt-1 flex max-h-40 flex-col overflow-y-auto rounded-md border border-input bg-popover p-1 shadow-md"
-                            data-testid="new-chat-landing-worktree-dropdown"
-                          >
-                            <span className="px-2 pt-1 pb-0.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-                              Existing worktrees
-                            </span>
-                            <ul className="flex flex-col gap-0.5">
-                              {filteredWorktrees.map((w) => {
-                                const selected =
-                                  normalizeWorkspacePath(w.path) ===
-                                  normalizeWorkspacePath(workspaceTrimmed);
-                                return (
-                                  <li key={w.path}>
-                                    <button
-                                      type="button"
-                                      // onMouseDown (not onClick): fires before the
-                                      // input's blur, so the selection lands even
-                                      // though blur is about to hide the list.
-                                      onMouseDown={(e) => {
-                                        e.preventDefault();
-                                        setWorkspace(w.path);
-                                        setBranchInputFocused(false);
-                                        setWorktreePopoverOpen(false);
-                                      }}
-                                      className={`flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1 text-left text-xs transition-colors hover:bg-accent ${
-                                        selected ? "bg-accent" : ""
-                                      }`}
-                                      data-testid="new-chat-landing-worktree-option"
-                                    >
-                                      <span className="font-medium text-foreground">
-                                        {w.branch ?? "(detached)"}
-                                      </span>
-                                      {/* Tail-truncated so the disambiguating
-                                      folder shows, not a shared prefix; full
-                                      path on hover. */}
-                                      <span
-                                        className="w-full truncate text-muted-foreground"
-                                        title={w.path}
-                                      >
-                                        {worktreePathTail(w.path)}
-                                      </span>
-                                    </button>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                      {/* Base branch only matters when creating a NEW worktree
-                        — hidden once the workspace points at an existing one
-                        (no worktree is created, so there's nothing to base). */}
-                      {branchName.trim() !== "" && !startInExistingWorktree && (
-                        <input
-                          type="text"
-                          value={baseBranch}
-                          onChange={(e) => setBaseBranch(e.target.value)}
-                          placeholder="Base branch (defaults to current)"
-                          aria-label="Base branch"
-                          className="rounded-md border border-input bg-background px-3 py-2 text-xs outline-none transition-colors focus-visible:border-ring"
-                          data-testid="new-chat-landing-base-branch-input"
-                        />
-                      )}
-                      {startInExistingWorktree && (
-                        <p
-                          className="text-xs text-amber-600 dark:text-amber-500"
-                          data-testid="new-chat-landing-existing-worktree-warning"
-                        >
-                          Starts in existing worktree, edit the name to create a new one.
-                        </p>
-                      )}
-                    </div>
-                  </PopoverContent>
-                </Popover>
+                      {projectBoundWorkspace ?? inheritedWorkspaceLabel}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               )}
-
-              {/* The session's project membership (from a `?project=` landing)
-                is shown in the hero heading instead of a tray chip; filing on
-                create still uses `selectedProject`. */}
             </div>
-            {/* The agent / harness picker moved out of the tray and into the
-                composer's right action cluster (next to Send) — see
-                AgentHarnessPicker above. The tray now holds only the
-                host / working-directory / worktree / project chips. */}
           </div>
-
           {/* Warn (don't block) when the selected agent's harness isn't
               configured on the selected host — the host re-checks at
               launch, so submitting surfaces a specific error if it
@@ -4096,20 +3450,6 @@ export function NewChatLandingScreen() {
           )}
         </div>
       </div>
-
-      {/* Connect-host instructions, reachable from the host dropdown even when
-          no hosts are online — the zero-host escape hatch. */}
-      <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
-        <DialogContent className="sm:max-w-lg" data-testid="connect-host-dialog">
-          <DialogHeader>
-            <DialogTitle>Connect a host</DialogTitle>
-          </DialogHeader>
-          <ConnectHostInstructions
-            serverUrl={serverUrl}
-            label="Run this on the machine you want to use, then pick it from the host menu:"
-          />
-        </DialogContent>
-      </Dialog>
 
       {/* Harness "Set up" dialog — the single home for install/login (and later
           API key / gateway) setup, opened from the composer notice or a picker

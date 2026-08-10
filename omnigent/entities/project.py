@@ -27,11 +27,12 @@ class Project:
     :param created_at: Unix epoch seconds at row creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None`` if the
         row has never been updated.
-    :param config: Default session settings as an opaque JSON object (host,
-        workspace, harness, model, reasoning effort, git base-branch, …), or an
-        empty dict when none are stored. The key vocabulary is owned by the
-        client; the store persists and returns it whole. These are hints the
-        new-chat dialog pre-fills, not enforced requirements.
+    :param config: Project execution binding and optional session defaults.
+        When both ``host_id`` and ``workspace`` are present, the server treats
+        them as the authoritative location for sessions filed in this project;
+        a managed-sandbox binding may omit ``workspace`` for an empty sandbox.
+        Other keys remain client-owned defaults. Older projects may have an
+        empty config.
     """
 
     id: str

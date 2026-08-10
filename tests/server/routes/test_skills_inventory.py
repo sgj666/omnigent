@@ -235,3 +235,26 @@ def test_unconfigured_reader_returns_actionable_status_without_network(tmp_path:
     assert snapshot.skills == []
     assert snapshot.source.sync_status == "unconfigured"
     assert snapshot.source.error == "Skills repository is not configured"
+
+
+def test_reader_accepts_non_secret_server_settings_with_environment_overrides(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ORVIA_SKILLS_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("ORVIA_SKILLS_GIT_REF", "environment-ref")
+
+    reader = GitSkillRepositoryReader.from_environment(
+        {
+            "url": "https://git.example.test/team/skills.git",
+            "ref": "configured-ref",
+            "path": "catalog/skills",
+            "token": "must-not-be-read-from-yaml",
+        }
+    )
+
+    assert reader.remote_url == "https://git.example.test/team/skills.git"
+    assert reader.ref == "environment-ref"
+    assert reader.skills_path == "catalog/skills"
+    assert reader.cache_dir == tmp_path / "cache"
+    assert reader.token_env == "ORVIA_SKILLS_GIT_TOKEN"

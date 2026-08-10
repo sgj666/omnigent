@@ -1,11 +1,20 @@
 import { useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { CheckIcon, ChevronDownIcon, InfoIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronsUpDownIcon, InfoIcon, XIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -19,12 +28,14 @@ import type {
   AgentFormField,
   AgentFormSchema,
   AgentHarnessOption,
+  AgentSkillOption,
 } from "@/lib/multiAgentApi";
 import type { AgentConfigDraft } from "@/lib/multiAgentDraft";
 
 const LOCAL_DEFAULT = "__local_default__";
 const EMPTY_HARNESSES: AgentHarnessOption[] = [];
 const EMPTY_MODEL_OPTIONS: { id: string; label: string }[] = [];
+const EMPTY_SKILL_OPTIONS: AgentSkillOption[] = [];
 const EMPTY_STRINGS: string[] = [];
 const STRUCTURED_FIELDS = ["tools", "skills", "mcp", "environment", "guardrails"] as const;
 const SYSTEM_PATHS = new Set(["/spec_version", "/executor/type"]);
@@ -414,11 +425,13 @@ function ToolsEditor({
 function SkillsEditor({
   source,
   onChange,
+  options,
   disabled,
   t,
 }: {
   source: string;
   onChange: (source: string) => void;
+  options: AgentSkillOption[];
   disabled: boolean;
   t: TFunction;
 }) {
@@ -434,6 +447,26 @@ function SkillsEditor({
   const skills = Array.isArray(parsed)
     ? parsed.filter((entry): entry is string => typeof entry === "string")
     : [];
+  const choices = [
+    ...options,
+    ...skills
+      .filter((name) => !options.some((option) => option.name === name))
+      .map((name) => ({
+        id: `missing:${name}`,
+        name,
+        description: "",
+        relative_path: "",
+        validation_status: "error" as const,
+      })),
+  ];
+
+  function toggleSkill(name: string) {
+    const next = skills.includes(name)
+      ? skills.filter((entry) => entry !== name)
+      : [...skills, name];
+    onChange(JSON.stringify(next));
+  }
+
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       <Field label={t("fields.skillAccess")} help={t("fields.skillAccessHelp")}>
@@ -458,23 +491,85 @@ function SkillsEditor({
         </Select>
       </Field>
       {mode === "custom" && (
-        <Field label={t("fields.skillNames")} help={t("fields.listHelp")}>
-          <Input
-            aria-label={t("fields.skillNames")}
-            value={skills.join(", ")}
-            onChange={(event) =>
-              onChange(
-                JSON.stringify(
-                  event.target.value
-                    .split(",")
-                    .map((entry) => entry.trim())
-                    .filter(Boolean),
-                ),
-              )
-            }
-            placeholder={t("fields.listPlaceholder")}
-            disabled={disabled}
-          />
+        <Field label={t("fields.skillNames")} help={t("fields.skillNamesHelp")}>
+          <div className="space-y-2">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  role="combobox"
+                  aria-label={t("fields.skillNames")}
+                  className="w-full justify-between font-normal"
+                  disabled={disabled}
+                >
+                  <span className="truncate">
+                    {skills.length
+                      ? t("fields.skillsSelected", { count: skills.length })
+                      : t("fields.selectSkills")}
+                  </span>
+                  <ChevronsUpDownIcon className="ml-2 size-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0">
+                <Command>
+                  <CommandInput placeholder={t("fields.searchSkills")} />
+                  <CommandList>
+                    <CommandEmpty>{t("fields.noSkillOptions")}</CommandEmpty>
+                    <CommandGroup>
+                      {choices.map((option) => {
+                        const selected = skills.includes(option.name);
+                        const missing = option.id.startsWith("missing:");
+                        return (
+                          <CommandItem
+                            key={option.id}
+                            value={`${option.name} ${option.description} ${option.relative_path}`}
+                            data-checked={selected}
+                            onSelect={() => toggleSkill(option.name)}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-2">
+                                <span className="truncate font-mono text-xs">{option.name}</span>
+                                {missing ? (
+                                  <Badge variant="destructive">
+                                    {t("fields.skillUnavailable")}
+                                  </Badge>
+                                ) : null}
+                              </span>
+                              <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                                {option.description || option.relative_path}
+                              </span>
+                            </span>
+                          </CommandItem>
+                        );
+                      })}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+            {skills.length ? (
+              <div className="flex flex-wrap gap-1.5">
+                {skills.map((name) => {
+                  const missing = !options.some((option) => option.name === name);
+                  return (
+                    <Badge key={name} variant={missing ? "destructive" : "secondary"}>
+                      <span className="font-mono">{name}</span>
+                      {missing ? <span>{t("fields.skillUnavailable")}</span> : null}
+                      <button
+                        type="button"
+                        aria-label={t("fields.removeSkill", { name })}
+                        onClick={() => toggleSkill(name)}
+                        disabled={disabled}
+                      >
+                        <XIcon />
+                      </button>
+                    </Badge>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
         </Field>
       )}
     </div>
@@ -587,6 +682,7 @@ export function AgentConfigEditor({
   schema,
   harnesses = EMPTY_HARNESSES,
   models = EMPTY_MODEL_OPTIONS,
+  skills = EMPTY_SKILL_OPTIONS,
   workerNames = EMPTY_STRINGS,
 }: {
   value: AgentConfigDraft;
@@ -595,6 +691,7 @@ export function AgentConfigEditor({
   schema?: AgentFormSchema;
   harnesses?: AgentHarnessOption[];
   models?: { id: string; label: string }[];
+  skills?: AgentSkillOption[];
   workerNames?: string[];
 }) {
   const { t } = useTranslation("agents", { keyPrefix: "multiAgent" });
@@ -809,6 +906,7 @@ export function AgentConfigEditor({
                     <SkillsEditor
                       source={value.skills}
                       onChange={(next) => set("skills", next)}
+                      options={skills}
                       disabled={disabled}
                       t={t}
                     />

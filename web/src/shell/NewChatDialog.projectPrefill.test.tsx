@@ -16,6 +16,8 @@ import type { ProjectConfig } from "@/lib/projectsApi";
 import { useHostWorktrees } from "@/hooks/useHostWorktrees";
 import type { HostWorktree } from "@/hooks/useHostWorktrees";
 import { NewChatLandingScreen } from "./NewChatDialog";
+import { CapabilitiesProvider } from "@/lib/CapabilitiesContext";
+import type { ServerInfo } from "@/lib/capabilities";
 
 // A `?project=` visit prefills the composer from the project's STORED config
 // (host / working directory / agent / worktree). A field the config leaves
@@ -130,25 +132,38 @@ function setRepoIsGit(): void {
 
 function renderLanding(): (ui: ReactNode) => void {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const info: ServerInfo = {
+    accounts_enabled: false,
+    single_user: false,
+    login_url: null,
+    needs_setup: false,
+    databricks_features: false,
+    managed_sandboxes_enabled: true,
+    sandbox_provider: null,
+    sharing_mode: "on",
+    public_sharing_enabled: true,
+    server_version: null,
+    smart_routing_enabled: false,
+    harness_install_enabled: false,
+    installable_harnesses: [],
+    dictation_available: false,
+  };
   function Wrapper({ children }: { children: ReactNode }) {
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    return (
+      <QueryClientProvider client={client}>
+        <CapabilitiesProvider info={info}>{children}</CapabilitiesProvider>
+      </QueryClientProvider>
+    );
   }
   const { rerender } = render(<NewChatLandingScreen />, { wrapper: Wrapper });
   return rerender;
 }
 
 async function submitAndReadBody(): Promise<Record<string, unknown>> {
-  const projectName = searchParams.get("project") ?? "Alpha";
-  const projectId = `proj_${projectName.toLowerCase()}`;
-  vi.mocked(authenticatedFetch)
-    .mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ object: "list", data: [{ id: projectId, name: projectName }] }),
-    } as Response)
-    .mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ id: "conv_new" }),
-    } as Response);
+  vi.mocked(authenticatedFetch).mockResolvedValueOnce({
+    ok: true,
+    json: () => Promise.resolve({ id: "conv_new" }),
+  } as Response);
   fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
     target: { value: "hello" },
   });
@@ -194,17 +209,58 @@ afterEach(() => {
 });
 
 describe("NewChatLandingScreen project prefill", () => {
+  it("changes the project from the primary composer selector", async () => {
+    renderLanding();
+
+    fireEvent.pointerDown(screen.getByTestId("new-chat-landing-project-chip"), { button: 0 });
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-project-Beta")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("new-chat-landing-project-Beta"));
+
+    expect(setSearchParamsMock).toHaveBeenCalledWith(new URLSearchParams("project=Beta"), {
+      replace: true,
+    });
+  });
+
   it("seeds host / workspace / agent from the stored config", async () => {
     setProjectConfig({ host_id: "host_1", workspace: REPO, agent_id: "ag_other" });
     renderLanding();
 
     await waitFor(() =>
-      expect(screen.getByTestId("new-chat-landing-workspace-chip").textContent).toContain("alpha"),
+      expect(screen.getByTestId("new-chat-landing-workspace-chip")).toHaveAttribute("title", REPO),
     );
+    const hostChip = screen.getByTestId("new-chat-landing-host-chip");
+    expect(hostChip).toHaveTextContent("corey-laptop");
+    expect(screen.getByTestId("new-chat-landing-host-status")).toHaveAttribute(
+      "aria-label",
+      "online",
+    );
+    expect(screen.getByTestId("new-chat-landing-host-status").className).toContain("bg-green-500");
+    expect(screen.getByTestId("new-chat-landing-project-chip")).toHaveTextContent("Alpha");
+    expect(
+      screen
+        .getByTestId("new-chat-landing-project-chip")
+        .querySelector(".lucide-briefcase-business"),
+    ).toBeTruthy();
+    expect(
+      screen.getByTestId("new-chat-landing-workspace-chip").querySelector(".lucide-folder"),
+    ).toBeTruthy();
+    fireEvent.pointerMove(screen.getByTestId("new-chat-landing-workspace-chip"));
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-workspace-tooltip")).toHaveTextContent(REPO),
+    );
+    expect(hostChip.querySelector("button, input, [aria-haspopup]")).toBeNull();
+    expect(
+      screen
+        .getByTestId("new-chat-landing-workspace-chip")
+        .querySelector("button, input, [aria-haspopup]"),
+    ).toBeNull();
     const body = await submitAndReadBody();
     expect(body.host_id).toBe("host_1");
     expect(body.workspace).toBe(REPO);
     expect(body.agent_id).toBe("ag_other");
+    expect(body.project_id).toBe("proj_alpha");
     // No opt-in worktree → no git block.
     expect(body.git).toBeUndefined();
   });
@@ -228,24 +284,26 @@ describe("NewChatLandingScreen project prefill", () => {
     expect(body.git).toBeUndefined();
   });
 
-  it("falls back to the generic defaults when the project has no config", async () => {
+  it("blocks a project with no execution binding instead of borrowing defaults", async () => {
     setProjectConfig({});
     renderLanding();
 
-    const body = await submitAndReadBody();
-    expect(body.host_id).toBe("host_1");
-    expect(body.workspace).toBe(RECENT_WORKSPACE);
-    expect(body.agent_id).toBe("ag_hello");
-    expect(body.git).toBeUndefined();
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "hello" },
+    });
+    expect(screen.getByTestId("new-chat-landing-submit")).toBeDisabled();
+    expect(vi.mocked(authenticatedFetch)).not.toHaveBeenCalled();
   });
 
-  it("seeds only the host from config, leaving the workspace to the generic default", async () => {
+  it("blocks a partial Project binding instead of borrowing a recent workspace", async () => {
     setProjectConfig({ host_id: "host_1" });
     renderLanding();
 
-    const body = await submitAndReadBody();
-    expect(body.host_id).toBe("host_1");
-    expect(body.workspace).toBe(RECENT_WORKSPACE);
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "hello" },
+    });
+    expect(screen.getByTestId("new-chat-landing-submit")).toBeDisabled();
+    expect(vi.mocked(authenticatedFetch)).not.toHaveBeenCalled();
   });
 
   it("waits for the projects list before settling, so a config agent isn't lost to a race", async () => {
@@ -253,7 +311,7 @@ describe("NewChatLandingScreen project prefill", () => {
     // null. The prefill must WAIT rather than settle from the generic default,
     // or the stored default agent would never apply.
     setProjects(undefined, true); // still loading
-    setProjectConfig({ host_id: "host_1", agent_id: "ag_other" });
+    setProjectConfig({ host_id: "host_1", workspace: REPO, agent_id: "ag_other" });
     const rerender = renderLanding();
 
     // Projects finish loading → config resolves and the agent seeds.
@@ -275,29 +333,39 @@ describe("NewChatLandingScreen project prefill", () => {
     });
     const rerender = renderLanding();
     await waitFor(() =>
-      expect(screen.getByTestId("new-chat-landing-workspace-chip").textContent).toContain("alpha"),
+      expect(screen.getByTestId("new-chat-landing-workspace-chip")).toHaveAttribute("title", REPO),
     );
+    expect(screen.getByTestId("new-chat-landing-project-chip")).toHaveTextContent("Alpha");
 
     searchParams = new URLSearchParams("project=Beta");
     rerender(<NewChatLandingScreen />);
     await waitFor(() =>
-      expect(screen.getByTestId("new-chat-landing-workspace-chip").textContent).toContain("beta"),
+      expect(screen.getByTestId("new-chat-landing-project-chip")).toHaveTextContent("Beta"),
     );
     const body = await submitAndReadBody();
     expect(body.workspace).toBe(BETA_REPO);
     expect(body.agent_id).toBe("ag_other");
   });
 
-  it("does not seed an offline config host (falls back to the generic default)", async () => {
+  it("blocks an offline Project host instead of falling back to another location", async () => {
     vi.mocked(useHosts).mockReturnValue({
       data: [host(), host({ host_id: "host_off", name: "sleepy", status: "offline" })],
     } as ReturnType<typeof useHosts>);
     setProjectConfig({ host_id: "host_off", workspace: "/somewhere" });
     renderLanding();
 
-    const body = await submitAndReadBody();
-    expect(body.host_id).toBe("host_1");
-    expect(body.workspace).toBe(RECENT_WORKSPACE);
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-host-chip")).toHaveTextContent("sleepy"),
+    );
+    expect(screen.getByTestId("new-chat-landing-workspace-chip")).toHaveAttribute(
+      "title",
+      "/somewhere",
+    );
+    fireEvent.change(screen.getByTestId("new-chat-landing-input"), {
+      target: { value: "hello" },
+    });
+    expect(screen.getByTestId("new-chat-landing-submit")).toBeDisabled();
+    expect(vi.mocked(authenticatedFetch)).not.toHaveBeenCalled();
   });
 
   it("clears a stale project deep link instead of recreating the deleted project", async () => {
@@ -308,5 +376,20 @@ describe("NewChatLandingScreen project prefill", () => {
       expect(setSearchParamsMock).toHaveBeenCalledWith(new URLSearchParams(), { replace: true }),
     );
     expect(screen.getByText("What should we do?")).toBeInTheDocument();
+  });
+
+  it("shows no project workspace while using the managed sandbox", async () => {
+    searchParams = new URLSearchParams();
+    vi.mocked(useProjects).mockReturnValue({
+      data: [],
+      isLoading: false,
+      isSuccess: true,
+    } as ReturnType<typeof useProjects>);
+    renderLanding();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-host-chip")).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("new-chat-landing-workspace-chip")).toBeNull();
   });
 });

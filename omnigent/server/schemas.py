@@ -4431,11 +4431,11 @@ class ProjectObject(BaseModel):
     :param name: Human-readable project name, unique per owner.
     :param created_at: Unix epoch seconds at creation.
     :param updated_at: Unix epoch seconds of the last write, or ``None``.
-    :param config: Default session settings as an opaque JSON object (host,
-        workspace, harness, model, reasoning effort, git base-branch, …). Empty
-        when the project stores no defaults. The key vocabulary is owned by the
-        client; the server persists and returns it whole. Values are hints the
-        new-chat dialog pre-fills, not enforced requirements.
+    :param config: Project execution binding and optional session defaults.
+        When ``host_id`` and ``workspace`` are present, the session create
+        route enforces that location for members of the project. A managed
+        sandbox binding may omit ``workspace`` for an empty sandbox. Other keys
+        remain client-owned defaults; older projects may have none.
     """
 
     id: str
@@ -4478,8 +4478,10 @@ class CreateProjectRequest(BaseModel):
 
     :param name: Human-readable project name. Trimmed; must be non-empty and
         at most 100 characters; unique among the caller's projects.
-    :param config: Optional default session settings (opaque JSON object).
-        Omitted / empty stores no defaults.
+    :param config: Optional project execution binding and session defaults.
+        The new-session UI supplies ``host_id`` + ``workspace`` for an external
+        host. Omitted / empty remains supported for legacy promotion and
+        intentionally unbound projects.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -4512,8 +4514,9 @@ class UpdateProjectRequest(BaseModel):
 
     :param name: New project name. ``None`` leaves it unchanged; otherwise
         trimmed, non-empty, at most 100 characters.
-    :param config: New config object to replace the stored one. ``None`` leaves
-        it unchanged; an empty object ``{}`` clears the stored defaults.
+    :param config: New project binding/defaults to replace the stored object.
+        ``None`` leaves it unchanged; an empty object ``{}`` clears it for
+        legacy or intentionally unbound projects.
     """
 
     model_config = ConfigDict(extra="forbid")

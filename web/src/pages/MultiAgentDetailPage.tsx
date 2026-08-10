@@ -1161,6 +1161,7 @@ export function MultiAgentDetailPage() {
                           schema={formSchema.data}
                           harnesses={bundleOptions.data?.harnesses}
                           models={modelOptions}
+                          skills={bundleOptions.data?.skills}
                           workerNames={workers.map(draftWorkerName)}
                           value={selected.visual}
                           onChange={(visual) =>

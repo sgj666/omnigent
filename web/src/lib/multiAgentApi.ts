@@ -170,11 +170,19 @@ export interface AgentHarnessOption {
   setup_steps?: Record<string, unknown>[];
 }
 
+export interface AgentSkillOption {
+  id: string;
+  name: string;
+  description: string;
+  relative_path: string;
+  validation_status: "valid" | "warning" | "error";
+}
+
 export interface AgentBundleOptions {
   harnesses: AgentHarnessOption[];
   models: Record<string, unknown>[];
   tools: Record<string, unknown>[];
-  skills: Record<string, unknown>[];
+  skills: AgentSkillOption[];
   mcp: Record<string, unknown>[];
   environment: Record<string, unknown>[];
 }

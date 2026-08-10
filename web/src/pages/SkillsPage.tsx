@@ -53,7 +53,10 @@ export function SkillsPage() {
   });
   const sync = useMutation({
     mutationFn: syncSkills,
-    onSuccess: (value) => queryClient.setQueryData(["skills"], value),
+    onSuccess: (value) => {
+      queryClient.setQueryData(["skills"], value);
+      void queryClient.invalidateQueries({ queryKey: ["agent-bundle-options"] });
+    },
   });
   const search = params.get("q") ?? "";
   const rawFilter = params.get("status");

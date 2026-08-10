@@ -19,6 +19,7 @@ import stat
 import subprocess
 import tempfile
 import threading
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal, Protocol
@@ -123,7 +124,24 @@ class GitSkillRepositoryReader:
         self._lock = threading.Lock()
 
     @classmethod
-    def from_environment(cls) -> GitSkillRepositoryReader:
+    def from_environment(
+        cls,
+        settings: Mapping[str, object] | None = None,
+    ) -> GitSkillRepositoryReader:
+        """Build a reader from server settings with environment overrides.
+
+        Repository identity is safe to keep in the non-secret server YAML;
+        credentials remain environment-only. This lets deployments configure
+        ``skills_repository`` without weakening the existing token boundary.
+        """
+        configured = settings or {}
+
+        def setting(env_name: str, key: str, default: str) -> str:
+            if env_name in os.environ:
+                return os.environ[env_name]
+            value = configured.get(key, default)
+            return value if isinstance(value, str) else default
+
         cache_value = os.environ.get("ORVIA_SKILLS_CACHE_DIR")
         cache_dir = (
             Path(cache_value).expanduser()
@@ -131,9 +149,9 @@ class GitSkillRepositoryReader:
             else Path.home() / ".omnigent" / "skills-cache"
         )
         return cls(
-            remote_url=os.environ.get("ORVIA_SKILLS_GIT_URL", ""),
-            ref=os.environ.get("ORVIA_SKILLS_GIT_REF", "main"),
-            skills_path=os.environ.get("ORVIA_SKILLS_GIT_PATH", "skills"),
+            remote_url=setting("ORVIA_SKILLS_GIT_URL", "url", ""),
+            ref=setting("ORVIA_SKILLS_GIT_REF", "ref", "main"),
+            skills_path=setting("ORVIA_SKILLS_GIT_PATH", "path", "skills"),
             cache_dir=cache_dir,
         )
 

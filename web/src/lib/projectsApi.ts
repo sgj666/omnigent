@@ -13,10 +13,11 @@
 import { authenticatedFetch } from "./identity";
 
 /**
- * Default session settings a project stores, pre-filled into the new-chat
- * composer. All fields optional — an unset key means "no default for this
- * slot". The vocabulary is client-owned; the server persists the object whole
- * and never acts on it, so adding a key here needs no backend change.
+ * Project execution binding plus optional defaults for the new-chat composer.
+ * When `host_id` and `workspace` are present, the server enforces that
+ * location for sessions filed in the project. The managed-sandbox sentinel
+ * may omit `workspace` to request an empty sandbox. Other keys are optional
+ * client-owned defaults; older projects may have no binding.
  */
 export interface ProjectConfig {
   /** Default host id, or the sandbox sentinel. */

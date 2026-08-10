@@ -837,8 +837,9 @@ def create_app(
     :param inbox_item_store: Store for owner-private persistent Inbox items.
         ``None`` disables lifecycle notification persistence and its API.
     :param skills_reader: Read-only Git-backed Skills inventory reader. When
-        omitted, configuration is resolved from ``ORVIA_SKILLS_GIT_*``
-        environment variables without performing network I/O at startup.
+        omitted, configuration is resolved from the non-secret server config
+        ``skills_repository`` block plus ``ORVIA_SKILLS_GIT_*`` environment
+        overrides, without performing network I/O at startup.
     :param auth_provider: Pre-constructed auth provider for
         identity resolution. ``None`` disables auth (anonymous
         access). **Required** when ``permission_store`` is
@@ -2143,9 +2144,14 @@ def create_app(
         prefix="/v1",
         tags=["usage"],
     )
+    skills_inventory_reader = skills_reader or GitSkillRepositoryReader.from_environment(
+        (server_config or {}).get("skills_repository")
+        if isinstance((server_config or {}).get("skills_repository"), dict)
+        else None
+    )
     app.include_router(
         create_skills_router(
-            skills_reader or GitSkillRepositoryReader.from_environment(),
+            skills_inventory_reader,
             auth_provider=auth_provider,
         ),
         prefix="/v1",
@@ -2167,6 +2173,7 @@ def create_app(
         create_agent_bundles_router(
             AgentBundleService(agent_store, artifact_store),
             auth_provider=auth_provider,
+            skills_reader=skills_inventory_reader,
         ),
         prefix="/v1",
         tags=["agent_bundles"],

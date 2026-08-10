@@ -141,6 +141,142 @@ from omnigent.stores.file_store import FileStore
 from omnigent.stores.permission_store import PermissionStore
 from omnigent.stores.project_store import ProjectStore
 
+# ``Project.config`` predates the first-class workspace relationship and still
+# carries a few client-owned defaults.  These two fields are the execution
+# identity of a project: once present, a project-bound session must use them.
+# The sandbox sentinel is kept as a web/client convention; it is intentionally
+# handled here rather than imported from the web bundle.
+_PROJECT_SANDBOX_HOST = "__sandbox__"
+
+
+def _project_execution_config(project: Any) -> tuple[str | None, str | None]:
+    """Read the optional host/workspace binding from a Project entity.
+
+    Older projects may have no binding (or only a partial legacy config), so
+    absence remains a valid compatibility state.  Malformed values are
+    rejected when a session tries to use the project instead of leaking them
+    into the host-launch path.
+    """
+    config = project.config if isinstance(project.config, dict) else {}
+    host_id = config.get("host_id")
+    workspace = config.get("workspace")
+    if host_id is not None and (not isinstance(host_id, str) or not host_id.strip()):
+        raise OmnigentError(
+            "project workspace binding has an invalid host_id",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if workspace is not None and (not isinstance(workspace, str) or not workspace.strip()):
+        raise OmnigentError(
+            "project workspace binding has an invalid workspace",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if workspace is not None and host_id is None:
+        raise OmnigentError(
+            "project workspace binding must include host_id",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if host_id is not None and host_id != _PROJECT_SANDBOX_HOST and workspace is None:
+        raise OmnigentError(
+            "external project workspace binding must include workspace",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    return host_id, workspace
+
+
+def _bind_json_session_to_project(
+    body: SessionCreateRequest,
+    project: Any,
+) -> SessionCreateRequest:
+    """Make a project-bound JSON session use the project's execution target.
+
+    A caller may omit the fields (the normal Project-first UI path), but may
+    not silently override a bound project with another host or directory.
+    Re-validating the copied model is important because project values are
+    loaded after the request body initially passed Pydantic validation.
+    """
+    project_host, project_workspace = _project_execution_config(project)
+    if project_host is None and project_workspace is None:
+        return body
+
+    if project_host == _PROJECT_SANDBOX_HOST:
+        if body.host_type != "managed" and (
+            body.host_id is not None or body.workspace is not None
+        ):
+            raise OmnigentError(
+                "project is bound to a managed workspace; choose the project without a host override",
+                code=ErrorCode.CONFLICT,
+            )
+        updates: dict[str, Any] = {"host_type": "managed", "host_id": None}
+        if project_workspace is not None:
+            if body.workspace not in (None, project_workspace):
+                raise OmnigentError(
+                    "session workspace does not match its project workspace",
+                    code=ErrorCode.CONFLICT,
+                )
+            updates["workspace"] = project_workspace
+        return SessionCreateRequest.model_validate({**body.model_dump(), **updates})
+
+    if body.host_type == "managed":
+        raise OmnigentError(
+            "session host_type does not match its project workspace",
+            code=ErrorCode.CONFLICT,
+        )
+    if project_host is not None and body.host_id not in (None, project_host):
+        raise OmnigentError(
+            "session host does not match its project workspace",
+            code=ErrorCode.CONFLICT,
+        )
+    if project_workspace is not None and body.workspace not in (None, project_workspace):
+        raise OmnigentError(
+            "session workspace does not match its project workspace",
+            code=ErrorCode.CONFLICT,
+        )
+
+    updates = {}
+    if project_host is not None:
+        updates["host_id"] = project_host
+    if project_workspace is not None:
+        updates["workspace"] = project_workspace
+    return SessionCreateRequest.model_validate({**body.model_dump(), **updates})
+
+
+def _bind_multipart_session_to_project(
+    metadata: Any,
+    project: Any,
+) -> Any:
+    """Apply a Project execution target to the bundled-agent create path.
+
+    Multipart creates launch the runner in a follow-up host call. Carry the
+    authoritative host id through the parsed metadata and reject mismatches;
+    the follow-up launch route remains responsible for binding the runner.
+    """
+    project_host, project_workspace = _project_execution_config(project)
+    if project_host is None and project_workspace is None:
+        return metadata
+    if project_host == _PROJECT_SANDBOX_HOST:
+        if metadata.host_id is not None:
+            raise OmnigentError(
+                "bundled sessions cannot override a managed project workspace",
+                code=ErrorCode.CONFLICT,
+            )
+        if metadata.workspace not in (None, project_workspace):
+            raise OmnigentError(
+                "session workspace does not match its project workspace",
+                code=ErrorCode.CONFLICT,
+            )
+        return metadata.model_copy(update={"workspace": project_workspace})
+    if metadata.host_id not in (None, project_host):
+        raise OmnigentError(
+            "session host does not match its project workspace",
+            code=ErrorCode.CONFLICT,
+        )
+    if metadata.workspace not in (None, project_workspace):
+        raise OmnigentError(
+            "session workspace does not match its project workspace",
+            code=ErrorCode.CONFLICT,
+        )
+    return metadata.model_copy(update={"host_id": project_host, "workspace": project_workspace})
+
 
 def register_core_routes(
     router: APIRouter,
@@ -251,6 +387,10 @@ def register_core_routes(
             )
             if project is None:
                 raise OmnigentError("Project not found", code=ErrorCode.NOT_FOUND)
+            # Project is the primary session location.  Resolve its bound
+            # host/workspace after ownership validation so the server, rather
+            # than a stale client draft, is authoritative.
+            body = _bind_json_session_to_project(body, project)
 
         run_child_rollback = _RunChildCreateRollback()
 
@@ -618,6 +758,7 @@ def register_core_routes(
             )
             if project is None:
                 raise OmnigentError("Project not found", code=ErrorCode.NOT_FOUND)
+            parsed_metadata = _bind_multipart_session_to_project(parsed_metadata, project)
 
         inherited_runner_id: str | None = None
         if parsed_metadata.parent_session_id is not None:

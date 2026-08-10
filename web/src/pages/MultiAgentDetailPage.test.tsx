@@ -242,6 +242,55 @@ describe("MultiAgentDetailPage", () => {
     expect(screen.getByText("Not connected")).toBeVisible();
   });
 
+  it("selects repository Skills and preserves configured names missing from the inventory", async () => {
+    const data = copyDraft();
+    const coordinatorConfig = data.coordinator!.data;
+    if (
+      coordinatorConfig === null ||
+      typeof coordinatorConfig !== "object" ||
+      Array.isArray(coordinatorConfig)
+    ) {
+      throw new Error("test coordinator config must be an object");
+    }
+    coordinatorConfig.skills = ["removed-skill"];
+    hooks.detail.mockReturnValue({ data, isLoading: false, isError: false });
+    hooks.options.mockReturnValue({
+      data: {
+        harnesses: [{ id: "provider-harness", label: "Provider Harness" }],
+        models: [],
+        tools: [],
+        skills: [
+          {
+            id: "skill-1",
+            name: "proposal",
+            description: "Create a scoped proposal.",
+            relative_path: "skills/common/proposal",
+            validation_status: "valid",
+          },
+        ],
+        mcp: [],
+        environment: [],
+      },
+    });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /Advanced properties/ }));
+
+    expect(screen.getByText("removed-skill")).toBeVisible();
+    expect(screen.getByText("Unavailable")).toBeVisible();
+    fireEvent.click(screen.getByRole("combobox", { name: "Allowed skill names" }));
+    fireEvent.click(await screen.findByText("proposal"));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(hooks.update.mutateAsync).toHaveBeenCalledOnce());
+    expect(hooks.update.mutateAsync.mock.calls[0][0].request.patches).toContainEqual({
+      file: "config.yaml",
+      op: "replace",
+      path: "/skills",
+      value: ["removed-skill", "proposal"],
+    });
+  });
+
   it("renders real Agent activity with TaskRun, Session, Project, reason, and Skill links", () => {
     hooks.activity.mockReturnValue({
       data: {

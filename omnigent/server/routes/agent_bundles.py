@@ -42,6 +42,7 @@ from omnigent.server.bundle_schemas import (
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.routes._content_type import require_json_content_type
 from omnigent.server.routes._origin import require_trusted_origin
+from omnigent.skills import SkillRepositoryReader
 from omnigent.stores.agent_store import AgentVersionConflict
 
 OptionsProvider = Callable[[], Mapping[str, Any]]
@@ -139,10 +140,22 @@ def create_agent_bundles_router(
     *,
     auth_provider: AuthProvider | None = None,
     options_provider: OptionsProvider | None = None,
+    skills_reader: SkillRepositoryReader | None = None,
 ) -> APIRouter:
     """Build the standalone router, intended for mounting under ``/v1``."""
     router = APIRouter()
-    provide_options = options_provider or _default_options
+    base_options = options_provider or _default_options
+
+    def provide_options() -> Mapping[str, Any]:
+        options = dict(base_options())
+        if skills_reader is not None:
+            snapshot = skills_reader.load(refresh=False)
+            options["skills"] = [
+                skill.summary_dict()
+                for skill in snapshot.skills
+                if skill.validation_status != "error"
+            ]
+        return options
 
     def authenticate(request: Request) -> None:
         require_user(request, auth_provider)

@@ -50,8 +50,8 @@ class ProjectStore(ABC):
         :param name: Human-readable project name. Trimmed, non-empty, unique
             among the owner's projects.
         :param owner_user_id: Owning user, or ``None`` in single-user mode.
-        :param config: Optional default session settings (opaque JSON object);
-            ``None`` or empty stores no defaults.
+        :param config: Optional project execution binding and session defaults;
+            ``None`` or empty stores no binding for legacy/unbound projects.
         :returns: The newly created :class:`Project`.
         :raises OmnigentError: ``ALREADY_EXISTS`` if the owner already has a
             project with this name.
