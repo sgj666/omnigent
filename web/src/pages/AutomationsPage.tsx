@@ -12,6 +12,7 @@
 
 import { useMemo, useState } from "react";
 import { ClockIcon, Loader2Icon, SearchIcon, TriangleAlertIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { PageScroll } from "@/components/PageScroll";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,7 @@ const FILTER_TABS: { value: FilterTab; label: string }[] = [
 ];
 
 export function AutomationsPage() {
+  const { t } = useTranslation("tasks");
   const { data: tasks, isLoading, isError, refetch } = useScheduledTasks();
   // A single shared, slowly-ticking clock for the whole list. Passing it down to
   // each row (rather than each row owning a timer) keeps the relative next-run
@@ -57,7 +59,7 @@ export function AutomationsPage() {
   // Prefill for the manual create dialog when opened from a "Suggestions" chip.
   // Null → the normal manual path (empty fields). Cleared on dialog close so a
   // stale prefill never leaks into a subsequent plain "New task" open.
-  const [prefill, setPrefill] = useState<ScheduledTaskSuggestion["prefill"] | null>(null);
+  const [prefill, setPrefill] = useState<{ name: string; prompt: string } | null>(null);
 
   function openManual() {
     setPrefill(null);
@@ -66,7 +68,7 @@ export function AutomationsPage() {
   }
 
   function openFromSuggestion(s: ScheduledTaskSuggestion) {
-    setPrefill(s.prefill);
+    setPrefill({ name: t(s.prefill.nameKey), prompt: t(s.prefill.promptKey) });
     setEditingTask(null);
     setManualOpen(true);
   }
@@ -82,16 +84,16 @@ export function AutomationsPage() {
   const filtered = useMemo(() => {
     const all = tasks ?? [];
     const q = search.trim().toLowerCase();
-    const matches = all.filter((t) => {
-      if (filter === "active" && t.state !== "active") return false;
-      if (filter === "paused" && t.state !== "paused") return false;
-      if (q && !t.name.toLowerCase().includes(q)) return false;
+    const matches = all.filter((task) => {
+      if (filter === "active" && task.state !== "active") return false;
+      if (filter === "paused" && task.state !== "paused") return false;
+      if (q && !task.name.toLowerCase().includes(q)) return false;
       return true;
     });
     const nextRunByTaskId = new Map(
       matches
-        .filter((t) => t.state === "active")
-        .map((t) => [t.id, nextRunAtMs(t.rrule, t.timezone)]),
+        .filter((task) => task.state === "active")
+        .map((task) => [task.id, nextRunAtMs(task.rrule, task.timezone)]),
     );
     // Sort: ACTIVE first (soonest next-run at the top), PAUSED last. The
     // least-actionable (paused) rows sink to the bottom rather than leading the
@@ -303,6 +305,7 @@ function SuggestionsSection({
   showHeading?: boolean;
   className?: string;
 }) {
+  const { t } = useTranslation("tasks");
   return (
     // The single divider on the page: a `border-t` separating the task list
     // from the section. `mt-4 pt-4` keeps the gap tight.
@@ -310,7 +313,7 @@ function SuggestionsSection({
       className={cn("mt-4 border-t border-border/60 pt-4", className)}
       data-testid="tasks-suggestions"
     >
-      {showHeading && <h2 className="mb-3 text-sm text-muted-foreground">Suggestions</h2>}
+      {showHeading && <h2 className="mb-3 text-sm text-muted-foreground">{t("suggestions")}</h2>}
       {/* Compact chips that wrap onto multiple lines. */}
       <div className="flex flex-wrap gap-2">
         {SCHEDULED_TASK_SUGGESTIONS.map((s) => {
@@ -324,7 +327,7 @@ function SuggestionsSection({
               className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 text-sm font-normal transition-colors hover:bg-muted hover:text-foreground"
             >
               <Icon className={cn("size-4 shrink-0", s.iconClassName)} />
-              <span className="truncate">{s.title}</span>
+              <span className="truncate">{t(s.titleKey)}</span>
             </button>
           );
         })}
