@@ -25,9 +25,9 @@ import { isNavigablePath, WorkspacePicker } from "./WorkspacePicker";
 
 /**
  * "New project" control in the Projects group header. Opens a dialog that
- * creates an EMPTY first-class project (`POST /v1/projects`) — the capability
- * the legacy label model can't express. On success the new folder is expanded
- * (via `onCreated`) so the user can immediately file sessions into it.
+ * creates a first-class project with its execution Host and source folder
+ * bound (`POST /v1/projects`). On success the new folder is expanded (via
+ * `onCreated`) so the user can immediately start sessions in it.
  */
 export function NewProjectButton({ onCreated }: { onCreated: (name: string) => void }) {
   const [open, setOpen] = useState(false);

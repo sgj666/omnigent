@@ -314,6 +314,13 @@ describe("quick pin/unpin hover button", () => {
     expect(screen.getByTestId("new-project")).not.toHaveClass("size-7");
     expect(screen.getByTestId("project-list-actions")).toHaveClass("size-6");
     expect(screen.getByTestId("project-list-actions")).not.toHaveClass("size-7");
+
+    // The in-app browser can be narrower than Tailwind's md breakpoint. Keep
+    // the only project-creation entry point visible there; desktop still
+    // applies its hover-only opacity classes on this outer wrapper.
+    const headerActions = screen.getByTestId("new-project").parentElement?.parentElement;
+    expect(headerActions).toHaveClass("flex");
+    expect(headerActions).not.toHaveClass("hidden");
   });
 
   it("toggles the pin without opening the kebab menu, moving the row under Pinned", () => {
