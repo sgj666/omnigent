@@ -260,11 +260,21 @@
   },
   "inbox": {
     "title": "收件箱",
+    "description": "需要你关注的协调者动态",
     "unread": "{{count}} 条未读",
+    "unreadIndicator": "未读",
     "markAllRead": "全部标为已读",
     "markRead": "标为已读",
     "markUnread": "标为未读",
     "open": "打开",
+    "filterLabel": "按状态筛选收件箱",
+    "filters": {
+      "all": "全部",
+      "actionRequired": "待确认",
+      "progress": "进行中",
+      "completed": "已完成",
+      "failed": "失败"
+    },
     "groups": {
       "actionRequired": "需要处理",
       "progress": "进行中",
@@ -293,6 +303,7 @@
     "loading": "正在加载收件箱…",
     "emptyTitle": "暂无待处理事项",
     "emptyDescription": "任务、会话、确认请求和文件评论的最新进展会显示在这里。",
+    "filteredEmpty": "当前筛选下暂无消息",
     "openSession": "打开会话",
     "openFile": "打开文件",
     "commentedOn": "评论了",

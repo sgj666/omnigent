@@ -260,11 +260,21 @@
   },
   "inbox": {
     "title": "Inbox",
+    "description": "Coordinator updates that need your attention",
     "unread": "{{count}} unread",
+    "unreadIndicator": "Unread",
     "markAllRead": "Mark all read",
     "markRead": "Mark read",
     "markUnread": "Mark unread",
     "open": "Open",
+    "filterLabel": "Filter inbox by status",
+    "filters": {
+      "all": "All",
+      "actionRequired": "Needs confirmation",
+      "progress": "In progress",
+      "completed": "Completed",
+      "failed": "Failed"
+    },
     "groups": {
       "actionRequired": "ACTION REQUIRED",
       "progress": "IN PROGRESS",
@@ -293,6 +303,7 @@
     "loading": "Loading inbox…",
     "emptyTitle": "Nothing waiting on you",
     "emptyDescription": "Task, session, confirmation, and file comment updates will show up here.",
+    "filteredEmpty": "No messages in this view",
     "openSession": "Open session",
     "openFile": "Open file",
     "commentedOn": "commented on",

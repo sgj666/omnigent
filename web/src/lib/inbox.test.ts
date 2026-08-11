@@ -266,12 +266,13 @@ describe("collectCommentInboxItems", () => {
 });
 
 describe("sumPendingApprovals", () => {
-  it("sums counts across rows, skipping archived rows and absent counts", () => {
+  it("sums coordinator counts, skipping workers, archived rows, and absent counts", () => {
     const rows = [
       makeRow({ id: "a", pending_elicitations_count: 2 }),
       makeRow({ id: "b", pending_elicitations_count: 1, archived: true }),
       makeRow({ id: "c" }),
       makeRow({ id: "d", pending_elicitations_count: 3 }),
+      makeRow({ id: "worker", parent_session_id: "a", pending_elicitations_count: 4 }),
     ];
     expect(sumPendingApprovals(rows)).toBe(5);
   });

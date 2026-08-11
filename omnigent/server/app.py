@@ -2376,6 +2376,7 @@ def create_app(
                 inbox_item_store,
                 work_item_store=work_item_store,
                 work_item_run_store=work_item_run_store,
+                conversation_store=conversation_store,
                 auth_provider=auth_provider,
             ),
             prefix="/v1",

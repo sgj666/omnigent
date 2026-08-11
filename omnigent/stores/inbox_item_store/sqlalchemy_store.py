@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.exc import IntegrityError
 
-from omnigent.db.db_models import SqlInboxItem, current_workspace_id
+from omnigent.db.db_models import SqlConversation, SqlInboxItem, current_workspace_id
 from omnigent.db.enum_codecs import decode_inbox_item_kind, encode_inbox_item_kind
 from omnigent.db.utils import get_or_create_engine, make_managed_session_maker, now_epoch
 from omnigent.entities import InboxItem, InboxItemKind
@@ -30,6 +30,20 @@ def _to_entity(row: SqlInboxItem) -> InboxItem:
         read_at=row.read_at,
         resolved_at=row.resolved_at,
     )
+
+
+def _is_product_inbox_item():  # type: ignore[no-untyped-def]
+    """Exclude notifications attached to known child/worker Sessions."""
+    worker_session = (
+        select(SqlConversation.id)
+        .where(
+            SqlConversation.workspace_id == SqlInboxItem.workspace_id,
+            SqlConversation.id == SqlInboxItem.session_id,
+            SqlConversation.parent_conversation_id.is_not(None),
+        )
+        .exists()
+    )
+    return ~worker_session
 
 
 class SqlAlchemyInboxItemStore(InboxItemStore):
@@ -78,6 +92,7 @@ class SqlAlchemyInboxItemStore(InboxItemStore):
         where = [
             SqlInboxItem.workspace_id == current_workspace_id(),
             SqlInboxItem.owner_user_id == owner_user_id,
+            _is_product_inbox_item(),
         ]
         if unread_only:
             where.append(SqlInboxItem.read_at.is_(None))
@@ -104,6 +119,7 @@ class SqlAlchemyInboxItemStore(InboxItemStore):
                         SqlInboxItem.workspace_id == current_workspace_id(),
                         SqlInboxItem.owner_user_id == owner_user_id,
                         SqlInboxItem.read_at.is_(None),
+                        _is_product_inbox_item(),
                     )
                 )
                 or 0
@@ -128,6 +144,7 @@ class SqlAlchemyInboxItemStore(InboxItemStore):
                     SqlInboxItem.workspace_id == current_workspace_id(),
                     SqlInboxItem.owner_user_id == owner_user_id,
                     SqlInboxItem.read_at.is_(None),
+                    _is_product_inbox_item(),
                 )
                 .values(read_at=now, updated_at=now)
             )

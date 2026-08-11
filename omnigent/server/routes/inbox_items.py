@@ -14,6 +14,7 @@ from omnigent.runtime import user_session_stream
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.server.schemas import UpdateInboxItemRequest
+from omnigent.stores.conversation_store import ConversationStore
 from omnigent.stores.inbox_item_store import InboxItemStore
 from omnigent.stores.work_item_run_store import WorkItemRunStore
 from omnigent.stores.work_item_store import WorkItemStore
@@ -51,6 +52,7 @@ def _repair_task_projections(
     inbox_item_store: InboxItemStore,
     work_item_store: WorkItemStore,
     work_item_run_store: WorkItemRunStore,
+    conversation_store: ConversationStore,
     *,
     owner_user_id: str | None,
 ) -> None:
@@ -86,6 +88,10 @@ def _repair_task_projections(
             task.id,
             owner_user_id=owner_user_id,
         ):
+            if run.session_id is not None:
+                conversation = conversation_store.get_conversation(run.session_id)
+                if conversation is not None and conversation.parent_conversation_id is not None:
+                    continue
             projection = {
                 TaskRunState.WAITING: ("task_waiting", True),
                 TaskRunState.SUCCEEDED: ("task_succeeded", False),
@@ -117,6 +123,7 @@ def create_inbox_items_router(
     *,
     work_item_store: WorkItemStore | None = None,
     work_item_run_store: WorkItemRunStore | None = None,
+    conversation_store: ConversationStore | None = None,
     auth_provider: AuthProvider | None = None,
 ) -> APIRouter:
     """Create persistent Inbox list and read-state routes."""
@@ -129,12 +136,17 @@ def create_inbox_items_router(
         limit: int = Query(default=100, ge=1, le=200),
     ) -> dict[str, Any]:
         user_id = require_user(request, auth_provider)
-        if work_item_store is not None and work_item_run_store is not None:
+        if (
+            work_item_store is not None
+            and work_item_run_store is not None
+            and conversation_store is not None
+        ):
             await asyncio.to_thread(
                 _repair_task_projections,
                 inbox_item_store,
                 work_item_store,
                 work_item_run_store,
+                conversation_store,
                 owner_user_id=user_id,
             )
         items, unread_count = await asyncio.gather(

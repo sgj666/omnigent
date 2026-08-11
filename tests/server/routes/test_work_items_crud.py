@@ -9,9 +9,9 @@ from pathlib import Path
 import httpx
 import pytest_asyncio
 from fastapi import FastAPI
-from sqlalchemy import update
+from sqlalchemy import select, update
 
-from omnigent.db.db_models import SqlWorkItem, current_workspace_id
+from omnigent.db.db_models import SqlInboxItem, SqlWorkItem, current_workspace_id
 from omnigent.db.utils import get_or_create_engine
 from omnigent.entities import AgentBundleSnapshot
 from omnigent.errors import ErrorCode, OmnigentError
@@ -549,6 +549,89 @@ async def test_confirmation_and_session_completion_are_persistent_and_deduplicat
         await asyncio.sleep(0.01)
     assert approval_row["action_required"] is False
     assert approval_row["resolved_at"] is not None
+
+
+async def test_worker_events_do_not_enter_the_product_inbox(
+    work_item_client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    from omnigent.server import session_live_state
+
+    agent_id = "9" * 32
+    coordinator_agent = SqlAlchemyAgentStore(db_uri).create(
+        agent_id,
+        name="inbox-coordinator",
+        bundle_location=f"{agent_id}/{'8' * 64}",
+    )
+    snapshot = AgentBundleSnapshot.from_agent(coordinator_agent)
+    conversation_store = SqlAlchemyConversationStore(db_uri)
+    coordinator = conversation_store.create_conversation(
+        title="Coordinator",
+        agent_id=agent_id,
+        agent_bundle_version=snapshot.bundle_version,
+        agent_bundle_digest=snapshot.bundle_digest,
+        agent_bundle_location=snapshot.bundle_location,
+    )
+    worker = conversation_store.create_conversation(
+        kind="sub_agent",
+        title="worker:implementation",
+        parent_conversation_id=coordinator.id,
+        sub_agent_name="worker",
+    )
+
+    session_live_state.persist_inbox_elicitation(
+        worker.id,
+        {
+            "type": "response.elicitation_request",
+            "elicitation_id": "worker-approval",
+            "params": {"message": "Worker confirmation"},
+        },
+    )
+    session_live_state.persist_work_item_run_status(
+        worker.id,
+        "idle",
+        response_id="worker-response",
+    )
+    session_live_state.persist_inbox_elicitation(
+        coordinator.id,
+        {
+            "type": "response.elicitation_request",
+            "elicitation_id": "coordinator-approval",
+            "params": {"message": "Coordinator confirmation"},
+        },
+    )
+    session_live_state.persist_work_item_run_status(
+        coordinator.id,
+        "idle",
+        response_id="coordinator-response",
+    )
+
+    for _ in range(30):
+        inbox = (await work_item_client.get("/v1/inbox-items")).json()
+        if len(inbox["data"]) == 2:
+            break
+        await asyncio.sleep(0.01)
+
+    assert {item["session_id"] for item in inbox["data"]} == {coordinator.id}
+    with get_or_create_engine(db_uri).connect() as connection:
+        persisted_session_ids = set(connection.scalars(select(SqlInboxItem.session_id)).all())
+    assert worker.id not in persisted_session_ids
+
+    # A legacy row written before this rule must also stay out of list and
+    # unread counts, otherwise old Worker activity would keep the red badge on.
+    SqlAlchemyInboxItemStore(db_uri).create_if_absent(
+        "f" * 32,
+        owner_user_id=None,
+        kind="session_failed",
+        dedupe_key="local:legacy-worker-event",
+        session_id=worker.id,
+        message="Legacy worker failure",
+        target_url=f"/c/{worker.id}",
+        action_required=True,
+    )
+    filtered = (await work_item_client.get("/v1/inbox-items")).json()
+    assert {item["session_id"] for item in filtered["data"]} == {coordinator.id}
+    assert filtered["unread_count"] == 2
 
 
 async def test_project_reference_must_be_owned_and_is_cleared_on_project_delete(

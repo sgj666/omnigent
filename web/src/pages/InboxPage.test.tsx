@@ -185,6 +185,7 @@ describe("InboxPage states", () => {
     expect(await screen.findByText("Task run completed")).toBeInTheDocument();
     expect(screen.getByText("Release Orvia")).toBeInTheDocument();
     expect(screen.getByText("1 unread")).toBeInTheDocument();
+    expect(screen.getByLabelText("Unread")).toHaveClass("bg-destructive");
     fireEvent.click(screen.getByRole("button", { name: "Mark read" }));
     expect(mutate).toHaveBeenCalledWith({ itemId: "1".repeat(32), read: true });
   });
@@ -234,6 +235,12 @@ describe("InboxPage states", () => {
     expect(within(groups[1]).getByText("Waiting on dependency")).toBeInTheDocument();
     expect(within(groups[2]).getByText("Release complete")).toBeInTheDocument();
     expect(within(groups[3]).getByText("Release failed")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Completed\s*1/ }));
+    expect(screen.getByTestId("inbox-group-completed")).toBeInTheDocument();
+    expect(screen.queryByTestId("inbox-group-actionRequired")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("inbox-group-progress")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("inbox-group-failed")).not.toBeInTheDocument();
   });
 
   it("shows a loading state while the session list is still loading", () => {
@@ -306,6 +313,32 @@ describe("InboxPage approval items", () => {
 
     expect(await screen.findByText("Nothing waiting on you")).toBeInTheDocument();
     expect(sessionsApi.getSession).not.toHaveBeenCalled();
+  });
+
+  it("only scans coordinator sessions and drops mirrored worker approvals", async () => {
+    const coordinator = conversation({ id: "coordinator", title: "Coordinator" });
+    const worker = conversation({
+      id: "worker",
+      title: "Worker",
+      parent_session_id: coordinator.id,
+    });
+    vi.mocked(conversationsHook.useConversations).mockReturnValue(
+      conversationsStub([coordinator, worker]),
+    );
+    vi.mocked(sessionsApi.getSession).mockResolvedValue({
+      pendingElicitations: [
+        rawElicitation("worker_approval", "Worker needs approval", {
+          target_session_id: worker.id,
+        }),
+      ],
+    } as unknown as Awaited<ReturnType<typeof sessionsApi.getSession>>);
+
+    renderPage();
+
+    await waitFor(() => expect(sessionsApi.getSession).toHaveBeenCalledTimes(1));
+    expect(sessionsApi.getSession).toHaveBeenCalledWith(coordinator.id);
+    expect(commentInboxHook.useCommentInbox).toHaveBeenCalledWith([coordinator]);
+    expect(screen.queryByText("Worker needs approval")).not.toBeInTheDocument();
   });
 
   it("collapses an item when its toggle is clicked and hides the card", async () => {
@@ -412,9 +445,9 @@ describe("InboxPage approval items", () => {
     );
   });
 
-  it("routes the verdict to the child session when the prompt is mirrored", async () => {
-    // WHY: a mirrored child prompt carries target_session_id; the resolve POST
-    // must target that session, not the row it surfaced under.
+  it("does not surface a worker approval mirrored into the coordinator snapshot", async () => {
+    // WHY: product Inbox is coordinator-only. A child prompt mirrored into
+    // its parent snapshot must not leak into this page.
     const row = conversation({ id: "parent" });
     vi.mocked(conversationsHook.useConversations).mockReturnValue(conversationsStub([row]));
     vi.mocked(sessionsApi.getSession).mockResolvedValue({
@@ -424,10 +457,9 @@ describe("InboxPage approval items", () => {
     } as unknown as Awaited<ReturnType<typeof sessionsApi.getSession>>);
     renderPage();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Stub Accept" }));
-    await waitFor(() =>
-      expect(sessionsApi.approve).toHaveBeenCalledWith("child", "eli_child", { action: "accept" }),
-    );
+    await waitFor(() => expect(sessionsApi.getSession).toHaveBeenCalledWith("parent"));
+    expect(screen.queryByText("Child approval?")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stub Accept" })).not.toBeInTheDocument();
   });
 });
 

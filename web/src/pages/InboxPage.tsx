@@ -76,6 +76,7 @@ type RespondedMap = Record<
 >;
 
 type InboxGroup = "actionRequired" | "progress" | "completed" | "failed";
+type InboxFilter = "all" | InboxGroup;
 
 function inboxGroupFor(item: PersistentInboxItem): InboxGroup {
   if (item.kind === "task_failed" || item.kind === "session_failed") return "failed";
@@ -100,6 +101,7 @@ export function InboxPage() {
   const setPersistentRead = useSetPersistentInboxItemRead();
   const markAllPersistentRead = useMarkAllPersistentInboxItemsRead();
   const [responded, setResponded] = useState<RespondedMap>({});
+  const [filter, setFilter] = useState<InboxFilter>("all");
   // Manual expand/collapse toggles keyed by elicitation id. Anything
   // not in the map falls back to the default: expanded only for the
   // first (newest) item. Keying by id (not index) keeps a user's
@@ -117,11 +119,17 @@ export function InboxPage() {
   }, [hasNextPage, isFetchingNextPage, fetchNextPage]);
 
   const allRows = (conversationsQuery.data?.pages ?? []).flatMap((page) => page.data);
-  const rows = allRows.filter((c) => !c.archived && (c.pending_elicitations_count ?? 0) > 0);
+  const coordinatorRows = allRows.filter((row) => row.parent_session_id == null);
+  const workerSessionIds = new Set(
+    allRows.filter((row) => row.parent_session_id != null).map((row) => row.id),
+  );
+  const rows = coordinatorRows.filter(
+    (row) => !row.archived && (row.pending_elicitations_count ?? 0) > 0,
+  );
 
   // Unseen file comments across sessions — the hook filters to rows
   // that report comments and mounts one comments query per such row.
-  const commentInbox = useCommentInbox(allRows);
+  const commentInbox = useCommentInbox(coordinatorRows);
 
   // One snapshot fetch per session that reports pending prompts. The
   // count rides in the query key, so the WS count patch (new prompt,
@@ -148,14 +156,17 @@ export function InboxPage() {
       });
     }
   });
-  const items = collectInboxItems(sources);
+  const items = collectInboxItems(sources).filter((item) => item.resolveSessionId === item.row.id);
   const pendingApprovalIds = new Set(items.map((item) => item.elicitation.elicitationId));
+  const persistentItems = (persistentInbox.data?.data ?? []).filter(
+    (item) => item.session_id === null || !workerSessionIds.has(item.session_id),
+  );
   const persistentApprovalBySource = new Map(
-    (persistentInbox.data?.data ?? [])
+    persistentItems
       .filter((item) => item.kind === "approval_required" && item.source_id !== null)
       .map((item) => [item.source_id as string, item]),
   );
-  const lifecycleItems = (persistentInbox.data?.data ?? []).filter(
+  const lifecycleItems = persistentItems.filter(
     (item) =>
       item.kind !== "approval_required" ||
       !item.source_id ||
@@ -167,6 +178,23 @@ export function InboxPage() {
     completed: lifecycleItems.filter((item) => inboxGroupFor(item) === "completed"),
     failed: lifecycleItems.filter((item) => inboxGroupFor(item) === "failed"),
   } satisfies Record<InboxGroup, PersistentInboxItem[]>;
+  const filterCounts = {
+    actionRequired:
+      lifecycleGroups.actionRequired.length + items.length + commentInbox.items.length,
+    progress: lifecycleGroups.progress.length,
+    completed: lifecycleGroups.completed.length,
+    failed: lifecycleGroups.failed.length,
+  } satisfies Record<InboxGroup, number>;
+  const totalItemCount = Object.values(filterCounts).reduce((total, count) => total + count, 0);
+  const visibleItemCount = filter === "all" ? totalItemCount : filterCounts[filter];
+  const hiddenWorkerUnreadCount = (persistentInbox.data?.data ?? []).filter(
+    (item) =>
+      item.read_at === null && item.session_id !== null && workerSessionIds.has(item.session_id),
+  ).length;
+  const visibleUnreadCount = Math.max(
+    0,
+    (persistentInbox.data?.unread_count ?? 0) - hiddenWorkerUnreadCount,
+  );
 
   const renderLifecycleItems = (group: InboxGroup) =>
     lifecycleGroups[group].map((item) => (
@@ -252,8 +280,16 @@ export function InboxPage() {
 
   return (
     <PageScroll contentClassName="px-6">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{t("inbox.title")}</h1>
+      <div className="mb-5 flex items-center justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <InboxIcon className="size-5" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold">{t("inbox.title")}</h1>
+            <p className="truncate text-sm text-muted-foreground">{t("inbox.description")}</p>
+          </div>
+        </div>
         <div className="flex items-center gap-3">
           {(items.length > 0 || commentInbox.items.length > 0) && (
             <span className="text-sm text-muted-foreground">
@@ -267,12 +303,12 @@ export function InboxPage() {
               {t("inbox.waiting")}
             </span>
           )}
-          {(persistentInbox.data?.unread_count ?? 0) > 0 && (
+          {visibleUnreadCount > 0 && (
             <span className="text-sm text-muted-foreground">
-              {t("inbox.unread", { count: persistentInbox.data?.unread_count ?? 0 })}
+              {t("inbox.unread", { count: visibleUnreadCount })}
             </span>
           )}
-          {(persistentInbox.data?.unread_count ?? 0) > 0 && (
+          {visibleUnreadCount > 0 && (
             <Button
               variant="outline"
               size="sm"
@@ -284,6 +320,32 @@ export function InboxPage() {
             </Button>
           )}
         </div>
+      </div>
+
+      <div
+        role="group"
+        aria-label={t("inbox.filterLabel")}
+        className="mb-6 flex flex-wrap items-center gap-1 rounded-xl border border-border bg-muted/30 p-1"
+      >
+        {(["all", "actionRequired", "progress", "completed", "failed"] as const).map((value) => {
+          const count = value === "all" ? totalItemCount : filterCounts[value];
+          return (
+            <Button
+              key={value}
+              type="button"
+              variant={filter === value ? "secondary" : "ghost"}
+              size="sm"
+              aria-pressed={filter === value}
+              onClick={() => setFilter(value)}
+              className="gap-2"
+            >
+              {t(`inbox.filters.${value}`)}
+              <span className="min-w-4 rounded-full bg-background/80 px-1 text-[10px] text-muted-foreground">
+                {count}
+              </span>
+            </Button>
+          );
+        })}
       </div>
 
       {failedSessionCount > 0 && (
@@ -311,22 +373,17 @@ export function InboxPage() {
         </div>
       )}
 
-      {assembling &&
-        lifecycleItems.length === 0 &&
-        items.length === 0 &&
-        commentInbox.items.length === 0 && (
-          <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
-            <Loader2Icon className="size-4 animate-spin" />
-            {t("inbox.loading")}
-          </div>
-        )}
+      {assembling && totalItemCount === 0 && (
+        <div className="flex items-center gap-2 py-12 text-sm text-muted-foreground">
+          <Loader2Icon className="size-4 animate-spin" />
+          {t("inbox.loading")}
+        </div>
+      )}
 
       {!assembling &&
         failedSessionCount === 0 &&
         !persistentInbox.isError &&
-        lifecycleItems.length === 0 &&
-        items.length === 0 &&
-        commentInbox.items.length === 0 && (
+        totalItemCount === 0 && (
           <div className="flex flex-col items-center gap-2 py-16 text-center">
             <InboxIcon className="size-8 text-muted-foreground/50" />
             <p className="text-sm font-medium">{t("inbox.emptyTitle")}</p>
@@ -334,14 +391,19 @@ export function InboxPage() {
           </div>
         )}
 
+      {!assembling && totalItemCount > 0 && visibleItemCount === 0 && (
+        <div className="flex flex-col items-center gap-2 py-16 text-center">
+          <InboxIcon className="size-8 text-muted-foreground/50" />
+          <p className="text-sm text-muted-foreground">{t("inbox.filteredEmpty")}</p>
+        </div>
+      )}
+
       <div className="flex flex-col gap-6">
-        {(lifecycleGroups.actionRequired.length > 0 ||
-          items.length > 0 ||
-          commentInbox.items.length > 0) && (
+        {(filter === "all" || filter === "actionRequired") && filterCounts.actionRequired > 0 && (
           <InboxGroupSection
             group="actionRequired"
             title={t("inbox.groups.actionRequired")}
-            count={lifecycleGroups.actionRequired.length + items.length + commentInbox.items.length}
+            count={filterCounts.actionRequired}
           >
             {renderLifecycleItems("actionRequired")}
             {items.map((item, index) => {
@@ -396,6 +458,12 @@ export function InboxPage() {
                       )}
                     </button>
                     <span className="flex shrink-0 items-center gap-2">
+                      {persistentNotification?.read_at === null && (
+                        <span
+                          aria-label={t("inbox.unreadIndicator")}
+                          className="size-2 rounded-full bg-destructive"
+                        />
+                      )}
                       {persistentNotification && (
                         <Button
                           variant="ghost"
@@ -478,6 +546,10 @@ export function InboxPage() {
                         <span className="font-mono text-xs">{comment.path}</span>
                       </span>
                       <span className="ml-auto flex shrink-0 items-center gap-2">
+                        <span
+                          aria-label={t("inbox.unreadIndicator")}
+                          className="size-2 rounded-full bg-destructive"
+                        />
                         <span className="text-xs text-muted-foreground">
                           {/* created_at is epoch seconds; relativeTime takes ms. */}
                           {relativeTime(comment.created_at * 1000)}
@@ -512,6 +584,7 @@ export function InboxPage() {
         )}
         {(["progress", "completed", "failed"] as const).map(
           (group) =>
+            (filter === "all" || filter === group) &&
             lifecycleGroups[group].length > 0 && (
               <InboxGroupSection
                 key={group}
@@ -523,13 +596,12 @@ export function InboxPage() {
               </InboxGroupSection>
             ),
         )}
-        {assembling &&
-          (lifecycleItems.length > 0 || items.length > 0 || commentInbox.items.length > 0) && (
-            <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-              <Loader2Icon className="size-3.5 animate-spin" />
-              {t("inbox.checkingRemaining")}
-            </div>
-          )}
+        {assembling && totalItemCount > 0 && (
+          <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+            <Loader2Icon className="size-3.5 animate-spin" />
+            {t("inbox.checkingRemaining")}
+          </div>
+        )}
       </div>
     </PageScroll>
   );
@@ -596,7 +668,12 @@ function PersistentLifecycleCard({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium">{t(`inbox.lifecycleKinds.${item.kind}`)}</h3>
-          {item.read_at === null && <span className="size-1.5 rounded-full bg-foreground" />}
+          {item.read_at === null && (
+            <span
+              aria-label={t("inbox.unreadIndicator")}
+              className="size-2 rounded-full bg-destructive"
+            />
+          )}
         </div>
         {item.message && (
           <p className="mt-1 truncate text-sm text-muted-foreground">{item.message}</p>

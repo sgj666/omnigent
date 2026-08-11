@@ -132,7 +132,7 @@ export function collectCommentInboxItems(
 export function sumPendingApprovals(rows: Conversation[]): number {
   let total = 0;
   for (const row of rows) {
-    if (row.archived) continue;
+    if (row.archived || row.parent_session_id != null) continue;
     total += row.pending_elicitations_count ?? 0;
   }
   return total;

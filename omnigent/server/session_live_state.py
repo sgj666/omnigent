@@ -86,6 +86,14 @@ _last_status: dict[str, str] = {}
 _last_pending: dict[str, int] = {}
 
 
+def _is_worker_session(session_id: str | None) -> bool:
+    """Return whether *session_id* belongs to a child/worker Session."""
+    if _store is None or session_id is None:
+        return False
+    conversation = _store.get_conversation(session_id)
+    return conversation is not None and conversation.parent_conversation_id is not None
+
+
 def configure(
     store: ConversationStore | None,
     scheduled_task_store: ScheduledTaskStore | None = None,
@@ -305,6 +313,8 @@ def persist_work_item_run_status(
         if inbox_store is None:
             return
         if run is not None:
+            if _is_worker_session(session_id):
+                return
             kind = {
                 "waiting": "task_waiting",
                 "succeeded": "task_succeeded",
@@ -332,7 +342,7 @@ def persist_work_item_run_status(
         if response_id is None or state not in {"succeeded", "failed"} or _store is None:
             return
         conversation = _store.get_conversation(session_id)
-        if conversation is None:
+        if conversation is None or conversation.parent_conversation_id is not None:
             return
         owner = _store.get_session_owner(session_id)
         _create_inbox_item(
@@ -396,6 +406,8 @@ def persist_work_item_run_cancelled(session_id: str) -> None:
             if _work_item_store is not None
             else None
         )
+        if _is_worker_session(session_id):
+            return
         _create_inbox_item(
             owner_user_id=run.owner_user_id,
             kind="task_cancelled",
@@ -497,6 +509,8 @@ def persist_inbox_elicitation(session_id: str, event: dict[str, object]) -> None
         params = event.get("params")
         message = params.get("message") if isinstance(params, dict) else None
         conversation = _store.get_conversation(session_id)
+        if conversation is not None and conversation.parent_conversation_id is not None:
+            return
         _create_inbox_item(
             owner_user_id=owner,
             kind="approval_required",
@@ -544,6 +558,8 @@ def persist_work_item_run_terminal(run: object) -> None:
 
     def _persist() -> None:
         _project_work_item_state(run, run.state.value)
+        if _is_worker_session(run.session_id):
+            return
         task = (
             _work_item_store.get(run.work_item_id, owner_user_id=run.owner_user_id)
             if _work_item_store is not None
