@@ -475,17 +475,23 @@ class WorktreeLeaseManager:
                 and (lease.workspace_id, lease.attempt_id) in self._hydrated_active_attempts
             )
         )
-        expired = tuple(
-            lease
-            for lease in candidates
-            if lease.status is LeaseStatus.RECOVERY_REQUIRED
-            or (lease.status is LeaseStatus.ACTIVE and now - lease.heartbeat_at >= self._ttl_s)
-        )
-        for lease in expired:
-            if lease.status is LeaseStatus.ACTIVE:
-                lease.status = LeaseStatus.EXPIRED
-        await self.stop_heartbeat(expired)
+        locks = self._lease_locks(candidates)
+        for lock in locks:
+            await lock.acquire()
         try:
+            expired = tuple(
+                lease
+                for lease in candidates
+                if lease.status is LeaseStatus.RECOVERY_REQUIRED
+                or (
+                    lease.status is LeaseStatus.ACTIVE
+                    and now - lease.heartbeat_at >= self._ttl_s
+                )
+            )
+            for lease in expired:
+                if lease.status is LeaseStatus.ACTIVE:
+                    lease.status = LeaseStatus.EXPIRED
+            await self.stop_heartbeat(expired)
             await self._release_locked(host_registry, host_conn, expired)
         except Exception:
             for lease in expired:
@@ -493,6 +499,9 @@ class WorktreeLeaseManager:
                     lease.status = LeaseStatus.RECOVERY_REQUIRED
                     self._mark_recovery_required(lease)
             raise
+        finally:
+            for lock in reversed(locks):
+                lock.release()
         return expired
 
     async def _release(
@@ -525,8 +534,8 @@ class WorktreeLeaseManager:
 
     def _lease_locks(self, records: Iterable[WorktreeLease]) -> list[asyncio.Lock]:
         return [
-            self._locks.setdefault((lease.host_id, lease.repo_path), asyncio.Lock())
-            for lease in sorted(records, key=lambda item: (item.host_id, item.repo_path))
+            self._locks.setdefault(key, asyncio.Lock())
+            for key in sorted({(lease.host_id, lease.repo_path) for lease in records})
         ]
 
     async def _release_locked(
