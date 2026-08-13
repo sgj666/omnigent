@@ -243,6 +243,34 @@ describe("MultiAgentDetailPage", () => {
     expect(screen.getByRole("tab", { name: "Advanced YAML" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Connect Feishu" })).toBeVisible();
     expect(screen.getByText("Not connected")).toBeVisible();
+    expect(screen.queryByTestId("delivery-workflow")).not.toBeInTheDocument();
+  });
+
+  it("shows the configured delivery workflow as read-only bundle metadata", () => {
+    const data = copyDraft();
+    const coordinatorData = data.coordinator!.data;
+    if (
+      coordinatorData === null ||
+      typeof coordinatorData !== "object" ||
+      Array.isArray(coordinatorData)
+    ) {
+      throw new Error("expected coordinator data to be an object");
+    }
+    data.coordinator!.data = {
+      ...coordinatorData,
+      delivery_workflow: {
+        profile: "zhuanspec-development",
+        role: "coordinator",
+      },
+    };
+    hooks.detail.mockReturnValue({ data, isLoading: false, isError: false });
+
+    renderPage();
+
+    const workflow = screen.getByTestId("delivery-workflow");
+    expect(workflow).toHaveTextContent("Development workflow profile");
+    expect(workflow).toHaveTextContent("ZhuanSpec development");
+    expect(workflow).toHaveTextContent("Coordinator");
   });
 
   it("selects repository Skills and preserves configured names missing from the inventory", async () => {

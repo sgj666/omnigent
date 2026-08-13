@@ -68,7 +68,19 @@ tools:
 params:                       # arbitrary key-value; readable by skills and tools
   max_results: 10             # not interpreted by the runtime
   prefer_recent: true
+
+delivery_workflow:            # optional; enables a profile-scoped Run workflow
+  profile: zhuanspec-development
+  role: coordinator
 ```
+
+### `delivery_workflow`
+
+This optional declaration enables the development-delivery state machine for a
+root Coordinator. The supported v1 combination is
+`profile: zhuanspec-development` with `role: coordinator`. Omitting the block
+preserves ordinary Agent and Run behavior. Sub-agents do not inherit this
+declaration or its delivery-control tools.
 
 ### `interaction` axes
 

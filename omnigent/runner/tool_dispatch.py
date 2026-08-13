@@ -363,6 +363,15 @@ _SCHEDULED_TASK_TOOLS = frozenset(
 
 _WORK_ITEM_TOOLS = frozenset({"sys_work_item_create"})
 
+_DELIVERY_WORKFLOW_TOOLS = frozenset(
+    {
+        "delivery_get_state",
+        "delivery_put_plan",
+        "delivery_register_artifact",
+        "delivery_transition",
+    }
+)
+
 # Priority 5m: Embedded-browser tools.
 # Runner dispatch POSTs a blocking action request to the server, which parks a
 # Future + publishes ``browser.action_request`` on the session stream; the
@@ -423,6 +432,7 @@ _NATIVE_RELAY_BUILTIN_TOOLS = (
     | _POLICY_TOOLS
     | _SCHEDULED_TASK_TOOLS
     | _WORK_ITEM_TOOLS
+    | _DELIVERY_WORKFLOW_TOOLS
     | _TERMINAL_TOOLS
     # ``browser_*`` must ride the native relay: the Omnigent desktop app
     # runs native (claude/codex/pi) sessions, which ignore ``request.tools``
@@ -595,6 +605,7 @@ _ALL_LOCAL_TOOLS = (
     | _POLICY_TOOLS
     | _SCHEDULED_TASK_TOOLS
     | _WORK_ITEM_TOOLS
+    | _DELIVERY_WORKFLOW_TOOLS
 )
 _PLACEHOLDER_CWDS = (None, "", ".", "./")
 
@@ -3432,6 +3443,81 @@ async def _execute_work_item_tool(
     return json.dumps(response.json())
 
 
+_DELIVERY_PLAN_FIELDS = ("expected_version", "tasks")
+_DELIVERY_ARTIFACT_FIELDS = (
+    "kind",
+    "location",
+    "content_sha256",
+    "planned_task_id",
+    "metadata",
+)
+_DELIVERY_TRANSITION_FIELDS = (
+    "expected_phase",
+    "expected_version",
+    "to_phase",
+    "to_status",
+    "idempotency_key",
+    "evidence_refs",
+)
+
+
+async def _execute_delivery_workflow_tool(
+    tool_name: str,
+    args: _JsonObject,
+    *,
+    server_client: httpx.AsyncClient | None,
+    agent_spec: AgentSpec | None,
+    agent_id: str | None,
+    conversation_id: str | None,
+) -> str:
+    """Proxy ZhuanSpec coordinator state operations to the Run API."""
+    workflow = agent_spec.delivery_workflow if agent_spec is not None else None
+    if (
+        workflow is None
+        or workflow.profile != "zhuanspec-development"
+        or workflow.role != "coordinator"
+    ):
+        return json.dumps({"error": f"{tool_name} is only available to the coordinator"})
+    if server_client is None:
+        return json.dumps({"error": f"{tool_name} requires server access"})
+    if agent_id is None:
+        return json.dumps({"error": f"{tool_name} requires an Agent identity"})
+    if conversation_id is None:
+        return json.dumps({"error": f"{tool_name} requires a Session identity"})
+    base_url = "/v1/delivery-workflow"
+    headers = {
+        "X-Orvia-Workflow-Agent-Id": agent_id,
+        "X-Orvia-Workflow-Session-Id": conversation_id,
+    }
+    try:
+        if tool_name == "delivery_get_state":
+            response = await server_client.get(base_url, headers=headers, timeout=30.0)
+        elif tool_name == "delivery_put_plan":
+            payload = {key: args[key] for key in _DELIVERY_PLAN_FIELDS if key in args}
+            response = await server_client.put(
+                f"{base_url}/plan", json=payload, headers=headers, timeout=30.0
+            )
+        elif tool_name == "delivery_register_artifact":
+            payload = {key: args[key] for key in _DELIVERY_ARTIFACT_FIELDS if key in args}
+            response = await server_client.post(
+                f"{base_url}/artifacts", json=payload, headers=headers, timeout=30.0
+            )
+        elif tool_name == "delivery_transition":
+            payload = {key: args[key] for key in _DELIVERY_TRANSITION_FIELDS if key in args}
+            response = await server_client.post(
+                f"{base_url}/transitions", json=payload, headers=headers, timeout=30.0
+            )
+        else:  # pragma: no cover - caller routes only known names
+            return json.dumps({"error": f"unknown delivery workflow tool {tool_name!r}"})
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": f"{tool_name} failed: {exc}"})
+    if response.status_code >= 400:
+        return json.dumps(
+            {"error": f"server returned {response.status_code}", "details": response.text[:500]}
+        )
+    return json.dumps(response.json())
+
+
 @dataclass
 class _ParsedTitle:
     """
@@ -5000,6 +5086,15 @@ async def execute_tool(
             output = await _execute_work_item_tool(
                 arguments,
                 server_client=server_client,
+                agent_id=agent_id,
+                conversation_id=conversation_id,
+            )
+        elif tool_name in _DELIVERY_WORKFLOW_TOOLS:
+            output = await _execute_delivery_workflow_tool(
+                tool_name,
+                args,
+                server_client=server_client,
+                agent_spec=agent_spec,
                 agent_id=agent_id,
                 conversation_id=conversation_id,
             )

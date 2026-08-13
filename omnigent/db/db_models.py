@@ -2049,6 +2049,165 @@ class SqlRunTask(OmnigentBase):
     )
 
 
+class SqlDeliveryRun(OmnigentBase):
+    """Profile-scoped delivery state attached to one runtime Run."""
+
+    __tablename__ = "delivery_runs"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    runtime_run_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    phase: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "profile_id",
+            "owner_user_id",
+            "runtime_run_id",
+            name="uq_delivery_runs_profile_owner_runtime",
+        ),
+        Index(
+            "ix_delivery_runs_profile_owner_status",
+            "workspace_id",
+            "profile_id",
+            "owner_user_id",
+            "status",
+            "updated_at",
+            "id",
+        ),
+        CheckConstraint("version >= 1", name="ck_delivery_runs_version_positive"),
+    )
+
+
+class SqlDeliveryPlannedTask(OmnigentBase):
+    """A coordinator-authored unit in a delivery plan."""
+
+    __tablename__ = "delivery_planned_tasks"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    delivery_run_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    task_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    owner_role: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    depends_on: Mapped[str] = mapped_column(Text, nullable=False)
+    artifact_requirements: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "delivery_run_id",
+            "task_key",
+            name="uq_delivery_planned_tasks_run_key",
+        ),
+        Index(
+            "ix_delivery_planned_tasks_run",
+            "workspace_id",
+            "delivery_run_id",
+            "status",
+            "task_key",
+        ),
+    )
+
+
+class SqlDeliveryArtifact(OmnigentBase):
+    """Registered evidence produced during a delivery run."""
+
+    __tablename__ = "delivery_artifacts"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    delivery_run_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    planned_task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    kind: Mapped[str] = mapped_column(String(128), nullable=False)
+    location: Mapped[str] = mapped_column(String(2048), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_delivery_artifacts_run",
+            "workspace_id",
+            "delivery_run_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+
+class SqlDeliveryTransition(OmnigentBase):
+    """Immutable evidence-backed delivery state transition."""
+
+    __tablename__ = "delivery_transitions"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    id: Mapped[str] = mapped_column(Uuid16(), primary_key=True)
+    delivery_run_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    from_phase: Mapped[str] = mapped_column(String(32), nullable=False)
+    to_phase: Mapped[str] = mapped_column(String(32), nullable=False)
+    from_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    to_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    expected_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    result_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    evidence_refs: Mapped[str] = mapped_column(Text, nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "profile_id",
+            "delivery_run_id",
+            "idempotency_key",
+            name="uq_delivery_transitions_idempotency",
+        ),
+        Index(
+            "ix_delivery_transitions_run",
+            "workspace_id",
+            "delivery_run_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+
 class SqlTaskDependency(OmnigentBase):
     """An application-owned directed dependency between run tasks."""
 

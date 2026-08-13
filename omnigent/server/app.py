@@ -29,6 +29,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from omnigent._platform import resolve_repo_symlink
 from omnigent.agent_bundles.service import AgentBundleService
 from omnigent.db.db_models import InvalidUuidError
+from omnigent.delivery_workflow import DeliveryWorkflowService
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.evaluation.service import RunEvaluationService
 from omnigent.harness_plugins import (
@@ -70,6 +71,7 @@ from omnigent.server.routes.agent_bundles import create_agent_bundles_router
 from omnigent.server.routes.builtin_agents import create_builtin_agents_router
 from omnigent.server.routes.comments import create_comments_router
 from omnigent.server.routes.default_policies import create_default_policies_router
+from omnigent.server.routes.delivery_workflows import create_delivery_workflows_router
 from omnigent.server.routes.dictation import create_dictation_router
 from omnigent.server.routes.feishu_proxy import create_feishu_proxy_router
 from omnigent.server.routes.harnesses import create_harnesses_router
@@ -122,6 +124,7 @@ from omnigent.stores import (
 )
 from omnigent.stores.comment_store import CommentStore
 from omnigent.stores.conversation_store import SessionConnectivity, runner_seen_is_fresh
+from omnigent.stores.delivery_workflow_store import SqlAlchemyDeliveryWorkflowStore
 from omnigent.stores.evaluation_store.sqlalchemy_store import SqlAlchemyEvaluationStore
 from omnigent.stores.host_store import HostStore
 from omnigent.stores.inbox_item_store import InboxItemStore
@@ -972,6 +975,12 @@ def create_app(
     # a small local state boundary.
     team_store = team_store or SqlAlchemyTeamWorkspaceStore(agent_store.storage_location)
     run_store = SqlAlchemyRunStore(agent_store.storage_location)
+    delivery_workflow_store = SqlAlchemyDeliveryWorkflowStore(agent_store.storage_location)
+    delivery_workflow_service = DeliveryWorkflowService(
+        delivery_workflow_store,
+        run_store,
+        agent_cache,
+    )
     run_projection = SessionRunProjection(run_store)
     conversation_store.run_projection = run_projection
 
@@ -2224,6 +2233,14 @@ def create_app(
         ),
         prefix="/v1",
         tags=["runs"],
+    )
+    app.include_router(
+        create_delivery_workflows_router(
+            delivery_workflow_service,
+            auth_provider=auth_provider,
+        ),
+        prefix="/v1",
+        tags=["delivery_workflows"],
     )
     app.include_router(
         create_run_evaluations_router(

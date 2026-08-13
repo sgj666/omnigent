@@ -23,6 +23,16 @@ from omnigent.entities.conversation import (
     parse_item_data,
     synthesize_conversation_title,
 )
+from omnigent.entities.delivery_workflow import (
+    DeliveryArtifact,
+    DeliveryPhase,
+    DeliveryRun,
+    DeliveryStatus,
+    DeliveryTransition,
+    DeliveryWorkflowSnapshot,
+    PlannedTask,
+    PlannedTaskStatus,
+)
 from omnigent.entities.device_grant import DeviceGrant
 from omnigent.entities.feishu import (
     FeishuInstallation,
@@ -72,6 +82,12 @@ __all__ = [
     "CompactionData",
     "Conversation",
     "ConversationItem",
+    "DeliveryArtifact",
+    "DeliveryPhase",
+    "DeliveryRun",
+    "DeliveryStatus",
+    "DeliveryTransition",
+    "DeliveryWorkflowSnapshot",
     "DeviceGrant",
     "ErrorData",
     "FeishuInstallation",
@@ -87,6 +103,8 @@ __all__ = [
     "NativeToolData",
     "NewConversationItem",
     "PagedList",
+    "PlannedTask",
+    "PlannedTaskStatus",
     "Policy",
     "Project",
     "ReasoningData",

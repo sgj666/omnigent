@@ -1385,6 +1385,14 @@ class GuardrailsSpec:
     ask_timeout: int = DEFAULT_ASK_TIMEOUT
 
 
+@dataclass(frozen=True)
+class DeliveryWorkflowSpec:
+    """Optional development-delivery workflow declaration."""
+
+    profile: str
+    role: str
+
+
 @dataclass
 class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (see below)
     """
@@ -1504,6 +1512,8 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
         ``non-public`` (grant named users only), or ``public`` (also
         allow ``__public__`` anonymous read). **Defaults to
         ``SharePolicy.NONE``.**
+    :param delivery_workflow: Optional declarative delivery workflow
+        metadata. ``None`` preserves the behavior of existing agents.
     """
 
     spec_version: int
@@ -1550,3 +1560,4 @@ class AgentSpec:  # type: ignore[explicit-any]  # params: dict[str, Any] field (
     timers: bool = False
     spawn: bool = False
     agent_session_sharing: SharePolicy = SharePolicy.NONE
+    delivery_workflow: DeliveryWorkflowSpec | None = None

@@ -19,6 +19,7 @@ from omnigent.spec.types import SharePolicy, ToolRuntime
 from omnigent.tools._srt import is_srt_available
 from omnigent.tools.base import Tool, ToolContext, is_valid_tool_name
 from omnigent.tools.builtins import (
+    DELIVERY_WORKFLOW_TOOLS,
     ListCommentsTool,
     LoadSkillTool,
     ReadSkillFileTool,
@@ -194,6 +195,7 @@ class ToolManager:
         # manage recurring runs at runtime without the spec opting in.
         self._register_scheduled_task_tools()
         self._register_work_item_tools()
+        self._register_delivery_workflow_tools()
         # Embedded-browser tools are always auto-registered so any agent
         # can drive the desktop app's browser without the spec opting in
         # (framework-owned).
@@ -234,6 +236,19 @@ class ToolManager:
         """Expose explicit, user-directed Task creation to every Agent."""
         tool = SysWorkItemCreateTool()
         self._tools[tool.name()] = tool
+
+    def _register_delivery_workflow_tools(self) -> None:
+        """Expose delivery controls only to the ZhuanSpec coordinator."""
+        workflow = self._spec.delivery_workflow
+        if (
+            workflow is None
+            or workflow.profile != "zhuanspec-development"
+            or workflow.role != "coordinator"
+        ):
+            return
+        for tool_type in DELIVERY_WORKFLOW_TOOLS:
+            tool = tool_type()
+            self._tools[tool.name()] = tool
 
     def _register_async_inbox_tools(self) -> None:
         """

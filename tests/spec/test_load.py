@@ -43,6 +43,59 @@ def test_load_from_directory(agent_dir: Path) -> None:
     spec = load(agent_dir)
     assert spec.name == "test-agent"
     assert spec.spec_version == 1
+    assert spec.delivery_workflow is None
+
+
+def test_load_delivery_workflow(agent_dir: Path) -> None:
+    config_path = agent_dir / "config.yaml"
+    config = yaml.safe_load(config_path.read_text())
+    config["delivery_workflow"] = {
+        "profile": "zhuanspec-development",
+        "role": "coordinator",
+    }
+    config_path.write_text(yaml.safe_dump(config))
+
+    spec = load(agent_dir)
+
+    assert spec.delivery_workflow is not None
+    assert spec.delivery_workflow.profile == "zhuanspec-development"
+    assert spec.delivery_workflow.role == "coordinator"
+
+
+@pytest.mark.parametrize(
+    ("delivery_workflow", "expected_error"),
+    [
+        (
+            {"profile": "other", "role": "coordinator"},
+            "delivery_workflow.profile: must be 'zhuanspec-development'",
+        ),
+        (
+            {"profile": "zhuanspec-development", "role": "worker"},
+            "delivery_workflow.role: must be 'coordinator'",
+        ),
+    ],
+)
+def test_rejects_unsupported_delivery_workflow(
+    agent_dir: Path,
+    delivery_workflow: dict[str, str],
+    expected_error: str,
+) -> None:
+    config_path = agent_dir / "config.yaml"
+    config = yaml.safe_load(config_path.read_text())
+    config["delivery_workflow"] = delivery_workflow
+    config_path.write_text(yaml.safe_dump(config))
+
+    with pytest.raises(OmnigentError, match=expected_error):
+        load(agent_dir)
+
+
+@pytest.mark.parametrize("example", ["polly", "debby"])
+def test_existing_multi_agent_examples_leave_delivery_workflow_unset(example: str) -> None:
+    example_dir = Path(__file__).resolve().parents[2] / "examples" / example
+
+    spec = load(example_dir)
+
+    assert spec.delivery_workflow is None
 
 
 def test_load_from_tarball(tmp_path: Path) -> None:

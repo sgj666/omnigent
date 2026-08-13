@@ -31,6 +31,7 @@ from omnigent.spec.types import (
     BuiltinToolConfig,
     CompactionConfig,
     DatabricksAuth,
+    DeliveryWorkflowSpec,
     ExecutorSpec,
     FunctionPolicySpec,
     FunctionRef,
@@ -272,6 +273,7 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
     # granting named users; ``public`` also allows ``__public__``
     # anonymous read.
     agent_session_sharing = _parse_share_policy(raw.get("agent_session_sharing"))
+    delivery_workflow = _parse_delivery_workflow(raw.get("delivery_workflow"))
 
     # Honor ``prompt:`` as the legacy alias for ``instructions:`` (per
     # ``_OMNIGENT_SYSTEM_PROMPT_KEYS``); ``instructions:`` wins if both set.
@@ -309,7 +311,31 @@ def parse(root: Path, *, expand_env: bool = True) -> AgentSpec:
         timers=timers,
         spawn=spawn,
         agent_session_sharing=agent_session_sharing,
+        delivery_workflow=delivery_workflow,
     )
+
+
+def _parse_delivery_workflow(raw: object) -> DeliveryWorkflowSpec | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise OmnigentError(
+            f"delivery_workflow must be a mapping, got {type(raw).__name__}",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    profile = raw.get("profile")
+    role = raw.get("role")
+    if not isinstance(profile, str):
+        raise OmnigentError(
+            "delivery_workflow.profile must be a string",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if not isinstance(role, str):
+        raise OmnigentError(
+            "delivery_workflow.role must be a string",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    return DeliveryWorkflowSpec(profile=profile, role=role)
 
 
 def _parse_llm(

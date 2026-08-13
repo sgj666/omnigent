@@ -39,6 +39,15 @@ class BundleTools(BaseModel):
     retry: Any | None = None
 
 
+class BundleDeliveryWorkflow(BaseModel):
+    """Supported development-delivery workflow declaration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    profile: Literal["zhuanspec-development"]
+    role: Literal["coordinator"]
+
+
 class BundleConfig(BaseModel):
     """Structured AgentSpec fields; unknown YAML keys round-trip as extras."""
 
@@ -68,6 +77,7 @@ class BundleConfig(BaseModel):
     timers: Any | None = None
     agent_session_sharing: Any | None = None
     params: Any | None = None
+    delivery_workflow: BundleDeliveryWorkflow | None = None
 
 
 class BundleCardResponse(BaseModel):
@@ -297,6 +307,7 @@ _FIELD_EDITORS = {
     "async": "tri-state",
     "timers": "tri-state",
     "spawn": "tri-state",
+    "delivery_workflow": "generic-tree",
 }
 
 
@@ -328,7 +339,14 @@ def build_bundle_form_schema() -> BundleFormSchemaResponse:
                 type=field_type,
                 group=(
                     "runtime"
-                    if name in {"async", "timers", "spawn", "agent_session_sharing"}
+                    if name
+                    in {
+                        "async",
+                        "timers",
+                        "spawn",
+                        "agent_session_sharing",
+                        "delivery_workflow",
+                    }
                     else name
                 ),
                 required=name in required,

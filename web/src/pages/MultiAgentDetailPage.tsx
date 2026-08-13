@@ -59,6 +59,7 @@ import {
   type AgentBundleValue,
   type AgentFormSchema,
   type BundleDiagnostic,
+  type DeliveryWorkflowConfig,
   type WorkerOperation,
 } from "@/lib/multiAgentApi";
 import { Link, useNavigate, useParams } from "@/lib/routing";
@@ -80,6 +81,15 @@ function bundledSkillNames(configPath: string, files: AgentBundleFile[]): string
     .map((path) => path.slice(prefix.length, -"/SKILL.md".length))
     .filter((name) => name.length > 0 && !name.includes("/"))
     .sort();
+}
+
+function deliveryWorkflow(file: AgentBundleFile | null): DeliveryWorkflowConfig | null {
+  const data = file?.data;
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return null;
+  const value = data.delivery_workflow;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  if (value.profile !== "zhuanspec-development" || value.role !== "coordinator") return null;
+  return { profile: value.profile, role: value.role };
 }
 
 function AgentActivityPanel({ agentId }: { agentId: string }) {
@@ -584,6 +594,7 @@ export function MultiAgentDetailPage() {
     null;
   const previewHostId = previewHost?.host_id ?? null;
   const previewHarness = modelPreviewHarness(selected?.visual.harness ?? "");
+  const configuredDeliveryWorkflow = deliveryWorkflow(bundle.data?.coordinator ?? null);
   const hostModels = useHostModelOptions(
     previewHostId,
     previewHarness ?? "",
@@ -946,6 +957,20 @@ export function MultiAgentDetailPage() {
                 <p className="mt-2 font-mono text-xs text-muted-foreground">
                   v{bundle.data.version} · {bundle.data.digest}
                 </p>
+                {configuredDeliveryWorkflow && (
+                  <div
+                    data-testid="delivery-workflow"
+                    className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+                  >
+                    <span>{t("deliveryWorkflow.label")}</span>
+                    <Badge variant="outline">
+                      {t(`deliveryWorkflow.profiles.${configuredDeliveryWorkflow.profile}`)}
+                    </Badge>
+                    <Badge variant="secondary">
+                      {t(`deliveryWorkflow.roles.${configuredDeliveryWorkflow.role}`)}
+                    </Badge>
+                  </div>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge

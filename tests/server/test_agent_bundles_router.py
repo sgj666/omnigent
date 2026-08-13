@@ -30,8 +30,16 @@ def _detail(version: int = 1) -> BundleDetail:
     card = BundleCard("agent-1", "editor", "desc", version, "a" * 64, False)
     coordinator = BundleAgentView(
         "editor",
-        {"name": "editor", "future": {"kept": True}},
-        "name: editor\nfuture: {kept: true}\n",
+        {
+            "name": "editor",
+            "future": {"kept": True},
+            "delivery_workflow": {
+                "profile": "zhuanspec-development",
+                "role": "coordinator",
+            },
+        },
+        "name: editor\nfuture: {kept: true}\ndelivery_workflow:\n"
+        "  profile: zhuanspec-development\n  role: coordinator\n",
     )
     worker = BundleAgentView("alpha", {"name": "alpha"}, "name: alpha\n")
     return BundleDetail(card, coordinator, (worker,))
@@ -122,6 +130,18 @@ def test_static_metadata_and_validate_routes_are_not_captured_as_agent_ids() -> 
     assert service.calls == [("validate", b"candidate")]
 
 
+def test_bundle_schema_exposes_delivery_workflow_contract() -> None:
+    client = _client(FakeService())
+
+    body = client.get("/v1/agent-bundles/schema").json()
+
+    field = next(item for item in body["fields"] if item["path"] == "/delivery_workflow")
+    assert field["type"] == "object"
+    workflow_schema = body["schema"]["$defs"]["BundleDeliveryWorkflow"]
+    assert workflow_schema["properties"]["profile"]["const"] == "zhuanspec-development"
+    assert workflow_schema["properties"]["role"]["const"] == "coordinator"
+
+
 def test_options_expose_skills_from_the_shared_inventory_reader() -> None:
     service = FakeService()
 
@@ -197,6 +217,9 @@ def test_crud_clone_import_and_export_routes_use_service_contract() -> None:
     assert client.get("/v1/agent-bundles/agent-1").json()["coordinator"]["config"]["future"] == {
         "kept": True
     }
+    assert client.get("/v1/agent-bundles/agent-1").json()["coordinator"]["config"][
+        "delivery_workflow"
+    ] == {"profile": "zhuanspec-development", "role": "coordinator"}
     assert (
         client.post(
             "/v1/agent-bundles",

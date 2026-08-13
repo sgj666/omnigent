@@ -245,6 +245,11 @@
       "digest": "摘要",
       "updated": "更新时间"
     },
+    "deliveryWorkflow": {
+      "label": "研发流程 Profile",
+      "profiles": { "zhuanspec-development": "ZhuanSpec 研发" },
+      "roles": { "coordinator": "协调者" }
+    },
     "fields": {
       "name": "名称",
       "description": "描述",

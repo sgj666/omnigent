@@ -5,6 +5,11 @@ export type AgentBundleValue =
 
 export type BundleValidationStatus = "valid" | "invalid" | "unknown";
 
+export interface DeliveryWorkflowConfig {
+  profile: "zhuanspec-development";
+  role: "coordinator";
+}
+
 export interface MultiAgentSummary {
   id: string;
   name: string;

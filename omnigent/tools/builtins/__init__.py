@@ -35,6 +35,13 @@ from omnigent.tools.builtins.async_inbox import (
     SysCancelAsyncTool,
     SysReadInboxTool,
 )
+from omnigent.tools.builtins.delivery_workflow import (
+    DELIVERY_WORKFLOW_TOOLS,
+    DeliveryGetStateTool,
+    DeliveryPutPlanTool,
+    DeliveryRegisterArtifactTool,
+    DeliveryTransitionTool,
+)
 from omnigent.tools.builtins.list_comments import ListCommentsTool
 from omnigent.tools.builtins.list_models import SysListModelsTool
 from omnigent.tools.builtins.load_skill import (
@@ -73,7 +80,12 @@ from omnigent.tools.builtins.work_items import SysWorkItemCreateTool
 
 __all__ = [
     "BUILTIN_NAMES",
+    "DELIVERY_WORKFLOW_TOOLS",
     "INSTANTIABLE_BUILTINS",
+    "DeliveryGetStateTool",
+    "DeliveryPutPlanTool",
+    "DeliveryRegisterArtifactTool",
+    "DeliveryTransitionTool",
     "ListCommentsTool",
     "LoadSkillTool",
     "ReadSkillFileTool",
@@ -287,6 +299,12 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "browser_click": None,
     "browser_type": None,
     "browser_screenshot": None,
+    # Profile-scoped delivery tools are registered only for the
+    # ZhuanSpec coordinator by ToolManager.
+    "delivery_get_state": None,
+    "delivery_put_plan": None,
+    "delivery_register_artifact": None,
+    "delivery_transition": None,
 }
 
 # Hindsight long-term memory (optional ``hindsight`` extra). Registered only

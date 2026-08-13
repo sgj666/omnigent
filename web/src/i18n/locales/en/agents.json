@@ -245,6 +245,11 @@
       "digest": "Digest",
       "updated": "Updated"
     },
+    "deliveryWorkflow": {
+      "label": "Development workflow profile",
+      "profiles": { "zhuanspec-development": "ZhuanSpec development" },
+      "roles": { "coordinator": "Coordinator" }
+    },
     "fields": {
       "name": "Name",
       "description": "Description",

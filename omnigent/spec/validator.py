@@ -84,6 +84,7 @@ def validate(spec: AgentSpec) -> ValidationResult:
     """
     result = ValidationResult()
     _validate_spec_version(spec, result)
+    _validate_delivery_workflow(spec, result)
     _validate_executor_type(spec, result)
     _validate_llm(spec, result)
     _validate_interaction(spec, result)
@@ -94,6 +95,19 @@ def validate(spec: AgentSpec) -> ValidationResult:
     _validate_compaction(spec, result)
     _validate_os_env(spec, result)
     return result
+
+
+def _validate_delivery_workflow(spec: AgentSpec, result: ValidationResult) -> None:
+    workflow = spec.delivery_workflow
+    if workflow is None:
+        return
+    if workflow.profile != "zhuanspec-development":
+        result.add(
+            "delivery_workflow.profile",
+            "must be 'zhuanspec-development'",
+        )
+    if workflow.role != "coordinator":
+        result.add("delivery_workflow.role", "must be 'coordinator'")
 
 
 def _validate_spec_version(spec: AgentSpec, result: ValidationResult) -> None:
