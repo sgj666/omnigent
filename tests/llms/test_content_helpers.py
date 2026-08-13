@@ -2,7 +2,11 @@
 
 import pytest
 
-from omnigent.llms.adapters._content import parse_data_uri, redact_inline_data_uris
+from omnigent.llms.adapters._content import (
+    parse_data_uri,
+    redact_binary_payloads,
+    redact_inline_data_uris,
+)
 
 
 def test_parse_data_uri_png() -> None:
@@ -104,3 +108,30 @@ def test_redact_inline_data_uris_preserves_following_prose() -> None:
     assert redact_inline_data_uris(value, lambda media_type, size: f"[{media_type}:{size}]") == (
         "preview [image/png:4] then describe the screenshot"
     )
+
+
+def test_redact_binary_payloads_handles_nested_source_without_mutation() -> None:
+    """Anthropic image blocks lose only their nested base64 payload."""
+    value = {
+        "type": "tool_result",
+        "content": [
+            {
+                "type": "image",
+                "file_id": "file_1",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "QUJDRA==",
+                },
+            }
+        ],
+    }
+
+    redacted = redact_binary_payloads(
+        value,
+        lambda media_type, size: f"[{media_type}:{size}]",
+    )
+
+    assert redacted["content"][0]["source"]["data"] == "[image/png:8]"
+    assert redacted["content"][0]["file_id"] == "file_1"
+    assert value["content"][0]["source"]["data"] == "QUJDRA=="

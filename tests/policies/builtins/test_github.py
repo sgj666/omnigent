@@ -800,6 +800,55 @@ def test_shell_gh_non_delete_write_unaffected() -> None:
     assert policy(_sh("gh issue create --repo octo/hello")) is None
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push --force https://github.com/octo/hello main",
+        "git push -f https://github.com/octo/hello main",
+        "git push -uf https://github.com/octo/hello main",
+        "git push --force-with-lease https://github.com/octo/hello main",
+        "git push https://github.com/octo/hello +main:main",
+    ],
+)
+def test_force_push_denied_by_default(command: str) -> None:
+    policy = github_policy(write_repos=["octo/hello"])
+    result = policy(_sh(command))
+    assert result is not None and result["result"] == "DENY"
+    assert "force" in result.get("reason", "").lower()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push https://github.com/octo/hello --tags",
+        "git push https://github.com/octo/hello --follow-tags main",
+        "git push https://github.com/octo/hello refs/tags/v1.0",
+        "git push https://github.com/octo/hello refs/tags/v1.0:refs/tags/v1.0",
+    ],
+)
+def test_tag_push_denied_by_default(command: str) -> None:
+    policy = github_policy(write_repos=["octo/hello"])
+    result = policy(_sh(command))
+    assert result is not None and result["result"] == "DENY"
+    assert "tag" in result.get("reason", "").lower()
+
+
+def test_push_protections_can_be_opted_out_without_affecting_normal_push() -> None:
+    policy = github_policy(
+        write_repos=["octo/hello"],
+        deny_force_push=False,
+        deny_tag_push=False,
+    )
+    assert policy(_sh("git push https://github.com/octo/hello +main")) is None
+    assert policy(_sh("git push https://github.com/octo/hello --tags")) is None
+    assert (
+        github_policy(write_repos=["octo/hello"])(
+            _sh("git push https://github.com/octo/hello main")
+        )
+        is None
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Layer 2 — spec resolution through resolve_function_policy
 # ══════════════════════════════════════════════════════════════════════════════

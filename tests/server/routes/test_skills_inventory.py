@@ -11,7 +11,11 @@ from fastapi.testclient import TestClient
 
 from omnigent.errors import OmnigentError
 from omnigent.server.routes.skills import create_skills_router
-from omnigent.skills import SkillDraftStore
+from omnigent.skills import (
+    ConfigurableSkillRepositoryReader,
+    SkillDraftStore,
+    SqlAlchemySkillRepositoryConfigStore,
+)
 from omnigent.skills.reader import GitSkillRepositoryReader, SkillRepositoryUnavailable
 
 
@@ -261,3 +265,151 @@ def test_reader_accepts_non_secret_server_settings_with_environment_overrides(
     assert reader.token_env == "ORVIA_SKILLS_GIT_TOKEN"
     assert reader._username == "config-user"
     assert reader._token == "config-token"
+
+
+class _HeaderAuth:
+    def get_user_id(self, request) -> str | None:
+        return request.headers.get("X-Forwarded-Email")
+
+
+class _PermissionStore:
+    def __init__(self, admins: set[str]) -> None:
+        self.admins = admins
+
+    def is_admin(self, user_id: str) -> bool:
+        return user_id in self.admins
+
+
+def _configurable_reader(
+    tmp_path: Path,
+    remote: Path,
+) -> ConfigurableSkillRepositoryReader:
+    return ConfigurableSkillRepositoryReader(
+        SqlAlchemySkillRepositoryConfigStore(f"sqlite:///{tmp_path / 'config.db'}"),
+        cache_dir=tmp_path / "cache",
+        initial_settings={
+            "url": str(remote),
+            "ref": "skills-feature",
+            "path": "skills",
+            "username": "git-user",
+            "token": "old-secret-token",
+        },
+    )
+
+
+def test_repository_config_route_never_returns_token_and_saves_without_restart(
+    tmp_path: Path,
+) -> None:
+    remote, commit_sha = _make_remote(tmp_path)
+    reader = _configurable_reader(tmp_path, remote)
+    app = FastAPI()
+    app.include_router(
+        create_skills_router(reader, repository_manager=reader),
+        prefix="/v1",
+    )
+    client = TestClient(app)
+
+    configured = client.get("/v1/skills/repository-config")
+    assert configured.status_code == 200
+    assert configured.json() == {
+        "object": "skill_repository_config",
+        "url": str(remote),
+        "ref": "skills-feature",
+        "path": "skills",
+        "username": "git-user",
+        "token_configured": True,
+        "editable": True,
+        "source": "database",
+    }
+    assert "old-secret-token" not in configured.text
+
+    saved = client.put(
+        "/v1/skills/repository-config",
+        json={
+            "url": str(remote),
+            "ref": "skills-feature",
+            "path": "skills",
+            "username": "new-user",
+            "token": "new-secret-token",
+        },
+    )
+    assert saved.status_code == 200
+    assert saved.json()["inventory"]["source"]["commit_sha"] == commit_sha
+    assert saved.json()["config"]["username"] == "new-user"
+    assert "new-secret-token" not in saved.text
+    assert reader.get_config().token == "new-secret-token"
+
+    preserved = client.put(
+        "/v1/skills/repository-config",
+        json={
+            "url": str(remote),
+            "ref": "skills-feature",
+            "path": "skills",
+            "username": "final-user",
+        },
+    )
+    assert preserved.status_code == 200
+    assert reader.get_config().token == "new-secret-token"
+
+
+def test_repository_config_write_requires_admin_in_multi_user_mode(tmp_path: Path) -> None:
+    remote, _ = _make_remote(tmp_path)
+    reader = _configurable_reader(tmp_path, remote)
+    app = FastAPI()
+    app.include_router(
+        create_skills_router(
+            reader,
+            repository_manager=reader,
+            auth_provider=_HeaderAuth(),
+            permission_store=_PermissionStore({"admin@example.com"}),
+        ),
+        prefix="/v1",
+    )
+    client = TestClient(app)
+    payload = {
+        "url": str(remote),
+        "ref": "skills-feature",
+        "path": "skills",
+        "username": None,
+    }
+
+    with pytest.raises(OmnigentError) as denied:
+        client.put(
+            "/v1/skills/repository-config",
+            json=payload,
+            headers={"X-Forwarded-Email": "member@example.com"},
+        )
+    assert denied.value.code == "forbidden"
+
+    allowed = client.put(
+        "/v1/skills/repository-config",
+        json=payload,
+        headers={"X-Forwarded-Email": "admin@example.com"},
+    )
+    assert allowed.status_code == 200
+
+
+def test_repository_config_rejects_parent_path_without_changing_database(
+    tmp_path: Path,
+) -> None:
+    remote, _ = _make_remote(tmp_path)
+    reader = _configurable_reader(tmp_path, remote)
+    app = FastAPI()
+    app.include_router(
+        create_skills_router(reader, repository_manager=reader),
+        prefix="/v1",
+    )
+    client = TestClient(app)
+
+    with pytest.raises(OmnigentError) as invalid:
+        client.put(
+            "/v1/skills/repository-config",
+            json={
+                "url": str(remote),
+                "ref": "skills-feature",
+                "path": "../secrets",
+                "username": None,
+            },
+        )
+    assert invalid.value.code == "invalid_input"
+    assert reader.get_config().skills_path == "skills"

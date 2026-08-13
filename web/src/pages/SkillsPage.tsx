@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpenIcon,
@@ -19,11 +19,23 @@ import {
   StatusBadge,
 } from "@/components/collection";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Link, useSearchParams } from "@/lib/routing";
 import {
+  getSkillsRepositoryConfig,
   listSkills,
   syncSkills,
+  updateSkillsRepositoryConfig,
+  type SkillsRepositoryConfig,
+  type UpdateSkillsRepositoryConfig,
   type SkillRepositorySource,
   type SkillValidationStatus,
 } from "@/lib/skillsApi";
@@ -46,6 +58,7 @@ export function SkillsPage() {
   const { t } = useTranslation("management");
   const [params, setParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const [repositoryDialogOpen, setRepositoryDialogOpen] = useState(false);
   const inventory = useQuery({
     queryKey: ["skills"],
     queryFn: ({ signal }) => listSkills(signal),
@@ -56,6 +69,22 @@ export function SkillsPage() {
     onSuccess: (value) => {
       queryClient.setQueryData(["skills"], value);
       void queryClient.invalidateQueries({ queryKey: ["agent-bundle-options"] });
+    },
+  });
+  const repositoryConfig = useQuery({
+    queryKey: ["skills", "repository-config"],
+    queryFn: ({ signal }) => getSkillsRepositoryConfig(signal),
+    retry: false,
+  });
+  const updateRepository = useMutation({
+    mutationFn: updateSkillsRepositoryConfig,
+    onSuccess: (value) => {
+      queryClient.setQueryData(["skills", "repository-config"], value.config);
+      queryClient.setQueryData(["skills"], value.inventory);
+      queryClient.removeQueries({ queryKey: ["skills", "detail"] });
+      queryClient.removeQueries({ queryKey: ["skills", "draft"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-bundle-options"] });
+      setRepositoryDialogOpen(false);
     },
   });
   const search = params.get("q") ?? "";
@@ -118,7 +147,11 @@ export function SkillsPage() {
         />
       ) : inventory.data ? (
         <>
-          <RepositorySummary source={inventory.data.source} />
+          <RepositorySummary
+            source={inventory.data.source}
+            config={repositoryConfig.data}
+            onEdit={() => setRepositoryDialogOpen(true)}
+          />
           {sync.isError ? (
             <p role="alert" className="mt-3 text-sm text-destructive">
               {sync.error instanceof Error ? sync.error.message : t("skills.error")}
@@ -207,11 +240,33 @@ export function SkillsPage() {
           </div>
         </>
       ) : null}
+      {repositoryConfig.data ? (
+        <RepositoryConfigDialog
+          open={repositoryDialogOpen}
+          onOpenChange={setRepositoryDialogOpen}
+          config={repositoryConfig.data}
+          pending={updateRepository.isPending}
+          error={
+            updateRepository.isError && updateRepository.error instanceof Error
+              ? updateRepository.error.message
+              : null
+          }
+          onSubmit={(value) => updateRepository.mutate(value)}
+        />
+      ) : null}
     </PageScroll>
   );
 }
 
-function RepositorySummary({ source }: { source: SkillRepositorySource }) {
+function RepositorySummary({
+  source,
+  config,
+  onEdit,
+}: {
+  source: SkillRepositorySource;
+  config?: SkillsRepositoryConfig;
+  onEdit: () => void;
+}) {
   const { t } = useTranslation("management");
   return (
     <section
@@ -231,6 +286,11 @@ function RepositorySummary({ source }: { source: SkillRepositorySource }) {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {config?.editable ? (
+            <Button type="button" variant="outline" size="sm" onClick={onEdit}>
+              {t("skills.editRepository")}
+            </Button>
+          ) : null}
           <StatusBadge tone={syncTone(source.sync_status)}>
             {t(`skills.syncStatus.${source.sync_status}`)}
           </StatusBadge>
@@ -260,5 +320,160 @@ function RepositorySummary({ source }: { source: SkillRepositorySource }) {
       </dl>
       {source.error ? <p className="mt-3 text-xs text-warning">{source.error}</p> : null}
     </section>
+  );
+}
+
+function RepositoryConfigDialog({
+  open,
+  onOpenChange,
+  config,
+  pending,
+  error,
+  onSubmit,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  config: SkillsRepositoryConfig;
+  pending: boolean;
+  error: string | null;
+  onSubmit: (value: UpdateSkillsRepositoryConfig) => void;
+}) {
+  const { t } = useTranslation("management");
+  const [url, setUrl] = useState(config.url);
+  const [ref, setRef] = useState(config.ref);
+  const [path, setPath] = useState(config.path);
+  const [username, setUsername] = useState(config.username ?? "");
+  const [token, setToken] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setUrl(config.url);
+    setRef(config.ref);
+    setPath(config.path);
+    setUsername(config.username ?? "");
+    setToken("");
+  }, [config, open]);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const value: UpdateSkillsRepositoryConfig = {
+      url: url.trim(),
+      ref: ref.trim(),
+      path: path.trim(),
+      username: username.trim() || null,
+    };
+    if (token) value.token = token;
+    onSubmit(value);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t("skills.repositoryDialogTitle")}</DialogTitle>
+          <DialogDescription>{t("skills.repositoryDialogDescription")}</DialogDescription>
+        </DialogHeader>
+        <form className="space-y-4" onSubmit={submit}>
+          <RepositoryField
+            id="skills-repository-url"
+            label={t("skills.repositoryUrl")}
+            value={url}
+            onChange={setUrl}
+            disabled={pending}
+          />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <RepositoryField
+              id="skills-repository-ref"
+              label={t("skills.repositoryRef")}
+              value={ref}
+              onChange={setRef}
+              disabled={pending}
+            />
+            <RepositoryField
+              id="skills-repository-path"
+              label={t("skills.repositoryPath")}
+              value={path}
+              onChange={setPath}
+              disabled={pending}
+            />
+          </div>
+          <RepositoryField
+            id="skills-repository-username"
+            label={t("skills.repositoryUsername")}
+            value={username}
+            onChange={setUsername}
+            disabled={pending}
+            required={false}
+          />
+          <div className="space-y-1.5">
+            <label htmlFor="skills-repository-token" className="text-sm font-medium">
+              {t("skills.repositoryToken")}
+            </label>
+            <Input
+              id="skills-repository-token"
+              type="password"
+              value={token}
+              onChange={(event) => setToken(event.target.value)}
+              disabled={pending}
+              autoComplete="new-password"
+            />
+            {config.token_configured ? (
+              <p className="text-xs text-muted-foreground">
+                {t("skills.tokenConfiguredPlaceholder")}
+              </p>
+            ) : null}
+          </div>
+          {error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={pending}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button type="submit" disabled={pending || !url.trim() || !ref.trim() || !path.trim()}>
+              {pending ? t("skills.savingRepository") : t("skills.saveRepository")}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RepositoryField({
+  id,
+  label,
+  value,
+  onChange,
+  disabled,
+  required = true,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+  required?: boolean;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="text-sm font-medium">
+        {label}
+      </label>
+      <Input
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        required={required}
+      />
+    </div>
   );
 }

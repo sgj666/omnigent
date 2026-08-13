@@ -42,6 +42,30 @@ export interface SkillsInventory {
   source: SkillRepositorySource;
 }
 
+export interface SkillsRepositoryConfig {
+  object: "skill_repository_config";
+  url: string;
+  ref: string;
+  path: string;
+  username: string | null;
+  token_configured: boolean;
+  editable: boolean;
+  source: "database";
+}
+
+export interface UpdateSkillsRepositoryConfig {
+  url: string;
+  ref: string;
+  path: string;
+  username: string | null;
+  token?: string;
+}
+
+export interface UpdateSkillsRepositoryConfigResult {
+  config: SkillsRepositoryConfig;
+  inventory: SkillsInventory;
+}
+
 export interface SkillDraftValidation {
   status: SkillValidationStatus;
   diagnostics: string[];
@@ -92,6 +116,26 @@ export async function syncSkills(): Promise<SkillsInventory> {
   const response = await authenticatedFetch("/v1/skills/sync", { method: "POST" });
   if (!response.ok) throw new Error(await readError(response));
   return (await response.json()) as SkillsInventory;
+}
+
+export async function getSkillsRepositoryConfig(
+  signal?: AbortSignal,
+): Promise<SkillsRepositoryConfig> {
+  const response = await authenticatedFetch("/v1/skills/repository-config", { signal });
+  if (!response.ok) throw new Error(await readError(response));
+  return (await response.json()) as SkillsRepositoryConfig;
+}
+
+export async function updateSkillsRepositoryConfig(
+  config: UpdateSkillsRepositoryConfig,
+): Promise<UpdateSkillsRepositoryConfigResult> {
+  const response = await authenticatedFetch("/v1/skills/repository-config", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  if (!response.ok) throw new Error(await readError(response));
+  return (await response.json()) as UpdateSkillsRepositoryConfigResult;
 }
 
 export async function getSkill(id: string, signal?: AbortSignal): Promise<SkillDetail> {

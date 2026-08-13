@@ -3721,6 +3721,47 @@ async def test_scaffold_dispatch_without_client_source_uses_persisted_item_key()
 
 
 @pytest.mark.asyncio
+async def test_scaffold_runner_rejection_persists_failure_detail() -> None:
+    """An accepted HTTP connection with a rejected event is not reported idle."""
+    from omnigent.server.routes import sessions as sessions_module
+
+    store = _ConversationStore()
+    conv = store.get_conversation("823dbd1aab969b5a813fac59bb977a77")
+    assert conv is not None
+    conv.runner_id = "runner-scaffold"
+    client = _FakeRunnerClient(
+        responses={
+            f"/v1/sessions/{conv.id}/events": (
+                422,
+                {"error": "invalid_event", "detail": "missing content"},
+            )
+        }
+    )
+    body = SessionEventInput(
+        type="message",
+        data={"role": "user", "content": [{"type": "input_text", "text": "hello"}]},
+    )
+
+    with pytest.raises(OmnigentError, match="invalid_event: missing content"):
+        await sessions_module._forward_event_to_runner(
+            conv.id,
+            conv,
+            body,
+            store,  # type: ignore[arg-type]
+            client,  # type: ignore[arg-type]
+            agent_name="scaffold",
+        )
+
+    assert conv.labels[sessions_module._LAST_TASK_ERROR_CODE_LABEL_KEY] == (
+        "runner_rejected_event"
+    )
+    assert conv.labels[sessions_module._LAST_TASK_ERROR_MESSAGE_LABEL_KEY] == (
+        "invalid_event: missing content"
+    )
+    assert sessions_module._session_status_cache[conv.id] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_kiro_native_dispatch_clears_pending_when_injection_fails() -> None:
     """A failed Kiro tmux injection must not leave a ghost pending input."""
     from omnigent.runtime import pending_inputs

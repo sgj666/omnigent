@@ -1180,6 +1180,7 @@ class HostProcess:
                     proc = subprocess.Popen(
                         [sys.executable, "-m", "omnigent.runner._entry"],
                         env=env,
+                        cwd=str(workspace),
                         # Runners are WS-tunnel clients with no interactive input.
                         # Give them a clean /dev/null stdin instead of inheriting the
                         # daemon's: a long-lived daemon (e.g. backgrounded / nohup'd)

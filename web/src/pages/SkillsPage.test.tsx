@@ -2,10 +2,20 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listSkills, syncSkills } from "@/lib/skillsApi";
+import {
+  getSkillsRepositoryConfig,
+  listSkills,
+  syncSkills,
+  updateSkillsRepositoryConfig,
+} from "@/lib/skillsApi";
 import { SkillsPage } from "./SkillsPage";
 
-vi.mock("@/lib/skillsApi", () => ({ listSkills: vi.fn(), syncSkills: vi.fn() }));
+vi.mock("@/lib/skillsApi", () => ({
+  getSkillsRepositoryConfig: vi.fn(),
+  listSkills: vi.fn(),
+  syncSkills: vi.fn(),
+  updateSkillsRepositoryConfig: vi.fn(),
+}));
 
 const inventory = {
   object: "list" as const,
@@ -43,6 +53,17 @@ const inventory = {
   ],
 };
 
+const repositoryConfig = {
+  object: "skill_repository_config" as const,
+  url: "https://gitlab.example.com/spec.git",
+  ref: "feature",
+  path: "skills",
+  username: "oauth2",
+  token_configured: true,
+  editable: true,
+  source: "database" as const,
+};
+
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -57,6 +78,11 @@ function renderPage() {
 beforeEach(() => {
   vi.mocked(listSkills).mockResolvedValue(inventory);
   vi.mocked(syncSkills).mockResolvedValue(inventory);
+  vi.mocked(getSkillsRepositoryConfig).mockResolvedValue(repositoryConfig);
+  vi.mocked(updateSkillsRepositoryConfig).mockResolvedValue({
+    config: repositoryConfig,
+    inventory,
+  });
 });
 
 describe("SkillsPage", () => {
@@ -78,5 +104,46 @@ describe("SkillsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Sync repository" }));
     await waitFor(() => expect(syncSkills).toHaveBeenCalledTimes(1));
+  });
+
+  it("edits the shared repository config without ever pre-filling the token", async () => {
+    renderPage();
+    await screen.findByText("review-helper");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Edit repository" }));
+    expect(screen.getByLabelText("Repository URL")).toHaveValue(
+      "https://gitlab.example.com/spec.git",
+    );
+    expect(screen.getByLabelText("Access token")).toHaveValue("");
+    expect(
+      screen.getByText("A token is configured. Leave blank to keep it unchanged."),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Ref"), { target: { value: "release" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save repository" }));
+
+    await waitFor(() =>
+      expect(updateSkillsRepositoryConfig).toHaveBeenCalledWith(
+        {
+          url: "https://gitlab.example.com/spec.git",
+          ref: "release",
+          path: "skills",
+          username: "oauth2",
+        },
+        expect.anything(),
+      ),
+    );
+  });
+
+  it("does not show repository editing to non-admin viewers", async () => {
+    vi.mocked(getSkillsRepositoryConfig).mockResolvedValue({
+      ...repositoryConfig,
+      editable: false,
+    });
+    renderPage();
+    await screen.findByText("review-helper");
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Edit repository" })).not.toBeInTheDocument(),
+    );
   });
 });

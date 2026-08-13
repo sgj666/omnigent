@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from omnigent.inner.native_attachments import UNRESOLVED_ATTACHMENT_MARKER_PATTERN
+from omnigent.llms.adapters._content import redact_binary_payloads
 
 # Attachment markers the native executors prepend to prompt text
 # ("[Attached: /tmp/.../x.png]" from claude-native's _content_to_text,
@@ -414,6 +415,11 @@ class ReasoningData(BaseModel):
     encrypted_content: str | None = None
 
 
+def _binary_payload_omitted(media_type: str, _payload_length: int) -> str:
+    """Build the stable marker stored in place of compaction binary data."""
+    return f"[{media_type or 'binary'} content omitted from the compaction snapshot]"
+
+
 class CompactionData(BaseModel):
     """
     Data payload for a compaction summary item.
@@ -444,6 +450,15 @@ class CompactionData(BaseModel):
     token_count: int
     compacted_messages: list[dict[str, Any]] | None = None
     window_id: int | None = None
+
+    @field_validator("compacted_messages")
+    @classmethod
+    def strip_binary_payloads(
+        cls,
+        value: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]] | None:
+        """Prevent inline binary payloads from bloating persisted snapshots."""
+        return redact_binary_payloads(value, _binary_payload_omitted)
 
 
 class NativeToolData(BaseModel):

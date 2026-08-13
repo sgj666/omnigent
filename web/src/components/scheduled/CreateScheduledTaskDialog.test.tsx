@@ -54,6 +54,8 @@ vi.mock("@/shell/NewChatDialog", () => ({
     onOpenChange,
     effectiveAgentId,
     agentLabel,
+    harnessEntries,
+    agentEntries,
     host,
     dropdownModal,
   }: {
@@ -61,6 +63,8 @@ vi.mock("@/shell/NewChatDialog", () => ({
     onOpenChange?: (open: boolean) => void;
     effectiveAgentId: string | null;
     agentLabel: string;
+    harnessEntries: AvailableAgent[];
+    agentEntries: AvailableAgent[];
     host?: { host_id: string } | null;
     dropdownModal?: boolean;
   }) => (
@@ -71,6 +75,8 @@ vi.mock("@/shell/NewChatDialog", () => ({
       // a test can assert it's populated even when no host is pinned.
       data-badge-host={host?.host_id ?? ""}
       data-dropdown-modal={dropdownModal === false ? "false" : "true"}
+      data-harness-ids={harnessEntries.map((agent) => agent.id).join(",")}
+      data-agent-ids={agentEntries.map((agent) => agent.id).join(",")}
     >
       <span>{agentLabel}</span>
       <button
@@ -121,7 +127,6 @@ vi.mock("@/lib/nativeCodingAgents", async (orig) => {
   const actual = await orig<typeof NativeCodingAgentsModule>();
   return {
     ...actual,
-    isNativeCodingAgent: (a: AvailableAgent) => a?.name === "claude-native-ui",
     nativeAgentHasCapability: (a: AvailableAgent | undefined | null, cap: string) =>
       a?.name === "claude-native-ui" && cap === "permissionMode",
   };
@@ -142,6 +147,15 @@ const AGENTS: AvailableAgent[] = [
     display_name: "Claude Code",
     description: null,
     harness: "claude-native",
+    skills: [],
+  },
+  {
+    id: "ag_grill",
+    name: "zhuanspec-grill",
+    display_name: "Zhuanspec-grill",
+    description: null,
+    harness: "claude-native",
+    builtin: false,
     skills: [],
   },
 ];
@@ -200,6 +214,14 @@ function scheduledTask(overrides: Partial<ScheduledTasksApiModule.ScheduledTask>
 }
 
 describe("agent picker readiness (needs-setup badges)", () => {
+  it("keeps a custom native bundle under Agents", () => {
+    renderDialog();
+
+    const picker = screen.getByTestId("agent-picker-stub");
+    expect(picker).toHaveAttribute("data-agent-ids", expect.stringContaining("ag_grill"));
+    expect(picker.getAttribute("data-harness-ids")).not.toContain("ag_grill");
+  });
+
   it("shows the model + effort controls for the default (Claude-native) agent", () => {
     renderDialog();
     // The default effective agent is claude-native-ui (a capable native coding

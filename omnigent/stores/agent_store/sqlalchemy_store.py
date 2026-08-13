@@ -465,7 +465,7 @@ class SqlAlchemyAgentStore(AgentStore):
 
     def _session_id_for_agent(self, agent_id: str) -> str | None:
         """
-        Reverse-lookup the conversation bound to a session-scoped agent.
+        Reverse-lookup the spawn-tree root bound to a session-scoped agent.
 
         ``conversations.agent_id`` is the sole link (the agent row carries no
         back-pointer), and the ``conversations`` table lives in the AP DB — so
@@ -473,12 +473,16 @@ class SqlAlchemyAgentStore(AgentStore):
         owns the ``agents`` table.
 
         :param agent_id: Agent identifier, e.g. ``"ag_abc123"``.
-        :returns: Owning conversation id, or ``None`` when no
+        Multiple named child sessions can share the same session-scoped
+        ``agent_id``. Selecting their common ``root_conversation_id`` keeps
+        authorization stable regardless of which row the bounded lookup sees.
+
+        :returns: Owning root conversation id, or ``None`` when no
             conversation points at this agent.
         """
         with self._conv_session() as conv_sess:
             return conv_sess.execute(
-                select(SqlConversation.id)
+                select(SqlConversation.root_conversation_id)
                 .where(
                     SqlConversation.workspace_id == current_workspace_id(),
                     SqlConversation.agent_id == agent_id,

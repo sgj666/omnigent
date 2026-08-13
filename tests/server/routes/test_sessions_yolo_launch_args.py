@@ -58,6 +58,28 @@ def test_claude_native_permission_mode_translates_to_flag() -> None:
     ]
 
 
+def test_kimi_native_yolo_true_translates_to_flag() -> None:
+    spec = _spec_with_config({"harness": "kimi-native", "yolo": "True"})
+    assert _derive_terminal_launch_args_from_spec(spec) == ["--yolo"]
+
+
+def test_kimi_native_yolo_false_stays_attended() -> None:
+    spec = _spec_with_config({"harness": "kimi-native", "yolo": "False"})
+    assert _derive_terminal_launch_args_from_spec(spec) is None
+
+
+def test_antigravity_native_bypass_permission_translates_to_flag() -> None:
+    spec = _spec_with_config(
+        {"harness": "antigravity-native", "permission_mode": "bypassPermissions"}
+    )
+    assert _derive_terminal_launch_args_from_spec(spec) == ["--dangerously-skip-permissions"]
+
+
+def test_antigravity_native_other_mode_stays_attended() -> None:
+    spec = _spec_with_config({"harness": "antigravity-native", "permission_mode": "auto"})
+    assert _derive_terminal_launch_args_from_spec(spec) is None
+
+
 def test_claude_native_permission_mode_obeys_arg_length_bound() -> None:
     """
     Spec-derived ``permission_mode`` is bounded like request-supplied args.

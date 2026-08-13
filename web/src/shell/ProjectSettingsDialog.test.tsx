@@ -25,10 +25,34 @@ vi.mock("@/hooks/useAvailableAgents", () => ({
         harness: null,
         skills: [],
       },
+      {
+        id: "ag_grill",
+        name: "zhuanspec-grill",
+        display_name: "Zhuanspec-grill",
+        description: null,
+        harness: "claude-native",
+        builtin: false,
+        skills: [],
+      },
     ],
   }),
   // The reused agent picker prefetches details on open; no-op in the dialog test.
   prefetchAvailableAgentDetails: vi.fn(),
+}));
+vi.mock("./NewChatDialog", () => ({
+  AgentHarnessPicker: ({
+    harnessEntries,
+    agentEntries,
+  }: {
+    harnessEntries: { id: string }[];
+    agentEntries: { id: string }[];
+  }) => (
+    <div
+      data-testid="project-settings-agent-groups"
+      data-harness-ids={harnessEntries.map((agent) => agent.id).join(",")}
+      data-agent-ids={agentEntries.map((agent) => agent.id).join(",")}
+    />
+  ),
 }));
 vi.mock("@/lib/CapabilitiesContext", () => ({
   useServerInfo: () => ({ managed_sandboxes_enabled: false, sandbox_provider: null }),
@@ -70,6 +94,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("ProjectSettingsDialog", () => {
+  it("keeps a custom native bundle under Agents", () => {
+    renderDialog();
+
+    const groups = screen.getByTestId("project-settings-agent-groups");
+    expect(groups).toHaveAttribute("data-agent-ids", expect.stringContaining("ag_grill"));
+    expect(groups.getAttribute("data-harness-ids")).not.toContain("ag_grill");
+  });
+
   it("localizes project settings chrome in Simplified Chinese", async () => {
     await withTestLanguage("zh-CN", () => {
       renderDialog();

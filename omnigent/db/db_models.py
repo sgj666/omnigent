@@ -2260,6 +2260,27 @@ class SqlRunEvaluation(OmnigentBase):
     )
 
 
+class SqlSkillRepositoryConfig(OmnigentBase):
+    """One self-contained Git-backed Skills source per workspace."""
+
+    __tablename__ = "skill_repository_configs"
+
+    workspace_id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        nullable=False,
+        server_default="0",
+        default=current_workspace_id,
+    )
+    remote_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    ref: Mapped[str] = mapped_column(String(256), nullable=False)
+    skills_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    username: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class SqlFeishuInstallation(OmnigentBase):
     """A Feishu app installation with encrypted credential material only."""
 

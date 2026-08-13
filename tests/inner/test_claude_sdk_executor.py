@@ -286,6 +286,31 @@ class TestPromptExtraction(unittest.TestCase):
         self.assertNotIn("file_id", text)
         self.assertIn("two attachments", text)
 
+    def test_historical_image_source_block_is_redacted(self):
+        """Raw Anthropic base64 source blocks stay out of replay prompts."""
+        from omnigent.inner.claude_sdk_executor import _render_prior_content_blocks
+
+        image_payload = base64.b64encode(b"synthetic png bytes").decode("ascii")
+        content = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": image_payload,
+                },
+            }
+        ]
+
+        rendered = _render_prior_content_blocks(content)
+        rendered_text = json.dumps(rendered)
+
+        self.assertNotIn(image_payload, rendered_text)
+        self.assertIn(
+            f"[image: image/png, {len(image_payload)} base64 chars]",
+            rendered_text,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Tests: Constructor and properties

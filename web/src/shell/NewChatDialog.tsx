@@ -106,7 +106,11 @@ import { readDefaultBaseBranch } from "@/lib/baseBranchPreferences";
 import { readHarnessOptions, writeHarnessOption } from "@/lib/modePreferences";
 import { AUTO_HARNESS_ID, useBrainHarnessLabels } from "@/lib/agentLabels";
 import { CLAUDE_NATIVE_MODELS } from "@/lib/claudeNativeModels";
-import { partitionAgentsByKind, sortAgentsForDisplay } from "@/lib/agentGrouping";
+import {
+  isNativeHarnessPickerEntry,
+  partitionAgentsByKind,
+  sortAgentsForDisplay,
+} from "@/lib/agentGrouping";
 import { cn } from "@/lib/utils";
 import {
   isNativeCodingAgent,
@@ -900,10 +904,11 @@ export function AgentHarnessPicker({
   const { readyHarnessEntries, moreHarnessEntries } = useMemo(() => {
     const ready: AvailableAgent[] = [];
     const more: AvailableAgent[] = [];
+    const targetReadinessUnknown = host == null;
     for (const a of harnessEntries) {
       const unconfigured = harnessUnconfiguredOnHost(a.harness, host);
-      if (!unconfigured || a.id === effectiveAgentId) ready.push(a);
-      else if (!hideUnconfigured) more.push(a);
+      if (a.id === effectiveAgentId || (!unconfigured && !targetReadinessUnknown)) ready.push(a);
+      else if (targetReadinessUnknown || !hideUnconfigured) more.push(a);
     }
     return { readyHarnessEntries: ready, moreHarnessEntries: more };
   }, [harnessEntries, host, hideUnconfigured, effectiveAgentId]);
@@ -1640,16 +1645,16 @@ export function NewChatLandingScreen() {
     [agents],
   );
 
-  // Split the picker into "Harnesses" (the native terminal CLIs) and
-  // "Agents" (SDK / bundle agents like Polly & Debby plus any custom
-  // user-registered agents). This is the isNativeCodingAgent split, NOT the
-  // builtins/customs split: Polly & Debby are built-ins but belong under
-  // "Agents", not "Harnesses".
+  // Split canonical native CLI entries from SDK and custom bundle agents.
+  // A bundle may use a native harness without becoming a runtime entry.
   const harnessEntries = useMemo(
-    () => agentList.filter((a) => isNativeCodingAgent(a)),
+    () => agentList.filter((a) => isNativeHarnessPickerEntry(a)),
     [agentList],
   );
-  const agentEntries = useMemo(() => agentList.filter((a) => !isNativeCodingAgent(a)), [agentList]);
+  const agentEntries = useMemo(
+    () => agentList.filter((a) => !isNativeHarnessPickerEntry(a)),
+    [agentList],
+  );
 
   // "Create custom agent" dialog state and pending bundle. When the user
   // creates a custom agent via the dialog, the bundle input is stored
@@ -2300,11 +2305,17 @@ export function NewChatLandingScreen() {
   // not intercept them — no skills menu, no slash_command routing.
   const isNativeTerminalAgent = isNativeCodingAgent(selectedAgent);
   const selectedHost = allHosts.find((h) => h.host_id === selectedHostId);
-  // Warn-only readiness signal for the agent picker: only meaningful when
-  // a connected host is selected (a sandbox provisions its own tooling).
-  // Selection stays allowed — the host re-checks at launch and the create
-  // call surfaces a specific error if the harness really can't run.
+  // Readiness for the actual execution target. A managed sandbox provisions
+  // its own tooling, so connected-Host readiness is irrelevant there.
   const harnessWarningHost = !sandboxSelected ? selectedHost : undefined;
+  // When managed sandboxes are unavailable, the unfiled landing page still
+  // displays "New Sandbox" with no selectedHostId. Use the first online local
+  // Host only for picker grouping/badges so installed CLIs stay inline and
+  // missing ones remain labeled under More. Do not feed this fallback into
+  // launch warnings/config: it is not the session target.
+  const localReadinessFallback =
+    !selectedProject && !managedSandboxesEnabled ? onlineHosts[0] : undefined;
+  const pickerReadinessHost = harnessWarningHost ?? localReadinessFallback;
   const selectedAgentUnconfigured = harnessUnconfiguredOnHost(
     selectedAgent?.harness,
     harnessWarningHost,
@@ -3186,7 +3197,7 @@ export function NewChatLandingScreen() {
                   effectiveAgentId={effectiveAgentId}
                   agentLabel={agentLabel}
                   hasAgents={agentList.length > 0}
-                  host={harnessWarningHost}
+                  host={pickerReadinessHost}
                   onSelectAgent={handleSelectAgent}
                   pendingAgent={pendingAgentAllowedOnTarget ? pendingAgent : null}
                   pendingAgentId={PENDING_AGENT_ID}

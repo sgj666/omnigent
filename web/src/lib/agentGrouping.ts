@@ -5,7 +5,7 @@
  * two surfaces group and order agents identically.
  */
 import type { AvailableAgent } from "@/hooks/useAvailableAgents";
-import { nativeAgentSortRank } from "@/lib/nativeCodingAgents";
+import { nativeAgentSortRank, nativeCodingAgentForAgentName } from "@/lib/nativeCodingAgents";
 
 // Built-in agents (by name slug) — the long-lived agents the server ships
 // out of the box. Pickers group these first, then a divider, then custom
@@ -43,6 +43,11 @@ export const AGENT_DISPLAY_ORDER = [
   "Polly",
   "Debby",
 ];
+
+/** Only canonical native agents belong in the runtime section of a picker. */
+export function isNativeHarnessPickerEntry(agent: AvailableAgent): boolean {
+  return agent.builtin !== false && nativeCodingAgentForAgentName(agent.name) !== undefined;
+}
 
 function displayRank(name: string): number {
   const i = AGENT_DISPLAY_ORDER.indexOf(name);

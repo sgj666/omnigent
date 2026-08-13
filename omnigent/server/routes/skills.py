@@ -13,13 +13,16 @@ from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.auth import AuthProvider
 from omnigent.server.routes._auth_helpers import require_user
 from omnigent.skills import (
+    ConfigurableSkillRepositoryReader,
     SkillDraftStore,
     SkillFile,
     SkillRecord,
+    SkillRepositoryConfigurationError,
     SkillRepositoryReader,
     SkillSnapshot,
     build_skill_dry_run,
 )
+from omnigent.stores.permission_store import PermissionStore
 
 
 class SkillDraftFileInput(BaseModel):
@@ -40,11 +43,25 @@ class SaveSkillDraftRequest(BaseModel):
     files: list[SkillDraftFileInput] = Field(min_length=1, max_length=100)
 
 
+class UpdateSkillRepositoryConfigRequest(BaseModel):
+    """Complete repository source update; an omitted token is preserved."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1, max_length=2048)
+    ref: str = Field(min_length=1, max_length=256)
+    path: str = Field(min_length=1, max_length=1024)
+    username: str | None = Field(default=None, max_length=256)
+    token: str | None = Field(default=None, max_length=16 * 1024)
+
+
 def create_skills_router(
     reader: SkillRepositoryReader,
     *,
     draft_store: SkillDraftStore | None = None,
     auth_provider: AuthProvider | None = None,
+    permission_store: PermissionStore | None = None,
+    repository_manager: ConfigurableSkillRepositoryReader | None = None,
 ) -> APIRouter:
     """Create Skills inventory plus local Draft / Validate / Dry Run routes."""
     router = APIRouter()
@@ -53,6 +70,38 @@ def create_skills_router(
     async def _snapshot(request: Request, *, refresh: bool) -> Any:
         require_user(request, auth_provider)
         return await asyncio.to_thread(reader.load, refresh=refresh)
+
+    async def _can_edit_repository(request: Request) -> bool:
+        user_id = require_user(request, auth_provider)
+        if permission_store is None:
+            return True
+        return bool(user_id and await asyncio.to_thread(permission_store.is_admin, user_id))
+
+    async def _require_repository_admin(request: Request) -> None:
+        if await _can_edit_repository(request):
+            return
+        raise OmnigentError(
+            "Admin privileges required to manage the Skills repository",
+            code=ErrorCode.FORBIDDEN,
+        )
+
+    def _repository_config_response(*, editable: bool) -> dict[str, object]:
+        if repository_manager is None:
+            raise OmnigentError(
+                "Skills repository settings are managed by this deployment",
+                code=ErrorCode.CONFLICT,
+            )
+        configured = repository_manager.get_config()
+        return {
+            "object": "skill_repository_config",
+            "url": configured.remote_url,
+            "ref": configured.ref,
+            "path": configured.skills_path,
+            "username": configured.username,
+            "token_configured": configured.token is not None,
+            "editable": editable,
+            "source": "database",
+        }
 
     @staticmethod
     def _skill(snapshot: SkillSnapshot, skill_id: str) -> SkillRecord:
@@ -70,6 +119,41 @@ def create_skills_router(
     async def sync_skills(request: Request) -> dict[str, object]:
         snapshot = await _snapshot(request, refresh=True)
         return snapshot.list_dict()
+
+    @router.get("/skills/repository-config")
+    async def get_repository_config(request: Request) -> dict[str, object]:
+        editable = await _can_edit_repository(request)
+        return _repository_config_response(editable=editable)
+
+    @router.put("/skills/repository-config")
+    async def update_repository_config(
+        request: Request,
+        body: UpdateSkillRepositoryConfigRequest,
+    ) -> dict[str, object]:
+        await _require_repository_admin(request)
+        if repository_manager is None:
+            raise OmnigentError(
+                "Skills repository settings are managed by this deployment",
+                code=ErrorCode.CONFLICT,
+            )
+        preserve_token = "token" not in body.model_fields_set or not body.token
+        try:
+            await asyncio.to_thread(
+                repository_manager.configure,
+                remote_url=body.url,
+                ref=body.ref,
+                skills_path=body.path,
+                username=body.username,
+                token=body.token,
+                preserve_token=preserve_token,
+            )
+        except SkillRepositoryConfigurationError as exc:
+            raise OmnigentError(str(exc), code=ErrorCode.INVALID_INPUT) from exc
+        snapshot = await asyncio.to_thread(repository_manager.load, refresh=True)
+        return {
+            "config": _repository_config_response(editable=True),
+            "inventory": snapshot.list_dict(),
+        }
 
     @router.get("/skills/{skill_id}")
     async def get_skill(request: Request, skill_id: str) -> dict[str, Any]:

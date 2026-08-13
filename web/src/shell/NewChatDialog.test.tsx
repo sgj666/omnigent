@@ -2839,6 +2839,96 @@ describe("NewChatLandingScreen agent picker (mobile drill-in)", () => {
     expect(screen.queryByTestId("new-chat-landing-agent-ag_custom")).toBeNull();
   });
 
+  it("keeps a custom native bundle under Custom agents", () => {
+    mockAgents([
+      {
+        id: "a1",
+        name: "claude-native-ui",
+        display_name: "Claude Code",
+        description: null,
+        harness: "claude-native",
+        builtin: true,
+        skills: [],
+      },
+      {
+        id: "ag_grill",
+        name: "zhuanspec-grill",
+        display_name: "Zhuanspec-grill",
+        description: "ZhuanSpec Grill",
+        harness: "claude-native",
+        builtin: false,
+        skills: [],
+      },
+    ]);
+
+    renderLanding();
+    openPicker();
+
+    expect(screen.queryByTestId("new-chat-landing-agent-ag_grill")).toBeNull();
+    fireEvent.click(screen.getByTestId("new-chat-landing-custom-agents"));
+    expect(screen.getByTestId("new-chat-landing-agent-ag_grill")).toBeTruthy();
+    expect(screen.getByTestId("new-chat-landing-agent-ag_grill").textContent).toContain(
+      "Zhuanspec-grill",
+    );
+  });
+
+  it("uses local Host readiness when the unavailable sandbox has no selected Host", async () => {
+    mockHosts([
+      {
+        ...host("online"),
+        configured_harnesses: {
+          "claude-native": true,
+          "codex-native": true,
+          "opencode-native": "binary-missing",
+        },
+      } as Host,
+    ]);
+    mockAgents([
+      {
+        id: "a1",
+        name: "claude-native-ui",
+        display_name: "Claude Code",
+        description: null,
+        harness: "claude-native",
+        skills: [],
+      },
+      {
+        id: "a2",
+        name: "codex-native-ui",
+        display_name: "Codex",
+        description: null,
+        harness: "codex-native",
+        skills: [],
+      },
+      {
+        id: "a_opencode",
+        name: "opencode-native-ui",
+        display_name: "OpenCode",
+        description: null,
+        harness: "opencode-native",
+        skills: [],
+      },
+    ]);
+
+    // An unfiled landing page still displays New Sandbox when managed
+    // provisioning is unavailable. Use the online local Host for picker-only
+    // readiness so installed CLIs stay prominent and missing ones are labeled.
+    renderLanding({}, "/");
+    await waitFor(() =>
+      expect(screen.getByTestId("new-chat-landing-host-chip").textContent).toContain("New Sandbox"),
+    );
+
+    openPicker();
+    expect(screen.getByTestId("new-chat-landing-agent-a1")).toBeTruthy();
+    expect(screen.getByTestId("new-chat-landing-agent-a2")).toBeTruthy();
+    expect(screen.queryByTestId("new-chat-landing-agent-a_opencode")).toBeNull();
+    fireEvent.click(screen.getByTestId("new-chat-landing-harness-more"));
+    expect(screen.getByTestId("new-chat-landing-agent-a_opencode")).toBeTruthy();
+    expect(screen.getByTestId("new-chat-landing-agent-warning-a_opencode")).toHaveTextContent(
+      "binary missing",
+    );
+  });
+
   it("drills into the More page for needs-setup harnesses", () => {
     // codex-native reported unconfigured on host_1 → folded into "More".
     mockHosts([

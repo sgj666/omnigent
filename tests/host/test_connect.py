@@ -635,6 +635,9 @@ async def test_handle_launch_spawns_subprocess(
     assert spawned_kwargs.get("stdin") == subprocess.DEVNULL, (
         "runner subprocess must be spawned with stdin=subprocess.DEVNULL"
     )
+    assert spawned_kwargs.get("cwd") == str(workspace), (
+        "runner subprocess must be spawned in the session workspace"
+    )
 
     # Clean up the spawned sleep process (and its exit watcher).
     _cleanup_host(host)

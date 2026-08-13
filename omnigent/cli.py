@@ -3524,6 +3524,13 @@ def server(
     from omnigent.stores.policy_store.sqlalchemy_store import SqlAlchemyPolicyStore
 
     cfg = _load_config(config_path)
+    # Skills moved to the server database, but the first database-backed boot
+    # still imports the existing user-level source (including its credential).
+    # Other server settings keep their explicit --config behavior unchanged.
+    if "skills_repository" not in cfg:
+        legacy_skills = _load_global_config().get("skills_repository")
+        if isinstance(legacy_skills, dict):
+            cfg["skills_repository"] = legacy_skills
 
     # CLI args take precedence over config file, which takes precedence
     # over defaults.

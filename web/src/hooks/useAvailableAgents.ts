@@ -52,7 +52,8 @@ const DISPLAY_NAMES: Record<string, string> = {
   debby: "Debby",
 };
 
-function displayNameForAgent(name: string, harness?: string | null): string {
+function displayNameForAgent(name: string, harness?: string | null, custom = false): string {
+  if (custom) return DISPLAY_NAMES[name] ?? capitalizeAgentName(name);
   return (
     nativeCodingAgentForHarness(harness)?.displayName ??
     nativeCodingAgentForAgentName(name)?.displayName ??
@@ -135,7 +136,7 @@ async function fetchBuiltinAgents(): Promise<AvailableAgent[]> {
   return rows.map((a) => ({
     id: a.id,
     name: a.name,
-    display_name: displayNameForAgent(a.name, a.harness),
+    display_name: displayNameForAgent(a.name, a.harness, a.builtin === false),
     description: a.description ?? null,
     harness: a.harness ?? null,
     skills: a.skills ?? [],
@@ -209,7 +210,7 @@ function sessionAgentFromScan(scanned: ScannedSessionAgent): AvailableAgent {
   return {
     id: scanned.agentId,
     name: scanned.agentName,
-    display_name: displayNameForAgent(scanned.agentName),
+    display_name: displayNameForAgent(scanned.agentName, null, true),
     description: null,
     harness: null,
     skills: [],
@@ -243,7 +244,7 @@ export async function prefetchAvailableAgentDetails(
           ? a
           : {
               ...a,
-              display_name: displayNameForAgent(json.name, json.harness),
+              display_name: displayNameForAgent(json.name, json.harness, true),
               description: json.description ?? null,
               harness: json.harness ?? null,
               skills: json.skills ?? [],

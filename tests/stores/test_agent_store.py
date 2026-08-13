@@ -38,6 +38,47 @@ def test_get_nonexistent(agent_store: SqlAlchemyAgentStore) -> None:
     assert agent_store.get("5ff5b2e31fe10beb80134394037b17b0") is None
 
 
+def test_session_scoped_agent_resolves_to_spawn_tree_root(
+    agent_store: SqlAlchemyAgentStore,
+    db_uri: str,
+) -> None:
+    """A shared child agent always authorizes against the stable tree root."""
+    root_id = "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a"
+    child_id = "2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b"
+    agent_id = "3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c"
+    engine = get_or_create_engine(db_uri)
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "INSERT INTO conversations "
+                "(id, created_at, updated_at, root_conversation_id, agent_id) "
+                "VALUES (:id, :ts, :ts, :root_id, :agent_id)"
+            ),
+            {
+                "id": bytes.fromhex(root_id),
+                "ts": 1700000000,
+                "root_id": bytes.fromhex(root_id),
+                "agent_id": bytes.fromhex(agent_id),
+            },
+        )
+        conn.execute(
+            sa.text(
+                "INSERT INTO conversations "
+                "(id, created_at, updated_at, parent_conversation_id, "
+                "root_conversation_id, agent_id) "
+                "VALUES (:id, :ts, :ts, :root_id, :root_id, :agent_id)"
+            ),
+            {
+                "id": bytes.fromhex(child_id),
+                "ts": 1700000001,
+                "root_id": bytes.fromhex(root_id),
+                "agent_id": bytes.fromhex(agent_id),
+            },
+        )
+
+    assert agent_store._session_id_for_agent(agent_id) == root_id
+
+
 def test_get_by_name(agent_store: SqlAlchemyAgentStore) -> None:
     agent_store.create(
         agent_id="d949d15d8243d399d68ce236abee269d",

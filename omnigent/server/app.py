@@ -109,7 +109,11 @@ from omnigent.server.routes.workspaces import create_workspaces_router
 from omnigent.server.runner_session_init import RunnerSessionInitializer
 from omnigent.server.scheduled import ScheduledTaskScheduler
 from omnigent.server.ws_origin import WebSocketOriginMiddleware
-from omnigent.skills import GitSkillRepositoryReader, SkillRepositoryReader
+from omnigent.skills import (
+    ConfigurableSkillRepositoryReader,
+    SkillRepositoryReader,
+    SqlAlchemySkillRepositoryConfigStore,
+)
 from omnigent.stores import (
     AgentStore,
     ArtifactStore,
@@ -2144,15 +2148,26 @@ def create_app(
         prefix="/v1",
         tags=["usage"],
     )
-    skills_inventory_reader = skills_reader or GitSkillRepositoryReader.from_environment(
-        (server_config or {}).get("skills_repository")
-        if isinstance((server_config or {}).get("skills_repository"), dict)
-        else None
-    )
+    skills_repository_manager: ConfigurableSkillRepositoryReader | None = None
+    if skills_reader is None:
+        skills_settings = (
+            (server_config or {}).get("skills_repository")
+            if isinstance((server_config or {}).get("skills_repository"), dict)
+            else None
+        )
+        skills_repository_manager = ConfigurableSkillRepositoryReader(
+            SqlAlchemySkillRepositoryConfigStore(agent_store.storage_location),
+            initial_settings=skills_settings,
+        )
+        skills_inventory_reader: SkillRepositoryReader = skills_repository_manager
+    else:
+        skills_inventory_reader = skills_reader
     app.include_router(
         create_skills_router(
             skills_inventory_reader,
             auth_provider=auth_provider,
+            permission_store=permission_store,
+            repository_manager=skills_repository_manager,
         ),
         prefix="/v1",
         tags=["skills"],
@@ -2384,8 +2399,36 @@ def create_app(
         )
 
     # ── Tunnel lifecycle callbacks (Step 8.5 crash recovery) ───
+    _disconnect_grace_tasks: dict[str, asyncio.Task[None]] = {}
+
+    def _cancel_disconnect_grace(runner_id: str) -> None:
+        pending = _disconnect_grace_tasks.pop(runner_id, None)
+        if pending is not None and not pending.done():
+            pending.cancel()
+
+    async def _mark_disconnected_runner_failed(runner_id: str) -> None:
+        from omnigent.server.routes.sessions import (
+            _mark_runner_sessions_offline,
+        )
+        from omnigent.server.schemas import ErrorDetail
+
+        await asyncio.sleep(10.0)
+        if tunnel_registry.get(runner_id) is not None:
+            return
+        affected = await asyncio.to_thread(
+            conversation_store.list_conversations_by_runner_id, runner_id
+        )
+        await _mark_runner_sessions_offline(
+            affected,
+            ErrorDetail(
+                code="runner_disconnected",
+                message="Runner disconnected unexpectedly.",
+            ),
+            conversation_store,
+        )
+
     async def _on_runner_disconnect(runner_id: str) -> None:
-        """Mark sessions pinned to *this* runner as offline.
+        """Schedule offline reconciliation for interrupted runner sessions.
 
         Filters by ``runner_id`` against ``conversation_store`` so a
         disconnect on one runner does not flip every cached session
@@ -2397,11 +2440,6 @@ def create_app(
 
         :param runner_id: The disconnected runner's id.
         """
-        from omnigent.server.routes.sessions import (
-            _publish_status,
-            _session_status_cache,
-        )
-
         # Newest-wins guard: a superseded tunnel's teardown fires this
         # hook after a fresh tunnel for the same ``runner_id`` already
         # registered (``TunnelRegistry.register`` retires the old
@@ -2425,27 +2463,18 @@ def create_app(
         # replicas flip offline immediately rather than after the TTL.
         session_live_state.clear_runner_liveness(runner_id)
 
-        # Direct by-runner lookup: read-after-write consistent (the
-        # listing path may be served from an eventually-consistent
-        # search index in alternate store backends) and
-        # O(sessions-on-this-runner) instead of a 500-row scan.
-        # Archived sessions are included by construction — an archived
-        # session can still be runner-bound, and skipping it here would
-        # leave it stuck "running" forever.
-        affected = [
-            c.id
-            for c in await asyncio.to_thread(
-                conversation_store.list_conversations_by_runner_id, runner_id
-            )
-        ]
-        _logger.warning(
-            "Runner %s disconnected; marking %d session(s) offline",
-            runner_id,
-            len(affected),
+        _cancel_disconnect_grace(runner_id)
+        task = asyncio.create_task(
+            _mark_disconnected_runner_failed(runner_id),
+            name=f"runner-disconnect-grace-{runner_id}",
         )
-        for session_id in affected:
-            _session_status_cache[session_id] = "failed"
-            _publish_status(session_id, "failed")
+        _disconnect_grace_tasks[runner_id] = task
+
+        def _clear_grace_slot(done: asyncio.Task[None]) -> None:
+            if _disconnect_grace_tasks.get(runner_id) is done:
+                _disconnect_grace_tasks.pop(runner_id, None)
+
+        task.add_done_callback(_clear_grace_slot)
 
     async def _on_runner_exited(runner_id: str, error: str) -> None:
         """Mark a crashed runner's session(s) failed and push the cause.
@@ -2462,28 +2491,25 @@ def create_app(
         :param error: Human-readable cause from the daemon (exit code +
             log tail), e.g. ``"runner process exited with code 1 ..."``.
         """
-        from omnigent.server.routes.sessions import (
-            _publish_status,
-            _session_status_cache,
-        )
+        from omnigent.server.routes.sessions import _mark_runner_sessions_offline
         from omnigent.server.schemas import ErrorDetail
 
-        affected = [
-            c.id
-            for c in await asyncio.to_thread(
-                conversation_store.list_conversations_by_runner_id, runner_id
-            )
-        ]
+        _cancel_disconnect_grace(runner_id)
+        affected = await asyncio.to_thread(
+            conversation_store.list_conversations_by_runner_id, runner_id
+        )
         _logger.warning(
             "Runner %s reported crashed; marking %d session(s) failed: %s",
             runner_id,
             len(affected),
             error,
         )
-        detail = ErrorDetail(code="runner_failed_to_start", message=error)
-        for session_id in affected:
-            _session_status_cache[session_id] = "failed"
-            _publish_status(session_id, "failed", error=detail)
+        await _mark_runner_sessions_offline(
+            affected,
+            ErrorDetail(code="runner_failed_to_start", message=error),
+            conversation_store,
+            fail_idle_top_level=True,
+        )
 
     async def _on_runner_connect(runner_id: str) -> None:
         """Re-assign sessions and restart SSE relays on reconnect.
@@ -2504,6 +2530,8 @@ def create_app(
             _ensure_runner_session_initialized,
             _publish_runner_recovered_status,
         )
+
+        _cancel_disconnect_grace(runner_id)
 
         # Stamp liveness immediately so other replicas see the runner
         # online before the first periodic sweep.

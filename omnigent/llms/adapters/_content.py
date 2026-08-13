@@ -94,3 +94,41 @@ def redact_inline_data_uris(
             {key: redact_inline_data_uris(item, marker) for key, item in value.items()},
         )
     return value
+
+
+_BINARY_BLOCK_TYPES = frozenset({"image", "document", "file"})
+
+
+def _redact_data_field(block: dict[str, object], marker: Callable[[str, int], str]) -> None:
+    """Replace a structured content block's base64 data field."""
+    data = block.get("data")
+    if not isinstance(data, str) or not data:
+        return
+    media_type = block.get("media_type")
+    block["data"] = marker(media_type if isinstance(media_type, str) else "", len(data))
+
+
+def redact_binary_payloads(
+    value: _Value,
+    marker: Callable[[str, int], str],
+) -> _Value:
+    """Recursively redact data URIs and structured binary block payloads."""
+    if isinstance(value, str):
+        return redact_inline_data_uris(value, marker)
+    if isinstance(value, list):
+        return cast(_Value, [redact_binary_payloads(item, marker) for item in value])
+    if isinstance(value, dict):
+        block: dict[str, object] = dict(value)
+        block_type = block.get("type")
+        if isinstance(block_type, str) and block_type in _BINARY_BLOCK_TYPES:
+            _redact_data_field(block, marker)
+            source = block.get("source")
+            if isinstance(source, dict):
+                source = dict(source)
+                _redact_data_field(source, marker)
+                block["source"] = source
+        return cast(
+            _Value,
+            {key: redact_binary_payloads(item, marker) for key, item in block.items()},
+        )
+    return value

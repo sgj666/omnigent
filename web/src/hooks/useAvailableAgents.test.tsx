@@ -90,6 +90,42 @@ describe("useAvailableAgents", () => {
     expect(urls).toContain(SCAN_URL);
   });
 
+  it("keeps a custom native bundle's identity instead of using the runtime label", async () => {
+    routeFetch({
+      [BUILTINS_URL]: mockResponse({
+        object: "list",
+        data: [
+          {
+            id: "ag_claude",
+            name: "claude-native-ui",
+            harness: "claude-native",
+            builtin: true,
+          },
+          {
+            id: "ag_grill",
+            name: "zhuanspec-grill",
+            harness: "claude-native",
+            builtin: false,
+          },
+        ],
+        has_more: false,
+      }),
+      [SCAN_URL]: EMPTY_SCAN,
+    });
+
+    const { result } = renderHook(() => useAvailableAgents(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data?.map(({ name, display_name }) => ({ name, display_name }))).toEqual([
+      { name: "claude-native-ui", display_name: "Claude Code" },
+      { name: "zhuanspec-grill", display_name: "Zhuanspec-grill" },
+    ]);
+    expect(result.current.data?.find((agent) => agent.id === "ag_grill")).toMatchObject({
+      harness: "claude-native",
+      builtin: false,
+    });
+  });
+
   it("paginates built-ins so defaults pushed past fork rows are still listed", async () => {
     routeFetch({
       [BUILTINS_URL]: mockResponse({

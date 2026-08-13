@@ -259,6 +259,9 @@ from omnigent.server.routes._sessions.orchestration import (
     _kick_managed_wake_impl as _kick_managed_wake,
 )
 from omnigent.server.routes._sessions.orchestration import (
+    _mark_runner_sessions_offline_impl as _mark_runner_sessions_offline,
+)
+from omnigent.server.routes._sessions.orchestration import (
     _publish_runner_recovered_status_impl as _publish_runner_recovered_status,
 )
 from omnigent.server.schemas import (

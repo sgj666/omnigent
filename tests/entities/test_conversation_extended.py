@@ -7,6 +7,8 @@ _validate_type_matches_data, and Conversation field defaults.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -91,6 +93,44 @@ def test_compaction_data_valid() -> None:
 def test_compaction_data_missing_field() -> None:
     with pytest.raises(ValidationError, match="last_item_id"):
         CompactionData(summary="s", model="m", token_count=1)  # type: ignore[call-arg]
+
+
+def test_compaction_snapshot_strips_binary_payloads_idempotently() -> None:
+    """Persisted compaction history keeps metadata but not raw attachment bytes."""
+    payload = "iVBOR" + "A" * 4000
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "inspect this"},
+                {
+                    "type": "image",
+                    "file_id": "file_1",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": payload,
+                    },
+                },
+                {"type": "input_image", "image_url": f"data:image/png;base64,{payload}"},
+            ],
+        }
+    ]
+
+    once = CompactionData(
+        summary="summary",
+        last_item_id="msg_1",
+        token_count=10,
+        compacted_messages=messages,
+    )
+    twice = CompactionData.model_validate(once.model_dump())
+
+    assert once.compacted_messages is not None
+    serialized = json.dumps(once.compacted_messages)
+    assert payload not in serialized
+    assert once.compacted_messages[0]["content"][1]["file_id"] == "file_1"
+    assert twice.compacted_messages == once.compacted_messages
+    assert messages[0]["content"][1]["source"]["data"] == payload
 
 
 # ── NativeToolData ────────────────────────────────────

@@ -960,18 +960,10 @@ async def test_on_runner_connect_restarts_relay_via_router(
     new_communicator: ApplicationCommunicator | None = None
     new_forwarder_task: asyncio.Task[None] | None = None
     try:
-        # Deregister aborts the in-flight relay with ConnectionError;
-        # the relay's done-callback then clears its slot.
+        # Deregister aborts the in-flight relay with ConnectionError. The relay
+        # now stays alive during its reconnect grace window, so the reconnect
+        # hook must work while that existing slot is still present.
         ap_app.state.tunnel_registry.deregister(_RUNNER_ID)
-
-        async def _relay_slot_cleared() -> None:
-            while True:
-                handle = _runner_relay_tasks.get(session_id)
-                if handle is None or handle.task.done():
-                    return
-                await asyncio.sleep(0.01)
-
-        await asyncio.wait_for(_relay_slot_cleared(), timeout=2.0)
 
         # Fresh WS + hello re-registers and fires _on_runner_connect.
         new_communicator = await _connect_runner_tunnel(ap_app, _RUNNER_ID)

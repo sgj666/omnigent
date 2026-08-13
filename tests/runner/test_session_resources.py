@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import uuid
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
@@ -25,7 +26,7 @@ from omnigent.entities.session_resources import (
     terminal_resource_view,
 )
 from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec, TerminalEnvSpec
-from omnigent.inner.os_env import EditEntry, OpResult, OSEnvironment
+from omnigent.inner.os_env import EditEntry, OpResult, OSEnvironment, create_os_environment
 from omnigent.inner.terminal import TerminalInstance
 from omnigent.runner import create_runner_app
 from omnigent.runner import resource_registry as resource_registry_mod
@@ -2115,6 +2116,92 @@ async def test_unbound_agent_snapshot_is_not_cached_and_retries(
     assert resolver_count == 1, (
         f"expected one bundle resolution (after binding), got {resolver_count}"
     )
+
+
+@pytest.mark.asyncio
+async def test_failed_snapshot_does_not_cache_missing_workspace(tmp_path: Path) -> None:
+    """A later successful snapshot can replace a transient workspace fallback."""
+    conv = "conv_workspace_retry"
+    git_env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "Test",
+        "GIT_AUTHOR_EMAIL": "test@example.com",
+        "GIT_COMMITTER_NAME": "Test",
+        "GIT_COMMITTER_EMAIL": "test@example.com",
+    }
+
+    runner_workspace = tmp_path / "runner-workspace"
+    session_workspace = tmp_path / "session-workspace"
+    for workspace in (runner_workspace, session_workspace):
+        workspace.mkdir()
+        subprocess.run(
+            ["git", "init"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            env=git_env,
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            env=git_env,
+        )
+    (session_workspace / "agent_change.py").write_text("# changed\n")
+
+    server_reachable = False
+
+    async def _server_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == f"/v1/sessions/{conv}":
+            if not server_reachable:
+                return httpx.Response(503, json={})
+            return httpx.Response(
+                200,
+                json={
+                    "id": conv,
+                    "agent_id": "ag_workspace_retry",
+                    "created_at": 1000,
+                    "workspace": str(session_workspace),
+                },
+            )
+        return httpx.Response(200, json={})
+
+    os_env = create_os_environment(
+        OSEnvSpec(
+            type="caller_process",
+            cwd=str(session_workspace),
+            sandbox=OSEnvSandboxSpec(type="none"),
+        )
+    )
+    assert os_env is not None
+    registry = SessionResourceRegistry()
+    registry._primary_envs[conv] = os_env
+    server_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(_server_handler),
+        base_url="http://server",
+    )
+    app = create_runner_app(
+        resource_registry=registry,
+        runner_workspace=runner_workspace,
+        server_client=server_client,
+    )
+    url = f"/v1/sessions/{conv}/resources/environments/{DEFAULT_ENVIRONMENT_ID}/changes"
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://runner",
+        ) as client:
+            during_outage = await client.get(url)
+            server_reachable = True
+            after_recovery = await client.get(url)
+    finally:
+        await server_client.aclose()
+
+    assert during_outage.status_code == 200
+    assert during_outage.json()["data"] == []
+    assert after_recovery.status_code == 200
+    assert "agent_change.py" in [entry["path"] for entry in after_recovery.json()["data"]]
 
 
 @pytest.mark.asyncio

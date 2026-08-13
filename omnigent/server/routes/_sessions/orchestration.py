@@ -8,6 +8,7 @@ imported by the router in ``sessions.py``."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import secrets
 import time
@@ -2648,6 +2649,26 @@ async def _publish_runner_recovered_status_impl(
     await _persist_session_status_error_labels(session_id, None, conversation_store)
 
 
+async def _mark_runner_sessions_offline_impl(
+    convs: list[Conversation],
+    error: ErrorDetail,
+    conversation_store: ConversationStore,
+    *,
+    fail_idle_top_level: bool = False,
+) -> None:
+    """Fail only turns that a departed runner actually interrupted."""
+    for conv in convs:
+        if conv.id in _intentional_stop_sessions:
+            continue
+        live_status = _session_status_cache.get(conv.id, conv.live_status)
+        interrupted = live_status in ("running", "waiting")
+        dead_on_arrival = fail_idle_top_level and conv.kind != "sub_agent"
+        if not interrupted and not dead_on_arrival:
+            continue
+        _publish_status(conv.id, "failed", error)
+        await _persist_session_status_error_labels(conv.id, error, conversation_store)
+
+
 async def _wait_for_host_bound_runner_client(
     session_id: str,
     runner_router: RunnerRouter | None,
@@ -4439,7 +4460,15 @@ async def _forward_event_to_runner(
             json=runner_body,
             timeout=_RUNNER_FORWARD_TIMEOUT,
         )
-        runner_response.raise_for_status()
+        if runner_response.status_code >= 400:
+            detail = _runner_reject_detail(runner_response)
+            error = ErrorDetail(code="runner_rejected_event", message=detail)
+            await _persist_session_status_error_labels(session_id, error, conversation_store)
+            _publish_status(session_id, "failed", error)
+            raise OmnigentError(
+                f"Runner rejected the message: {detail}",
+                code=ErrorCode.RUNNER_UNAVAILABLE,
+            )
         # Publish input.consumed AFTER the forward succeeds —
         # the runner has the message and will start the turn.
         _publish_input_consumed(session_id, persisted_items[0])
@@ -4495,6 +4524,24 @@ async def _forward_event_to_runner(
         ) from exc
 
     return persisted_items[0].id
+
+
+def _runner_reject_detail(response: httpx.Response) -> str:
+    """Return a non-empty description of a runner's HTTP rejection."""
+    payload: object = None
+    with contextlib.suppress(ValueError, AttributeError):
+        payload = response.json()
+    if isinstance(payload, dict):
+        raw_code = payload.get("error")
+        raw_detail = payload.get("detail")
+        code = raw_code.strip() if isinstance(raw_code, str) and raw_code.strip() else None
+        detail = raw_detail.strip() if isinstance(raw_detail, str) and raw_detail.strip() else None
+        if code and detail:
+            return f"{code}: {detail}"
+        if detail or code:
+            return detail or code or ""
+    body = getattr(response, "text", "") or ""
+    return body.strip()[:200] or f"runner returned status {response.status_code}"
 
 
 async def _dispatch_session_event_to_runner(*args: Any, **kwargs: Any) -> Any:
@@ -4754,7 +4801,67 @@ async def _dispatch_session_event_to_runner_impl(
     return _SessionEventDispatchResult(item_id=item_id, pending_id=None)
 
 
+RUNNER_DISCONNECT_GRACE_S = 10.0
+_RELAY_RETRY_INTERVAL_S = 0.5
+
+
+class _RelayTransportLost(Exception):
+    """Signal a runner stream transport loss to the retry supervisor."""
+
+    def __init__(self, *, intentional: bool) -> None:
+        super().__init__("runner stream transport lost")
+        self.intentional = intentional
+
+
 async def _relay_runner_stream(
+    session_id: str,
+    runner_client: httpx.AsyncClient,
+    conversation_store: ConversationStore,
+    ready: asyncio.Event | None = None,
+) -> None:
+    """Relay a runner stream, retrying transient drops within a grace window."""
+    loop = asyncio.get_running_loop()
+    deadline: float | None = None
+    while True:
+        started = loop.time()
+        try:
+            await _relay_runner_stream_once(
+                session_id,
+                runner_client,
+                conversation_store,
+                ready,
+            )
+            return
+        except _RelayTransportLost as lost:
+            now = loop.time()
+            if deadline is None or now - started > RUNNER_DISCONNECT_GRACE_S:
+                deadline = now + RUNNER_DISCONNECT_GRACE_S
+            if not lost.intentional and now + _RELAY_RETRY_INTERVAL_S < deadline:
+                await asyncio.sleep(_RELAY_RETRY_INTERVAL_S)
+                continue
+            if lost.intentional:
+                _intentional_stop_sessions.discard(session_id)
+                _publish_status(session_id, "idle")
+                await _persist_session_status_error_labels(
+                    session_id,
+                    None,
+                    conversation_store,
+                )
+            else:
+                error = ErrorDetail(
+                    code="runner_disconnected",
+                    message="Runner disconnected unexpectedly.",
+                )
+                _publish_status(session_id, "failed", error)
+                await _persist_session_status_error_labels(
+                    session_id,
+                    error,
+                    conversation_store,
+                )
+            return
+
+
+async def _relay_runner_stream_once(
     session_id: str,
     runner_client: httpx.AsyncClient,
     conversation_store: ConversationStore,
@@ -5263,50 +5370,8 @@ async def _relay_runner_stream(
                         continue
                     session_stream.publish(session_id, event)
 
-    except (httpx.HTTPError, ConnectionError):
-        # WSTunnelTransport raises bare ConnectionError on tunnel
-        # close; treat the same as HTTPError so the task exits
-        # gracefully instead of leaving an unretrieved exception.
-        _logger.warning(
-            "Relay: runner transport lost for session=%s",
-            session_id,
-            exc_info=True,
-        )
-        if session_id in _intentional_stop_sessions:
-            # User clicked Stop: the Stop handler brought this runner's tunnel
-            # down on purpose (see _stop_session_host_runner), so the drop is
-            # expected — not a failure. Publish a quiet idle and clear any error
-            # label so the chat and sidebar settle to a stopped state instead of
-            # rendering "Error · runner_disconnected". One-shot: discard the
-            # marker so a genuine later disconnect surfaces normally.
-            _intentional_stop_sessions.discard(session_id)
-            _publish_status(session_id, "idle")
-            await _persist_session_status_error_labels(
-                session_id,
-                None,
-                conversation_store,
-            )
-        else:
-            # Publish a failed status so the client's SSE stream sees a
-            # clean error event instead of silent truncation (#1114).
-            disconnect_error = ErrorDetail(
-                code="runner_disconnected",
-                message="Runner disconnected unexpectedly.",
-            )
-            _publish_status(session_id, "failed", disconnect_error)
-            # Persist the disconnect cause as durable labels so the
-            # distinction survives into snapshots and child-session
-            # summaries. Without this the relay-fed cache only carries a
-            # generic ``failed`` and ``last_task_error`` is dropped, leaving
-            # the UI unable to tell a benign runner disconnect from a real
-            # task failure (Option B: render a "Disconnected" pill, not the
-            # red "Failed" pill). Cleared on the next ``running`` edge by the
-            # session.status handler, exactly like other failure labels.
-            await _persist_session_status_error_labels(
-                session_id,
-                disconnect_error,
-                conversation_store,
-            )
+    except (httpx.HTTPError, ConnectionError) as exc:
+        raise _RelayTransportLost(intentional=session_id in _intentional_stop_sessions) from exc
     except asyncio.CancelledError:
         raise
     finally:
@@ -7716,6 +7781,7 @@ __all__ = [
     "_kick_managed_relaunch",
     "_kick_managed_wake",
     "_labels_for_viewer",
+    "_mark_runner_sessions_offline_impl",
     "_maybe_relaunch_managed_sandbox",
     "_maybe_wake_stale_resumable_managed_sandbox",
     "_native_subagent_wrapper_labels",
