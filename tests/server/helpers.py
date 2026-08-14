@@ -751,6 +751,8 @@ def build_agent_bundle(
             }
             if "description" in sa:
                 sa_config["description"] = sa["description"]
+            if "executor_config" in sa:
+                sa_config["executor"].setdefault("config", {}).update(sa["executor_config"])
             sa_bytes = yaml.dump(sa_config).encode()
             sa_info = tarfile.TarInfo(
                 name=f"agents/{sa['name']}/config.yaml",

@@ -1105,6 +1105,21 @@ def _claude_internal_write_files() -> list[pathlib.Path]:
     return [path for path in candidates if path.exists()]
 
 
+def _omnigent_runtime_read_roots() -> list[pathlib.Path]:
+    """Read-only roots required by the generated sandbox launcher.
+
+    The launcher imports ``omnigent.inner.sandbox`` after entering the
+    process sandbox.  A session workspace can live outside this checkout, so
+    granting only the workspace and Python interpreter leaves the package
+    itself unreadable on deny-by-default backends such as macOS Seatbelt.
+    Grant the package directory, not its repository root: the latter may
+    contain a ``.venv`` which the user-dotfile masker correctly hides and
+    whose deny rule would override the interpreter's narrow read grant.
+    """
+
+    return [pathlib.Path(__file__).resolve().parents[1]]
+
+
 def _resolve_sandbox_cwd(spec_cwd: str | None) -> pathlib.Path:
     """Resolve the sandbox root, rooting relative paths at the session
     working folder rather than the runner daemon's process cwd.
@@ -1182,7 +1197,11 @@ def prepare_claude_cli_path(
         # whole native-tool process tree inside a network-denying sandbox.
         return PreparedClaudeCli(cli_path=real_cli_path, enable_native_tools=False)
 
-    sandbox = with_additional_read_roots(sandbox, _claude_internal_write_roots())
+    internal_write_roots = _claude_internal_write_roots()
+    sandbox = with_additional_read_roots(
+        sandbox,
+        [*internal_write_roots, *_omnigent_runtime_read_roots()],
+    )
     sandbox = with_additional_write_roots(sandbox, _claude_internal_write_roots())
     sandbox = with_additional_write_files(sandbox, _claude_internal_write_files())
     # Dry-run the spawn-time wrap now, while degrading is still possible.
@@ -1274,17 +1293,17 @@ class _ResolvedSkills:
     That auto-default loads ``~/.claude/skills/`` and the cwd's
     ancestor ``.claude/skills/`` chain into the system prompt
     listing even when the ``Skill`` tool itself is suppressed.
-    Hermetic agents need to explicitly override
-    ``setting_sources=[]`` to actually hide host skills from the
-    model's view of its own skill listing.
+    Hermetic OAuth agents still need the user setting source for
+    authentication. The executor combines that source with Claude
+    Code safe mode and disabled slash commands so authentication is
+    retained without loading user instructions, hooks, or skills.
 
     :param skills: Value for ``ClaudeAgentOptions.skills``:
         ``"all"`` / list of names / empty list for hermetic mode.
     :param setting_sources: Value for
         ``ClaudeAgentOptions.setting_sources``: ``None`` to let
         the SDK pick its default (``["user", "project"]``), or
-        an explicit list (e.g. ``[]`` for hermetic mode where we
-        don't want any scope-based discovery).
+        an explicit list (``["user"]`` for hermetic OAuth mode).
     """
 
     skills: str | list[str]
@@ -1306,12 +1325,11 @@ def _resolve_skills_option(
       auto-defaults to ``["user", "project"]``). All host skills
       from ``~/.claude/skills/`` and ``<cwd>/.claude/skills/``
       (walking up the cwd tree) appear in the model's listing.
-    - ``"none"`` → ``skills=[]``, ``setting_sources=[]``. Both
-      the ``Skill`` tool listing AND the scope-based discovery
-      are suppressed: no host skills appear in the system
-      prompt or as invokable. Bundled skills (loaded via
-      ``--plugin-dir``) are unaffected by ``setting_sources``
-      and remain visible.
+    - ``"none"`` → ``skills=[]``, ``setting_sources=["user"]``.
+      The user source preserves Claude OAuth. The caller also enables
+      safe mode and disables slash commands, which suppresses host
+      instructions, hooks, and skills. Assigned bundle skills remain
+      available through Omnigent's ``load_skill`` MCP tool.
     - ``list[str]`` → ``skills=[names]``, ``setting_sources=None``.
       Only the named subset is in the model's listing; the SDK's
       auto-default still loads user and project sources for
@@ -1326,11 +1344,7 @@ def _resolve_skills_option(
     if skills_filter == "all":
         return _ResolvedSkills(skills="all", setting_sources=None)
     if skills_filter == "none":
-        # Empty ``skills`` suppresses the listing AND empty
-        # ``setting_sources`` skips the SDK's auto-default that
-        # would otherwise load ``~/.claude/skills/`` for the
-        # system prompt anyway.
-        return _ResolvedSkills(skills=[], setting_sources=[])
+        return _ResolvedSkills(skills=[], setting_sources=["user"])
     if isinstance(skills_filter, list):
         return _ResolvedSkills(skills=list(skills_filter), setting_sources=None)
     return None
@@ -2243,18 +2257,17 @@ class ClaudeSDKExecutor(Executor):
         # (the live regression that makes the agent answer "I
         # don't have a Skill tool exposed in this session").
         #
-        # ``--bare`` (formerly in ``extra_args``) is intentionally
-        # NOT passed: bare mode skips CLAUDE.md auto-discovery,
-        # plugin sync, and auto-memory — exactly the host config
-        # users expect to leak through to a ``claude-sdk`` harness
-        # they explicitly opted into. ``no-session-persistence``
-        # stays because omnigent owns conversation persistence
-        # via its own conversation store.
+        # ``skills: none`` is the explicit hermetic mode: safe mode
+        # disables user customizations while retaining auth, and
+        # disabled slash commands removes Claude-native Skills. Other
+        # filters preserve the SDK's normal configuration discovery.
+        # ``no-session-persistence`` stays because Omnigent owns
+        # conversation persistence via its own conversation store.
         # OS-environment tools are provided via Omnigent ``sys_os_*``
         # MCP tools (declared via ``os_env`` in the spec), not the
         # SDK's native Bash/Read/Edit/Write.  Only the Skill tool
         # needs to be in the SDK's base set.
-        base_tools: list[str] = ["Skill"]
+        base_tools: list[str] = [] if self._skills_filter == "none" else ["Skill"]
         # Translate the spec's host-skill filter into the SDK
         # options. Falls back to ``"all"`` semantics when the
         # field is malformed (the parser already validates, so
@@ -2262,11 +2275,13 @@ class ClaudeSDKExecutor(Executor):
         resolved = _resolve_skills_option(self._skills_filter) or _ResolvedSkills(
             skills="all", setting_sources=None
         )
-        # Bundle skills are exposed via the SDK's plugin mechanism.
+        # Bundle plugins remain available for non-hermetic filters.
         # The bundle's ``<bundle>/skills/<name>/SKILL.md`` files are
         # discovered as plugin skills (no ``.claude/`` prefix needed
         # under the plugin convention — see plugin discovery test in
-        # tests/inner/test_claude_sdk_executor.py). The plugin's
+        # tests/inner/test_claude_sdk_executor.py). In hermetic mode,
+        # assigned skills are loaded through Omnigent MCP instead of the
+        # Claude-native Skill tool. The plugin's
         # ``name`` (and thus the skill-listing prefix) comes from
         # the manifest written at construction time.
         bundle_plugins: list[Any] = []  # type: ignore[explicit-any]  # SdkPluginConfig is a TypedDict — typed Any here to keep the import lazy
@@ -2286,18 +2301,23 @@ class ClaudeSDKExecutor(Executor):
             "include_hook_events": True,
             "skills": resolved.skills,
             "plugins": bundle_plugins,
-            "extra_args": {"no-session-persistence": None},
+            "extra_args": (
+                {
+                    "safe-mode": None,
+                    "disable-slash-commands": None,
+                    "no-session-persistence": None,
+                }
+                if self._skills_filter == "none"
+                else {"no-session-persistence": None}
+            ),
             "max_buffer_size": 10 * 1024 * 1024,
         }
         # Only forward ``setting_sources`` when explicitly set.
         # ``None`` lets the SDK apply its default
         # (``["user", "project"]`` when ``skills`` is non-None).
-        # An empty list — produced by ``"none"`` — is forwarded
-        # verbatim so the SDK doesn't auto-default it back to
-        # ``["user", "project"]``, which would re-load host
-        # skills into the model's system prompt despite
-        # ``skills=[]`` (the live regression that prompted this
-        # branch).
+        # Hermetic mode explicitly forwards ``["user"]`` so Claude
+        # OAuth remains available. Its safe-mode/disable-slash-command
+        # flags prevent that source from injecting user customizations.
         if resolved.setting_sources is not None:
             options_kwargs["setting_sources"] = resolved.setting_sources
         try:

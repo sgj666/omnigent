@@ -1387,6 +1387,16 @@ class SessionCreateRequest(BaseModel):
     harness_override: str | None = None
     expected_agent_bundle: SessionAgentBundleExpectation | None = None
     dispatch_source_id: str | None = Field(default=None, min_length=1, max_length=128)
+    worktree_base_ref: str | None = Field(default=None, min_length=1, max_length=1024)
+    run_child_sandbox_override: Literal["none"] | None = None
+
+    @field_validator("worktree_base_ref")
+    @classmethod
+    def _validate_worktree_base_ref(cls, value: str | None) -> str | None:
+        """Reject option-shaped refs before they cross the host Git boundary."""
+        if value is not None and value.startswith("-"):
+            raise ValueError("worktree_base_ref must not start with '-'")
+        return value
 
     @model_validator(mode="after")
     def _check_git_requires_host(self) -> SessionCreateRequest:
@@ -4833,6 +4843,7 @@ class RunInspectorAttempt(_RunInspectorModel):
     completed_at: int | None = None
     failure_code: str | None = None
     failure_message: str | None = None
+    retry_of_attempt_id: str | None = None
     source_event_id: str | None = None
     created_at: int = 0
     updated_at: int | None = None

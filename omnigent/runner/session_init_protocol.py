@@ -11,6 +11,7 @@ from omnigent.entities import Agent, AgentBundleSnapshot, Conversation
 SessionInitProtocolVersion: TypeAlias = Literal[2]
 SESSION_INIT_PROTOCOL_VERSION: SessionInitProtocolVersion = 2
 SESSION_INIT_PAYLOAD_KEY = "session_init"
+RUN_CHILD_SANDBOX_OVERRIDE_LABEL = "omnigent.run_child.sandbox_override"
 
 
 class RunnerSessionInitSnapshot(BaseModel):  # type: ignore[explicit-any]  # Pydantic uses Any

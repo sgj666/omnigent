@@ -22,6 +22,10 @@ import pytest
 from fastapi import FastAPI
 
 from omnigent.runner import create_runner_app
+from omnigent.runner.session_init_protocol import (
+    RUN_CHILD_SANDBOX_OVERRIDE_LABEL,
+    RunnerSessionInitEnvelope,
+)
 from omnigent.spec.types import (
     AgentSpec,
     ExecutorSpec,
@@ -251,6 +255,56 @@ async def test_enforce_sandbox_overrides_spawn_env() -> None:
     assert sandbox["write_paths"] == ["."], (
         f"Expected write_paths=['.'] (forced by policy), got {sandbox['write_paths']!r}."
     )
+
+
+@pytest.mark.asyncio
+async def test_authorized_run_child_override_forces_none_after_policy() -> None:
+    """A server-authorized acceptance child can run outside the frozen sandbox."""
+    spec = _spec_with_enforce_sandbox(sandbox_type="linux_bwrap")
+    pm = _FakeProcessManager(_ScriptedHarnessClient())
+
+    async def _resolver(agent_id: str, session_id: str | None = None) -> AgentSpec:
+        del agent_id, session_id
+        return spec
+
+    app = create_runner_app(
+        process_manager=pm,  # type: ignore[arg-type]
+        spec_resolver=_resolver,
+        server_client=NullServerClient(),  # type: ignore[arg-type]
+    )
+    envelope = RunnerSessionInitEnvelope.model_validate(
+        {
+            "protocol_version": 2,
+            "server_version": "test",
+            "session_id": "conv_acceptance",
+            "agent_id": "ag_test",
+            "bundle_version": 1,
+            "bundle_digest": "digest",
+            "bundle_location": "bundle",
+            "sub_agent_name": "verifier",
+            "snapshot": {
+                "created_at": 1,
+                "updated_at": 1,
+                "labels": {RUN_CHILD_SANDBOX_OVERRIDE_LABEL: "none"},
+            },
+        }
+    )
+
+    async with _runner_client(app) as client:
+        resp = await client.post(
+            "/v1/sessions",
+            json={
+                "session_id": "conv_acceptance",
+                "agent_id": "ag_test",
+                "sub_agent_name": "verifier",
+                "session_init": envelope.model_dump(mode="json"),
+            },
+        )
+
+    assert resp.status_code == 201, resp.text
+    env = pm.get_client_calls[-1][2]
+    assert env is not None
+    assert json.loads(env["HARNESS_CLAUDE_SDK_OS_ENV"])["sandbox"]["type"] == "none"
 
 
 @pytest.mark.asyncio

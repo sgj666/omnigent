@@ -417,6 +417,10 @@ class TestConstructor(unittest.TestCase):
                 return_value=[],
             ),
             patch(
+                "omnigent.inner.claude_sdk_executor._omnigent_runtime_read_roots",
+                return_value=[Path("/opt/omnigent-runtime")],
+            ),
+            patch(
                 "omnigent.inner.claude_sdk_executor.create_exec_launcher",
                 side_effect=_capture_launcher,
             ),
@@ -431,6 +435,10 @@ class TestConstructor(unittest.TestCase):
         # across platforms.
         expected = Path("/home/test/.claude/sessions").resolve(strict=False)
         self.assertIn(expected, captured["sandbox"].read_roots)
+        self.assertIn(
+            Path("/opt/omnigent-runtime").resolve(strict=False),
+            captured["sandbox"].read_roots,
+        )
 
     def test_default_process_sandbox_wraps_cli_without_enabling_native_tools(self):
         from omnigent.inner.claude_sdk_executor import ClaudeSDKExecutor
@@ -1554,28 +1562,18 @@ class TestSkillsFilterTranslation(unittest.TestCase):
         self.assertEqual(result.skills, "all")
         self.assertIsNone(result.setting_sources)
 
-    def test_none_zeros_skills_and_setting_sources(self) -> None:
+    def test_none_preserves_user_auth_source(self) -> None:
         """
-        ``"none"`` → SDK ``skills=[]`` AND
-        ``setting_sources=[]``.
-
-        BOTH must be set to truly suppress host skills. The SDK's
-        ``_apply_skills_defaults`` auto-fills
-        ``setting_sources=["user","project"]`` when ``skills`` is
-        non-None — including when ``skills=[]``. That auto-default
-        loads ``~/.claude/skills/`` into the system prompt
-        listing even though the ``Skill`` tool itself is hidden.
-        Forcing ``setting_sources=[]`` is what actually keeps the
-        listing empty. The user-reported regression: with only
-        ``skills=[]`` set, ``skills: none`` in YAML still showed
-        every host skill in the model's output.
+        ``"none"`` keeps the user source solely so Claude OAuth works.
+        The executor pairs it with safe mode and disabled slash commands
+        to suppress user customizations and skills.
         """
         from omnigent.inner.claude_sdk_executor import _resolve_skills_option
 
         result = _resolve_skills_option("none")
         assert result is not None
         self.assertEqual(result.skills, [])
-        self.assertEqual(result.setting_sources, [])
+        self.assertEqual(result.setting_sources, ["user"])
 
     def test_list_lets_sdk_default_setting_sources(self) -> None:
         """A list of names round-trips and uses the SDK default."""
@@ -1695,6 +1693,90 @@ class TestStreamEventStreaming(unittest.TestCase):
             self.assertEqual(events_a2[-1].response, "result for hello")
 
         _run(_t())
+
+    def test_skills_none_uses_oauth_safe_hermetic_options(self):
+        from omnigent.inner.claude_sdk_executor import ClaudeSDKExecutor
+
+        captured = {}
+
+        class _ResultMessage:
+            def __init__(self, session_id, result):
+                self.session_id = session_id
+                self.result = result
+
+        class _FakeSDK:
+            AssistantMessage = type("AssistantMessage", (), {})
+            UserMessage = type("UserMessage", (), {})
+            SystemMessage = type("SystemMessage", (), {})
+            ResultMessage = _ResultMessage
+            StreamEvent = type("StreamEvent", (), {})
+            ClaudeAgentOptions = type(
+                "ClaudeAgentOptions",
+                (),
+                {"__init__": lambda self, **kwargs: self.__dict__.update(kwargs)},
+            )
+
+            @staticmethod
+            def tool(name, desc, params):
+                def decorator(handler):
+                    return type(
+                        "Tool",
+                        (),
+                        {
+                            "name": name,
+                            "description": desc,
+                            "parameters": params,
+                            "handler": handler,
+                        },
+                    )()
+
+                return decorator
+
+            @staticmethod
+            def create_sdk_mcp_server(**kwargs):
+                return kwargs
+
+            class ClaudeSDKClient:
+                def __init__(self, options):
+                    captured.update(options.__dict__)
+
+                async def connect(self):
+                    return None
+
+                async def query(self, prompt, session_id="default"):
+                    self.message = _ResultMessage(session_id, "done")
+
+                async def receive_response(self):
+                    yield self.message
+
+                async def disconnect(self):
+                    return None
+
+        async def _t():
+            executor = ClaudeSDKExecutor(skills_filter="none")
+            with patch("omnigent.inner.claude_sdk_executor._ensure_sdk", return_value=_FakeSDK):
+                events = [
+                    event
+                    async for event in executor.run_turn(
+                        [{"role": "user", "content": "hi", "session_id": "session-a"}],
+                        [],
+                        "",
+                    )
+                ]
+            self.assertIsInstance(events[-1], TurnComplete)
+
+        _run(_t())
+        self.assertEqual(captured["tools"], [])
+        self.assertEqual(captured["skills"], [])
+        self.assertEqual(captured["setting_sources"], ["user"])
+        self.assertEqual(
+            captured["extra_args"],
+            {
+                "safe-mode": None,
+                "disable-slash-commands": None,
+                "no-session-persistence": None,
+            },
+        )
 
     def test_os_env_spec_exposes_only_explicit_native_tools(self):
         from omnigent.inner.claude_sdk_executor import ClaudeSDKExecutor

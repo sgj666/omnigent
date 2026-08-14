@@ -401,3 +401,55 @@ def test_shell_command_does_not_see_omnigent_project_root(
     out = result.get("stdout", "")
     assert project_entry in out
     assert str(_project_root()) not in out
+
+
+def test_active_helper_grants_omnigent_package_read_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The sandboxed helper can import Omnigent outside its workspace."""
+    from omnigent.inner import os_env as os_env_module
+    from omnigent.inner.sandbox import SandboxPolicy
+
+    captured: dict[str, SandboxPolicy] = {}
+
+    class _Backend:
+        def wrap_launcher_argv(self, argv, sandbox, cwd, *, chdir=None):
+            captured["sandbox"] = sandbox
+            return argv
+
+        def post_spawn(self, sandbox, pid):
+            return None
+
+    class _Proc:
+        pid = 123
+        stdin = None
+        stdout = None
+        stderr = None
+
+        def poll(self):
+            return 0
+
+    policy = SandboxPolicy(
+        backend_type="darwin_seatbelt",
+        active=True,
+        read_roots=[tmp_path],
+        write_roots=[],
+        write_files=[],
+        allow_network=False,
+    )
+    client = os_env_module._HelperProcessClient(
+        cwd=tmp_path,
+        shell_path="/bin/zsh",
+        sandbox=policy,
+    )
+    monkeypatch.setattr(os_env_module, "get_backend", lambda _kind: _Backend())
+    monkeypatch.setattr(os_env_module.subprocess, "Popen", lambda *args, **kwargs: _Proc())
+
+    try:
+        client._start_locked()
+    finally:
+        client.close()
+
+    package_root = (_project_root() / "omnigent").resolve(strict=False)
+    assert package_root in captured["sandbox"].read_roots

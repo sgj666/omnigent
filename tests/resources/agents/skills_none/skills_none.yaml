@@ -2,9 +2,8 @@
 #
 # Exercises the spec/runtime/harness pipeline that suppresses
 # every host-discovered Claude Code skill. The harness wrap
-# must produce ``ClaudeAgentOptions(skills=[], setting_sources=[])``
-# so the underlying CLI sees ``--setting-sources=`` (empty) and
-# does NOT walk ``~/.claude/skills/`` / ``<cwd>/.claude/skills/``.
+# must preserve the user auth source while safe mode and disabled slash
+# commands keep host customizations and Skills out of the runtime.
 #
 # Used by tests/runtime/test_workflow.py::
 # test_skills_filter_pipeline_e2e. The original user-reported

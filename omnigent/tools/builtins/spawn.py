@@ -372,6 +372,27 @@ def _build_sys_session_send_schema(
                                             "named session."
                                         ),
                                     },
+                                    "base_ref": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "description": (
+                                            "Optional immutable Git ref or commit that a newly "
+                                            "created Run worker worktree must start from. Use for "
+                                            "verification/review of a fixed candidate. "
+                                            "Applies only "
+                                            "to the first named send; omitted = the Workspace "
+                                            "repository default."
+                                        ),
+                                    },
+                                    "sandbox": {
+                                        "type": "string",
+                                        "enum": ["none"],
+                                        "description": (
+                                            "Optional execution sandbox override for a fresh "
+                                            "fixed-candidate verifier/reviewer Run worker. "
+                                            "Requires base_ref and applies only on first create."
+                                        ),
+                                    },
                                     **harness_property,
                                     "cost_budget": {
                                         "type": "object",

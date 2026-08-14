@@ -64,10 +64,9 @@ Env vars read at startup:
   ``str | list[str]`` carrying ``spec.skills_filter``. When
   unset, falls back to ``"all"`` (the SDK's default). Plumbed
   end-to-end so ``skills: none`` in the spec actually produces
-  ``ClaudeAgentOptions(skills=[], setting_sources=[])`` — the
-  pair that suppresses both host-discovered (user/project)
-  skills and the SDK's auto-default of
-  ``setting_sources=["user","project"]``.
+  ``ClaudeAgentOptions(skills=[], setting_sources=["user"])`` plus
+  safe mode and disabled slash commands. This retains OAuth while
+  suppressing host-discovered skills and user customizations.
 - ``HARNESS_CLAUDE_SDK_BUNDLE_DIR``: Absolute path to the
   agent bundle's extracted root. When set, the inner executor
   passes ``plugins=[{"type": "local", "path": <bundle_dir>}]``

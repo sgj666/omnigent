@@ -1192,6 +1192,34 @@ def _subagent_file_ids_from_args(args: _JsonObject) -> list[str]:
     return list(raw_ids)
 
 
+def _subagent_base_ref_from_args(args: _JsonObject) -> str | None:
+    """Extract the fixed Git base ref requested for a new Run child worktree."""
+    raw_message = args.get("args")
+    if not isinstance(raw_message, dict):
+        return None
+    raw_base_ref = raw_message.get("base_ref")
+    if raw_base_ref is None:
+        return None
+    if not isinstance(raw_base_ref, str) or not raw_base_ref.strip():
+        raise ValueError("'base_ref' must be a non-empty string when provided")
+    if raw_base_ref.startswith("-") or len(raw_base_ref) > 1024:
+        raise ValueError("'base_ref' is not a valid Git ref")
+    return raw_base_ref
+
+
+def _subagent_sandbox_override_from_args(args: _JsonObject) -> str | None:
+    """Extract the restricted fixed-candidate acceptance sandbox override."""
+    raw_message = args.get("args")
+    if not isinstance(raw_message, dict):
+        return None
+    raw_sandbox = raw_message.get("sandbox")
+    if raw_sandbox is None:
+        return None
+    if raw_sandbox != "none":
+        raise ValueError("'sandbox' only accepts 'none'")
+    return raw_sandbox
+
+
 async def _teardown_failed_child(
     server_client: httpx.AsyncClient,
     child_session_id: str,
@@ -1633,6 +1661,16 @@ async def _execute_subagent_tool(
         return f"Error: sys_session_send invalid 'file_ids': {exc}"
 
     try:
+        base_ref = _subagent_base_ref_from_args(args)
+    except ValueError as exc:
+        return f"Error: sys_session_send invalid 'base_ref': {exc}"
+
+    try:
+        sandbox_override = _subagent_sandbox_override_from_args(args)
+    except ValueError as exc:
+        return f"Error: sys_session_send invalid 'sandbox': {exc}"
+
+    try:
         harness_override = _subagent_harness_override_from_args(args)
     except ValueError as exc:
         return f"Error: sys_session_send invalid 'harness': {exc}"
@@ -1667,6 +1705,17 @@ async def _execute_subagent_tool(
                 "addressing a sub-agent by 'agent'/'title'; it cannot be "
                 f"forwarded to an existing session by id ({target_session_id!r})."
             )
+        if base_ref is not None:
+            return (
+                "Error: sys_session_send 'base_ref' applies only when a "
+                "sub-agent session is first created; it cannot change an "
+                f"existing session ({target_session_id!r})."
+            )
+        if sandbox_override is not None:
+            return (
+                "Error: sys_session_send 'sandbox' applies only when a "
+                "sub-agent session is first created."
+            )
         if harness_override is not None:
             return (
                 "Error: sys_session_send 'harness' applies only when a "
@@ -1697,6 +1746,14 @@ async def _execute_subagent_tool(
     # Named mode: (agent, title) spawn-or-continue.
     sub_agent_name = args.get("agent")
     session_name = args.get("title")
+    if sandbox_override is not None:
+        if base_ref is None:
+            return "Error: sys_session_send 'sandbox' requires 'base_ref'."
+        if sub_agent_name not in {"verifier", "reviewer"}:
+            return (
+                "Error: sys_session_send 'sandbox' is restricted to fresh "
+                "fixed-candidate verifier/reviewer Run workers."
+            )
     if not sub_agent_name:
         return "Error: sys_session_send requires 'agent' (or 'session_id')"
     if not session_name or not isinstance(session_name, str):
@@ -1764,6 +1821,19 @@ async def _execute_subagent_tool(
                 f"{child_session_id}. Re-send without 'file_ids' to "
                 "continue it, or sys_session_close it first to spawn a "
                 "fresh session with the requested files."
+            )
+        if base_ref is not None:
+            return (
+                f"Error: sys_session_send 'base_ref' applies only when a "
+                f"sub-agent session is first created; {sub_agent_name!r} "
+                f"title {session_name!r} already exists as {child_session_id}. "
+                "Use a new task title for a different fixed candidate."
+            )
+        if sandbox_override is not None:
+            return (
+                f"Error: sys_session_send 'sandbox' applies only when a "
+                f"sub-agent session is first created; {sub_agent_name!r} "
+                f"title {session_name!r} already exists as {child_session_id}."
             )
         if cost_budget is not None:
             return (
@@ -1878,6 +1948,10 @@ async def _execute_subagent_tool(
         }
         if harness_override_canonical is not None:
             create_body["harness_override"] = harness_override_canonical
+        if base_ref is not None:
+            create_body["worktree_base_ref"] = base_ref
+        if sandbox_override is not None:
+            create_body["run_child_sandbox_override"] = sandbox_override
         if model is not None:
             # Reject up front when the child harness would silently
             # ignore the persisted override — no silent drops.

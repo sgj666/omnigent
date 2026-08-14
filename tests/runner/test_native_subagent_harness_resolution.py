@@ -236,6 +236,54 @@ async def test_subagent_background_turn_resolves_child_native_harness() -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_subagent_background_turn_keeps_child_spec_cached_by_session_post() -> None:
+    """The session POST child swap must not be repeated inside the child spec."""
+    hc = _ScriptedHarnessClient(
+        [
+            _sse({"type": "response.created", "response": {"id": "r1"}}),
+            _sse({"type": "response.completed", "response": {"id": "r1"}}),
+        ]
+    )
+    pm = _FakeProcessManager(hc)
+    app = create_runner_app(
+        process_manager=pm,  # type: ignore[arg-type]
+        spec_resolver=_parent_spec_resolver,
+        server_client=_SubAgentSnapshotServer(),  # type: ignore[arg-type]
+    )
+
+    async with _runner_client(app) as client:
+        created = await client.post(
+            "/v1/sessions",
+            json={
+                "session_id": CHILD_SESSION_ID,
+                "agent_id": PARENT_AGENT_ID,
+                "sub_agent_name": SUB_AGENT_NAME,
+            },
+        )
+        assert created.status_code == 201, f"{created.status_code} {created.text}"
+
+        resp = await client.post(
+            f"/v1/sessions/{CHILD_SESSION_ID}/events",
+            json={
+                "type": "message",
+                "role": "user",
+                "agent_id": PARENT_AGENT_ID,
+                "content": [{"type": "input_text", "text": "hi"}],
+            },
+        )
+        assert resp.status_code == 202, f"{resp.status_code} {resp.text}"
+
+        for _ in range(200):
+            if len(pm.get_client_calls) >= 2:
+                break
+            await asyncio.sleep(0.01)
+
+    harnesses = [h for (_conv, h, _env) in pm.get_client_calls]
+    assert harnesses
+    assert all(h == "claude-native" for h in harnesses)
+
+
 class _CatchUpServer(_SubAgentSnapshotServer):
     """Like the snapshot server, but ``/items`` returns one fresh user message.
 

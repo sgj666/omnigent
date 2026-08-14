@@ -127,6 +127,7 @@ from omnigent.runner.resource_registry import (
     TerminalLifecycle,
 )
 from omnigent.runner.session_init_protocol import (
+    RUN_CHILD_SANDBOX_OVERRIDE_LABEL,
     RunnerSessionInitEnvelope,
     parse_runner_session_init_envelope,
 )
@@ -2813,6 +2814,8 @@ def create_runner_app(
                 if _start_verdict.data is not None:
                     _apply_sandbox_override_from_verdict(spec, _start_verdict.data)
 
+            _apply_run_child_sandbox_override(spec, init_context.labels)
+
             spawn_env = _build_spawn_env_from_spec(
                 spec,
                 harness_name,
@@ -5264,7 +5267,15 @@ def create_runner_app(
         if _sa_name and cached_spec is not None:
             from omnigent.runtime.workflow import _find_spec_by_name
 
-            sub_spec = _find_spec_by_name(cached_spec, _sa_name)
+            # POST /v1/sessions may already have cached the resolved child
+            # spec.  Do not search for the child inside itself on the first
+            # background turn; that false miss used to fall back to the
+            # coordinator prompt and tools.
+            sub_spec = (
+                cached_spec
+                if cached_spec.name == _sa_name
+                else _find_spec_by_name(cached_spec, _sa_name)
+            )
             if sub_spec is not None:
                 cached_spec = sub_spec
                 _session_spec_cache[conv] = (
@@ -9403,3 +9414,19 @@ def _apply_sandbox_override_from_verdict(
     for key, value in sandbox_override.items():
         if hasattr(spec.os_env.sandbox, key):
             setattr(spec.os_env.sandbox, key, value)
+
+
+def _apply_run_child_sandbox_override(
+    spec: Any,
+    labels: Mapping[str, str] | None,
+) -> None:
+    """Apply the server-authorized fixed-candidate acceptance sandbox."""
+    if not labels or labels.get(RUN_CHILD_SANDBOX_OVERRIDE_LABEL) != "none":
+        return
+    from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
+
+    if spec.os_env is None:
+        spec.os_env = OSEnvSpec()
+    if spec.os_env.sandbox is None:
+        spec.os_env.sandbox = OSEnvSandboxSpec()
+    spec.os_env.sandbox.type = "none"

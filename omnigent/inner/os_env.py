@@ -44,6 +44,7 @@ from .sandbox import (
     get_backend,
     resolve_sandbox,
     set_temp_env,
+    with_additional_read_roots,
     with_additional_write_roots,
 )
 
@@ -454,6 +455,12 @@ class _HelperProcessClient:
         helper_cwd = self.cwd
         credential_runtime: CredentialProxyRuntime | None = None
         if sandbox.active:
+            # The helper imports ``omnigent.inner.os_env`` after the
+            # deny-by-default sandbox is active. Workspaces may live outside
+            # this checkout, so grant the package root used by PYTHONPATH.
+            # The agent's child shell strips this path again in
+            # ``_child_shell_env``.
+            sandbox = with_additional_read_roots(sandbox, [_project_root() / "omnigent"])
             self._tmpdir = create_private_tmpdir()
             sandbox = with_additional_write_roots(sandbox, [self._tmpdir])
             set_temp_env(env, self._tmpdir)

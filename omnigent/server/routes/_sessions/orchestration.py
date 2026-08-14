@@ -58,7 +58,10 @@ from omnigent.policies.types import (
     PolicyResult,
 )
 from omnigent.runner.routing import RunnerRouter
-from omnigent.runner.session_init_protocol import build_runner_session_init_payload
+from omnigent.runner.session_init_protocol import (
+    RUN_CHILD_SANDBOX_OVERRIDE_LABEL,
+    build_runner_session_init_payload,
+)
 from omnigent.runner.transports.ws_tunnel.registry import TunnelRegistry
 from omnigent.runs.session_projection import canonical_dispatch_title
 from omnigent.runtime import (
@@ -404,6 +407,15 @@ async def _prepare_run_child_followup(
         return conv, "accepted", idempotency_key, reservation.attempt.id
     attempt = reservation.attempt
     workspace_root = Path(workspace.root_path).resolve()
+    if Path(conv.workspace).resolve() == workspace_root:
+        phase, claimed_attempt = await asyncio.to_thread(
+            run_store.claim_followup_dispatch,
+            run_id=run.id,
+            child_session_id=conv.id,
+            source_id=dispatch_source_id,
+            idempotency_key=idempotency_key,
+        )
+        return conv, phase, idempotency_key, claimed_attempt.id
     attempt_root = (
         workspace_root.parent
         / f"{workspace_root.name}-worktrees"
@@ -6241,6 +6253,7 @@ async def _create_session_from_existing_agent(
     run_child_lease_owner: str | None = None
     run_child_host_conn: HostConnection | None = None
     run_child_attempt_id: str | None = None
+    run_child_uses_shared_workspace = False
     if parent_conv is not None:
         run_store = getattr(request.app.state, "run_store", None)
         root_session_id = parent_conv.root_conversation_id
@@ -6285,6 +6298,43 @@ async def _create_session_from_existing_agent(
                     code=ErrorCode.CONFLICT,
                 )
 
+            sub_spec = (
+                _resolve_subagent_spec(
+                    agent=agent,
+                    sub_agent_name=body.sub_agent_name,
+                    agent_cache=agent_cache,
+                )
+                if body.sub_agent_name
+                else None
+            )
+            run_workspace_mode = (
+                sub_spec.executor.config.get("run_workspace", "worktree")
+                if sub_spec is not None
+                else "worktree"
+            )
+            if run_workspace_mode not in {"shared", "worktree"}:
+                raise OmnigentError(
+                    "sub-agent executor.config.run_workspace must be 'shared' or 'worktree'",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            run_child_uses_shared_workspace = run_workspace_mode == "shared"
+            if run_child_uses_shared_workspace and body.worktree_base_ref is not None:
+                raise OmnigentError(
+                    "worktree_base_ref requires a Run Child worktree",
+                    code=ErrorCode.INVALID_INPUT,
+                )
+            if body.run_child_sandbox_override is not None:
+                if body.worktree_base_ref is None:
+                    raise OmnigentError(
+                        "run_child_sandbox_override requires worktree_base_ref",
+                        code=ErrorCode.INVALID_INPUT,
+                    )
+                if body.sub_agent_name not in {"verifier", "reviewer"}:
+                    raise OmnigentError(
+                        "run_child_sandbox_override is restricted to verifier/reviewer",
+                        code=ErrorCode.INVALID_INPUT,
+                    )
+
             # Run identity, host, workspace and lease ownership are always
             # derived from the authenticated Parent lineage. Caller-supplied
             # execution fields are not authoritative on this path.
@@ -6315,15 +6365,29 @@ async def _create_session_from_existing_agent(
                 run_child_rollback.child_session_id = run_child_id
                 run_child_rollback.attempt_id = run_child_attempt_id
             workspace_root = Path(workspace.root_path).resolve()
+            if run_child_uses_shared_workspace:
+                body.host_id = derived_host_id
+                body.host_type = None
+                body.workspace = str(workspace_root)
+                body.git = None
+                body.attempt_id = None
+                body.lease_owner_id = None
+                inherited_runner_id = None
+                repositories = ()
+            else:
+                repositories = tuple(
+                    WorkspaceRepository(
+                        id=repository.id,
+                        path=repository.path,
+                        default_branch=body.worktree_base_ref,
+                    )
+                    for repository in workspace.repositories
+                )
             attempt_root = (
                 workspace_root.parent
                 / f"{workspace_root.name}-worktrees"
                 / f"omnigent-attempt-{run_child_attempt_id}"
             ).resolve()
-            repositories = tuple(
-                WorkspaceRepository(id=repository.id, path=repository.path)
-                for repository in workspace.repositories
-            )
             target_paths: dict[str, str] = {}
             for repository in repositories:
                 target = (attempt_root / repository.path).resolve()
@@ -6352,43 +6416,55 @@ async def _create_session_from_existing_agent(
                 acquire_attempt_worktree_leases,
             )
 
-            try:
-                run_child_leases = await acquire_attempt_worktree_leases(
-                    host_id=derived_host_id,
-                    host_registry=host_registry,
-                    host_conn=run_child_host_conn,
-                    workspace_root=workspace_root,
-                    repositories=repositories,
-                    attempt_id=run_child_attempt_id,
-                    owner_id=run_child_lease_owner,
-                    run_id=run.id,
-                    child_session_id=run_child_id,
-                    target_paths=target_paths,
-                )
-            except Exception:
+            if not run_child_uses_shared_workspace:
                 try:
-                    await asyncio.to_thread(
-                        run_store.fail_reserved_child_dispatch,
-                        run.id,
-                        run_child_id,
-                        code="worktree_create_failed",
-                        message="Run Child worktree creation failed",
+                    run_child_leases = await acquire_attempt_worktree_leases(
+                        host_id=derived_host_id,
+                        host_registry=host_registry,
+                        host_conn=run_child_host_conn,
+                        workspace_root=workspace_root,
+                        repositories=repositories,
+                        attempt_id=run_child_attempt_id,
+                        owner_id=run_child_lease_owner,
+                        run_id=run.id,
+                        child_session_id=run_child_id,
+                        target_paths=target_paths,
                     )
-                except Exception:  # noqa: BLE001 - preserve the Host failure
-                    _logger.warning(
-                        "Run Child reservation rollback failed for session %s",
-                        run_child_id,
-                        exc_info=True,
-                    )
-                raise
-            body.host_id = derived_host_id
-            body.host_type = None
-            body.workspace = str(attempt_root)
-            body.git = None
-            body.attempt_id = None
-            body.lease_owner_id = None
-            # A Run Child gets a dedicated runner launched in its attempt cwd.
-            inherited_runner_id = None
+                except Exception:
+                    try:
+                        await asyncio.to_thread(
+                            run_store.fail_reserved_child_dispatch,
+                            run.id,
+                            run_child_id,
+                            code="worktree_create_failed",
+                            message="Run Child worktree creation failed",
+                        )
+                    except Exception:  # noqa: BLE001 - preserve the Host failure
+                        _logger.warning(
+                            "Run Child reservation rollback failed for session %s",
+                            run_child_id,
+                            exc_info=True,
+                        )
+                    raise
+                body.host_id = derived_host_id
+                body.host_type = None
+                body.workspace = str(attempt_root)
+                body.git = None
+                body.attempt_id = None
+                body.lease_owner_id = None
+                # A Run Child gets a dedicated runner launched in its attempt cwd.
+                inherited_runner_id = None
+
+    if body.worktree_base_ref is not None and run_child_id is None:
+        raise OmnigentError(
+            "worktree_base_ref is only valid for a Run Child worktree",
+            code=ErrorCode.INVALID_INPUT,
+        )
+    if body.run_child_sandbox_override is not None and run_child_id is None:
+        raise OmnigentError(
+            "run_child_sandbox_override is only valid for a Run Child worktree",
+            code=ErrorCode.INVALID_INPUT,
+        )
 
     # Workspace validation: if the caller is binding to a host,
     # they must also pass a workspace, and the workspace must
@@ -6643,6 +6719,20 @@ async def _create_session_from_existing_agent(
         conv = updated_conv
     elif body.labels:
         await asyncio.to_thread(conversation_store.set_labels, conv.id, body.labels)
+
+    if body.run_child_sandbox_override is not None:
+        await asyncio.to_thread(
+            conversation_store.set_labels,
+            conv.id,
+            {RUN_CHILD_SANDBOX_OVERRIDE_LABEL: body.run_child_sandbox_override},
+        )
+        updated_conv = await asyncio.to_thread(conversation_store.get_conversation, conv.id)
+        if updated_conv is None:
+            raise OmnigentError(
+                f"Session {conv.id!r} disappeared while setting Run child sandbox override",
+                code=ErrorCode.INTERNAL_ERROR,
+            )
+        conv = updated_conv
 
     # Emit session.created exactly once at creation time.
     # Best-effort: skip if the host opted out via HostHelloFrame.

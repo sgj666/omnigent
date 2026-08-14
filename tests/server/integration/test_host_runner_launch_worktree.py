@@ -379,7 +379,6 @@ async def test_run_child_reserves_attempt_and_launches_in_two_repo_workspace(
         except TimeoutError:
             pytest.fail(f"tool dispatch timed out after requests: {requests}")
     finally:
-        await runner_http.aclose()
         runner_app.unregister_subagent_work(
             next(
                 (
@@ -574,6 +573,7 @@ async def test_run_child_reserves_attempt_and_launches_in_two_repo_workspace(
             assert len(followup_cap.launch) == 1
         deleted = await client.delete(f"/v1/sessions/{child_id}")
         assert deleted.status_code == 200, deleted.text
+        await runner_http.aclose()
         return
 
     assert json.loads(followup)["conversation_id"] == child_id
@@ -707,6 +707,139 @@ async def test_run_child_reserves_attempt_and_launches_in_two_repo_workspace(
     assert deleted.status_code == 200, deleted.text
     assert len(followup_cap.remove) == 8
     assert run_store.list_active_worktree_leases(run.id) == ()
+    await runner_http.aclose()
+
+
+async def test_run_control_plane_child_uses_shared_workspace_without_worktree(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """A control-plane worker keeps its Attempt but writes the shared workspace."""
+    cap = register_host()
+    agent_payload = await create_test_agent(
+        client,
+        name="run-coordinator-shared",
+        sub_agents=[
+            {
+                "name": "requirement-analyst",
+                "executor_config": {"run_workspace": "shared"},
+            }
+        ],
+    )
+    agent = SqlAlchemyAgentStore(db_uri).get(agent_payload["id"])
+    assert agent is not None
+    snapshot = AgentBundleSnapshot.from_agent(agent)
+    workspace_root = "/Users/alice/project"
+    run_store = SqlAlchemyRunStore(db_uri)
+    workspace = run_store.create_workspace(
+        root_path=workspace_root,
+        repositories=(("product", "product"),),
+    )
+    root = SqlAlchemyConversationStore(db_uri).create_conversation(
+        agent_id=agent.id,
+        host_id=_HOST_ID,
+        workspace=workspace_root,
+        agent_bundle_version=snapshot.bundle_version,
+        agent_bundle_digest=snapshot.bundle_digest,
+        agent_bundle_location=snapshot.bundle_location,
+    )
+    run = run_store.create_run_idempotent(
+        auth_scope="user:local",
+        actor_id=RESERVED_USER_LOCAL,
+        source="api:test",
+        source_event_id="shared-control-plane-child",
+        agent_id=agent.id,
+        bundle_version=snapshot.bundle_version,
+        bundle_digest=snapshot.bundle_digest,
+        bundle_location=snapshot.bundle_location,
+        workspace_id=workspace.id,
+        root_session_id=root.id,
+    ).run
+
+    response = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent.id,
+            "parent_session_id": root.id,
+            "sub_agent_name": "requirement-analyst",
+            "title": "requirement-analyst:review",
+            "dispatch_source_id": "sys_session_send:shared-control-plane-child",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    child = response.json()
+    assert child["workspace"] == workspace_root
+    attempts = run_store.list_attempts(run.id)
+    assert len(attempts) == 1
+    assert attempts[0].child_session_id == child["id"]
+    assert attempts[0].status.value == "queued"
+    assert run_store.list_active_worktree_leases(run.id) == ()
+    assert cap.create == []
+
+
+async def test_run_child_worktree_uses_requested_fixed_base_ref(
+    register_host: RegisterHost,
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """A fixed candidate is passed to host worktree creation, not dropped."""
+    cap = register_host()
+    agent_payload = await create_test_agent(
+        client,
+        name="run-fixed-candidate",
+        sub_agents=[{"name": "verifier"}],
+    )
+    agent = SqlAlchemyAgentStore(db_uri).get(agent_payload["id"])
+    assert agent is not None
+    snapshot = AgentBundleSnapshot.from_agent(agent)
+    workspace_root = "/Users/alice/project"
+    run_store = SqlAlchemyRunStore(db_uri)
+    workspace = run_store.create_workspace(
+        root_path=workspace_root,
+        repositories=(("product", "product"),),
+    )
+    root = SqlAlchemyConversationStore(db_uri).create_conversation(
+        agent_id=agent.id,
+        host_id=_HOST_ID,
+        workspace=workspace_root,
+        agent_bundle_version=snapshot.bundle_version,
+        agent_bundle_digest=snapshot.bundle_digest,
+        agent_bundle_location=snapshot.bundle_location,
+    )
+    run_store.create_run_idempotent(
+        auth_scope="user:local",
+        actor_id=RESERVED_USER_LOCAL,
+        source="api:test",
+        source_event_id="fixed-candidate-child",
+        agent_id=agent.id,
+        bundle_version=snapshot.bundle_version,
+        bundle_digest=snapshot.bundle_digest,
+        bundle_location=snapshot.bundle_location,
+        workspace_id=workspace.id,
+        root_session_id=root.id,
+    )
+
+    response = await client.post(
+        "/v1/sessions",
+        json={
+            "agent_id": agent.id,
+            "parent_session_id": root.id,
+            "sub_agent_name": "verifier",
+            "title": "verifier:fixed-candidate",
+            "dispatch_source_id": "sys_session_send:fixed-candidate-child",
+            "worktree_base_ref": "refs/candidates/final",
+            "run_child_sandbox_override": "none",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert len(cap.create) == 1
+    assert cap.create[0].base_branch == "refs/candidates/final"
+    child_row = SqlAlchemyConversationStore(db_uri).get_conversation(response.json()["id"])
+    assert child_row is not None
+    assert child_row.labels["omnigent.run_child.sandbox_override"] == "none"
 
 
 async def test_native_run_child_terminal_failure_tears_down_and_allows_new_attempt(

@@ -7630,6 +7630,14 @@ def _reject_server_reserved_label_seed(labels: dict[str, str] | None) -> None:
     """
     if not labels:
         return
+    from omnigent.runner.session_init_protocol import RUN_CHILD_SANDBOX_OVERRIDE_LABEL
+
+    if RUN_CHILD_SANDBOX_OVERRIDE_LABEL in labels:
+        raise OmnigentError(
+            f"label {RUN_CHILD_SANDBOX_OVERRIDE_LABEL!r} is server-internal "
+            "and cannot be set by clients",
+            code=ErrorCode.INVALID_INPUT,
+        )
     if _TURN_ACTOR_LABEL in labels:
         raise OmnigentError(
             f"label {_TURN_ACTOR_LABEL!r} is server-internal and cannot be set by clients",

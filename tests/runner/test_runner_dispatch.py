@@ -4582,6 +4582,60 @@ async def test_sys_session_send_model_lands_in_child_create_body(
 
 
 @pytest.mark.asyncio
+async def test_sys_session_send_fixed_candidate_overrides_land_in_child_create_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fixed candidate ref reaches Run child worktree provisioning."""
+    from omnigent.runner import app as runner_app
+    from omnigent.runner.tool_dispatch import execute_tool
+
+    create_bodies: list[dict[str, Any]] = []
+    monkeypatch.setattr(runner_app, "get_session_agent_id", lambda _sid: "ag_parent")
+    monkeypatch.setattr(runner_app, "register_child_session", lambda *a, **k: None)
+    session_inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    async def _server_handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path.endswith("/child_sessions"):
+            return httpx.Response(200, json={"data": []})
+        if request.method == "POST" and request.url.path == "/v1/sessions":
+            create_bodies.append(json.loads(request.content))
+            return httpx.Response(201, json={"id": "conv_child_candidate"})
+        if request.method == "POST" and request.url.path.endswith("/events"):
+            return httpx.Response(202, json={"queued": True})
+        return httpx.Response(404)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(_server_handler), base_url="http://server"
+    ) as server_client:
+        try:
+            output = await execute_tool(
+                tool_name="sys_session_send",
+                arguments=json.dumps(
+                    {
+                        "agent": "verifier",
+                        "title": "verify-candidate",
+                        "args": {
+                            "input": "verify",
+                            "base_ref": "refs/candidates/final",
+                            "sandbox": "none",
+                        },
+                    }
+                ),
+                server_client=server_client,
+                conversation_id="conv_parent_candidate",
+                agent_spec=SimpleNamespace(sub_agents=[SimpleNamespace(name="verifier")]),
+                session_inbox=session_inbox,
+            )
+        finally:
+            runner_app.unregister_subagent_work("conv_child_candidate")
+            runner_app._session_inboxes_ref.pop("conv_parent_candidate", None)
+
+    assert json.loads(output)["status"] == "launching"
+    assert create_bodies[0]["worktree_base_ref"] == "refs/candidates/final"
+    assert create_bodies[0]["run_child_sandbox_override"] == "none"
+
+
+@pytest.mark.asyncio
 async def test_sys_session_send_blocks_fresh_dispatch_when_harness_cli_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
