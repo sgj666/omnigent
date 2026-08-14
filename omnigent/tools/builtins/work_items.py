@@ -36,39 +36,22 @@ class SysWorkItemCreateTool(Tool):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "title": {
-                            "type": "string",
-                            "description": "Concise Task title, at most 256 characters.",
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "Optional goal, context, and acceptance criteria.",
-                        },
-                        "state": {
-                            "type": "string",
-                            "enum": ["backlog", "todo"],
-                            "description": "Initial state. Defaults to backlog.",
-                        },
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "state": {"type": "string", "enum": ["backlog", "todo"]},
                         "priority": {
                             "type": "string",
                             "enum": ["low", "medium", "high", "urgent"],
-                            "description": "Task priority. Defaults to medium.",
                         },
-                        "project_id": {
+                        "project_id": {"type": "string"},
+                        "assignee_agent_id": {"type": "string"},
+                        "assignee_worker_name": {"type": "string"},
+                        "parent_work_item_id": {"type": "string"},
+                        "task_kind": {
                             "type": "string",
-                            "description": "Optional 32-character Project id.",
+                            "enum": ["general", "requirement", "delivery"],
                         },
-                        "assignee_agent_id": {
-                            "type": "string",
-                            "description": (
-                                "Optional 32-character Agent id selected by a multi-Agent "
-                                "coordinator. Omit in a single-Agent session to assign self."
-                            ),
-                        },
-                        "due_at": {
-                            "type": "integer",
-                            "description": "Optional Unix timestamp for the due date.",
-                        },
+                        "due_at": {"type": "integer"},
                     },
                     "required": ["title"],
                     "additionalProperties": False,

@@ -371,6 +371,24 @@ export function TaskDetailPage() {
               />
               <Detail label={t("tasks.columns.project")} value={projectName ?? "—"} />
               <Detail label={t("tasks.detail.assignee")} value={agentName ?? "—"} />
+              <Detail label="内部 Worker" value={item.assignee_worker_name ?? "待分配"} />
+              <Detail
+                label="任务类型"
+                value={
+                  item.task_kind === "requirement"
+                    ? "需求拆分"
+                    : item.task_kind === "delivery"
+                      ? "交付任务"
+                      : "通用任务"
+                }
+              />
+              {item.task_key && <Detail label="稳定任务键" value={item.task_key} />}
+              {item.depends_on.length > 0 && (
+                <Detail label="依赖任务" value={item.depends_on.join(", ")} />
+              )}
+              {item.artifact_requirements.length > 0 && (
+                <Detail label="交付产物" value={item.artifact_requirements.join(", ")} />
+              )}
               <Detail
                 label={t("tasks.columns.due")}
                 value={timestamp(item.due_at, i18n.language)}

@@ -19,6 +19,10 @@ class WorkItemRunStore(ABC):
     @abstractmethod
     def get(self, run_id: str, *, owner_user_id: str | None) -> WorkItemRun | None: ...
 
+    def get_by_session_id(self, session_id: str) -> WorkItemRun | None:
+        del session_id
+        return None
+
     @abstractmethod
     def list_for_work_item(
         self, work_item_id: str, *, owner_user_id: str | None

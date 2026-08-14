@@ -61,10 +61,14 @@ class PlannedTask:
     delivery_run_id: str
     task_key: str
     title: str
-    owner_role: str
+    owner_role: str | None
     status: PlannedTaskStatus = PlannedTaskStatus.PLANNED
     depends_on: tuple[str, ...] = ()
     artifact_requirements: tuple[str, ...] = ()
+    work_item_id: str | None = None
+    description: str | None = None
+    task_kind: str = "delivery"
+    parent_task_key: str | None = None
     created_at: int = 0
     updated_at: int = 0
 

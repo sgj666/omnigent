@@ -4570,6 +4570,9 @@ class CreateWorkItemRequest(BaseModel):
     priority: WorkItemPriority = "medium"
     project_id: str | None = Field(default=None, min_length=32, max_length=32)
     assignee_agent_id: str | None = Field(default=None, min_length=32, max_length=32)
+    assignee_worker_name: str | None = Field(default=None, min_length=1, max_length=128)
+    parent_work_item_id: str | None = Field(default=None, min_length=32, max_length=32)
+    task_kind: Literal["general", "requirement", "delivery"] = "general"
     due_at: int | None = Field(default=None, ge=0)
 
     @field_validator("title")
@@ -4595,6 +4598,8 @@ class UpdateWorkItemRequest(BaseModel):
     priority: WorkItemPriority | None = None
     project_id: str | None = Field(default=None, min_length=32, max_length=32)
     assignee_agent_id: str | None = Field(default=None, min_length=32, max_length=32)
+    assignee_worker_name: str | None = Field(default=None, min_length=1, max_length=128)
+    parent_work_item_id: str | None = Field(default=None, min_length=32, max_length=32)
     due_at: int | None = Field(default=None, ge=0)
 
     @field_validator("title")

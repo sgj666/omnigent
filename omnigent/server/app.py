@@ -980,6 +980,9 @@ def create_app(
         delivery_workflow_store,
         run_store,
         agent_cache,
+        work_item_store,
+        work_item_run_store,
+        conversation_store,
     )
     run_projection = SessionRunProjection(run_store)
     conversation_store.run_projection = run_projection

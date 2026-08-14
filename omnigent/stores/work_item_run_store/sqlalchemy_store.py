@@ -100,6 +100,16 @@ class SqlAlchemyWorkItemRunStore(WorkItemRunStore):
                 return None
             return _to_entity(row)
 
+    def get_by_session_id(self, session_id: str) -> WorkItemRun | None:
+        with self._session() as session:
+            row = session.scalar(
+                select(SqlWorkItemRun).where(
+                    SqlWorkItemRun.workspace_id == current_workspace_id(),
+                    SqlWorkItemRun.session_id == session_id,
+                )
+            )
+            return _to_entity(row) if row is not None else None
+
     def list_for_work_item(
         self, work_item_id: str, *, owner_user_id: str | None
     ) -> list[WorkItemRun]:

@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any, cast
 from uuid import uuid4
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from omnigent.db.db_models import (
@@ -97,29 +97,47 @@ class SqlAlchemyDeliveryWorkflowStore:
                     )
                 row.version += 1
                 row.updated_at = now
-                session.execute(
-                    delete(SqlDeliveryPlannedTask).where(
+            existing = {
+                task.task_key: task
+                for task in session.execute(
+                    select(SqlDeliveryPlannedTask).where(
                         SqlDeliveryPlannedTask.workspace_id == current_workspace_id(),
                         SqlDeliveryPlannedTask.delivery_run_id == row.id,
                     )
-                )
+                ).scalars()
+            }
+            incoming_keys: set[str] = set()
             for spec in task_specs:
-                session.add(
-                    SqlDeliveryPlannedTask(
+                task_key = str(spec["task_key"])
+                incoming_keys.add(task_key)
+                task = existing.get(task_key)
+                if task is None:
+                    task = SqlDeliveryPlannedTask(
                         id=uuid4().hex,
                         delivery_run_id=row.id,
-                        task_key=str(spec["task_key"]),
-                        title=str(spec["title"]),
-                        owner_role=str(spec["owner_role"]),
+                        task_key=task_key,
                         status=PlannedTaskStatus.PLANNED.value,
-                        depends_on=_dump(tuple(spec.get("depends_on", ()))),
-                        artifact_requirements=_dump(
-                            tuple(spec.get("artifact_requirements", ()))
-                        ),
                         created_at=now,
-                        updated_at=now,
                     )
+                    session.add(task)
+                task.title = str(spec["title"])
+                raw_owner = spec.get("owner_role")
+                task.owner_role = str(raw_owner) if raw_owner else None
+                task.description = str(spec["description"]) if spec.get("description") else None
+                task.task_kind = str(spec.get("task_kind", "delivery"))
+                raw_parent = spec.get("parent_task_key")
+                task.parent_task_key = str(raw_parent) if raw_parent else None
+                task.depends_on = _dump(tuple(spec.get("depends_on", ())))
+                task.artifact_requirements = _dump(
+                    tuple(spec.get("artifact_requirements", ()))
                 )
+                if task.status == PlannedTaskStatus.CANCELLED.value:
+                    task.status = PlannedTaskStatus.PLANNED.value
+                task.updated_at = now
+            for key, task in existing.items():
+                if key not in incoming_keys:
+                    task.status = PlannedTaskStatus.CANCELLED.value
+                    task.updated_at = now
             try:
                 session.flush()
             except IntegrityError as exc:
@@ -128,6 +146,18 @@ class SqlAlchemyDeliveryWorkflowStore:
                     code=ErrorCode.CONFLICT,
                 ) from exc
             return self._snapshot(session, row)
+
+    def link_work_item(self, planned_task_id: str, work_item_id: str) -> None:
+        with self._session() as session:
+            task = session.get(
+                SqlDeliveryPlannedTask,
+                (current_workspace_id(), planned_task_id),
+            )
+            if task is None:
+                raise OmnigentError("Planned task not found", code=ErrorCode.NOT_FOUND)
+            task.work_item_id = work_item_id
+            task.updated_at = now_epoch()
+            session.flush()
 
     def add_artifact(
         self,
@@ -370,6 +400,10 @@ def _task(row: SqlDeliveryPlannedTask) -> PlannedTask:
         status=PlannedTaskStatus(row.status),
         depends_on=tuple(_load(row.depends_on)),
         artifact_requirements=tuple(_load(row.artifact_requirements)),
+        work_item_id=row.work_item_id,
+        description=row.description,
+        task_kind=row.task_kind,
+        parent_task_key=row.parent_task_key,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

@@ -51,6 +51,7 @@ import { userColor, userColorTint } from "@/lib/userBadge";
 import {
   WORK_ITEM_PRIORITIES,
   createWorkItem,
+  listAgentWorkers,
   listWorkItems,
   updateWorkItem,
   type WorkItem,
@@ -516,6 +517,11 @@ function TaskBoardCard({
         <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.description}</p>
       )}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        {item.task_kind !== "general" && (
+          <StatusBadge tone="info">
+            {item.task_kind === "requirement" ? "需求拆分" : "交付任务"}
+          </StatusBadge>
+        )}
         <StatusBadge
           tone={
             item.priority === "urgent" ? "danger" : item.priority === "high" ? "warning" : "neutral"
@@ -548,7 +554,10 @@ function TaskBoardCard({
             >
               <AssigneeIcon className="size-3.5" />
             </span>
-            <span className="truncate">{assignee.display_name || assignee.name}</span>
+            <span className="truncate">
+              {assignee.display_name || assignee.name}
+              {item.assignee_worker_name ? ` / ${item.assignee_worker_name}` : ""}
+            </span>
           </span>
         ) : (
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -649,6 +658,13 @@ function CreateTaskDialog({
   const [priority, setPriority] = useState<WorkItemPriority>("medium");
   const [projectId, setProjectId] = useState("");
   const [agentId, setAgentId] = useState("");
+  const [workerName, setWorkerName] = useState("");
+  const workers = useQuery({
+    queryKey: ["agent-workers", agentId],
+    queryFn: () => listAgentWorkers(agentId),
+    enabled: Boolean(agentId),
+    retry: false,
+  });
   const [dueDate, setDueDate] = useState("");
   const mutation = useMutation({
     mutationFn: createWorkItem,
@@ -662,6 +678,7 @@ function CreateTaskDialog({
       setPriority("medium");
       setProjectId("");
       setAgentId("");
+      setWorkerName("");
       setDueDate("");
       onOpenChange(false);
     },
@@ -678,6 +695,7 @@ function CreateTaskDialog({
       priority,
       ...(projectId ? { project_id: projectId } : {}),
       ...(agentId ? { assignee_agent_id: agentId } : {}),
+      ...(agentId && workerName ? { assignee_worker_name: workerName } : {}),
       ...(dueDate ? { due_at: Math.floor(new Date(`${dueDate}T00:00:00`).getTime() / 1000) } : {}),
     });
   }
@@ -734,9 +752,19 @@ function CreateTaskDialog({
               <CreateSelect
                 label={t("tasks.create.fields.agent")}
                 value={agentId}
-                onChange={setAgentId}
+                onChange={(value) => {
+                  setAgentId(value);
+                  setWorkerName("");
+                }}
                 options={[...agents].map(([value, label]) => ({ value, label }))}
                 emptyLabel={t("tasks.create.unassigned")}
+              />
+              <CreateSelect
+                label="内部 Worker"
+                value={workerName}
+                onChange={setWorkerName}
+                options={(workers.data ?? []).map((value) => ({ value, label: value }))}
+                emptyLabel={agentId ? "待协调者分配" : "请先选择 Agent"}
               />
               <div className="space-y-1.5">
                 <label htmlFor="work-item-due" className="text-sm font-medium">

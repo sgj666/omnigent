@@ -32,6 +32,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
+from urllib.parse import quote
 
 from omnigent.json_types import JsonObject as _JsonObject
 
@@ -369,6 +370,8 @@ _DELIVERY_WORKFLOW_TOOLS = frozenset(
         "delivery_put_plan",
         "delivery_register_artifact",
         "delivery_transition",
+        "delivery_get_ready_tasks",
+        "delivery_assign_task",
     }
 )
 
@@ -3401,6 +3404,9 @@ _WORK_ITEM_CREATE_FIELDS = (
     "priority",
     "project_id",
     "assignee_agent_id",
+    "assignee_worker_name",
+    "parent_work_item_id",
+    "task_kind",
     "due_at",
 )
 
@@ -3459,6 +3465,7 @@ _DELIVERY_TRANSITION_FIELDS = (
     "idempotency_key",
     "evidence_refs",
 )
+_DELIVERY_ASSIGN_FIELDS = ("expected_version", "worker_name")
 
 
 async def _execute_delivery_workflow_tool(
@@ -3492,6 +3499,21 @@ async def _execute_delivery_workflow_tool(
     try:
         if tool_name == "delivery_get_state":
             response = await server_client.get(base_url, headers=headers, timeout=30.0)
+        elif tool_name == "delivery_get_ready_tasks":
+            response = await server_client.get(
+                f"{base_url}/tasks/ready", headers=headers, timeout=30.0
+            )
+        elif tool_name == "delivery_assign_task":
+            task_key = args.get("task_key")
+            if not isinstance(task_key, str) or not task_key:
+                return json.dumps({"error": "delivery_assign_task requires task_key"})
+            payload = {key: args[key] for key in _DELIVERY_ASSIGN_FIELDS if key in args}
+            response = await server_client.patch(
+                f"{base_url}/tasks/{quote(task_key, safe='')}/assignment",
+                json=payload,
+                headers=headers,
+                timeout=30.0,
+            )
         elif tool_name == "delivery_put_plan":
             payload = {key: args[key] for key in _DELIVERY_PLAN_FIELDS if key in args}
             response = await server_client.put(

@@ -305,6 +305,8 @@ _BUILTIN_REGISTRY: dict[str, _BuiltinFactory | None] = {
     "delivery_put_plan": None,
     "delivery_register_artifact": None,
     "delivery_transition": None,
+    "delivery_get_ready_tasks": None,
+    "delivery_assign_task": None,
 }
 
 # Hindsight long-term memory (optional ``hindsight`` extra). Registered only

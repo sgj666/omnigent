@@ -11,6 +11,7 @@ from omnigent.delivery_workflow import DeliveryWorkflowService
 from omnigent.entities.delivery_workflow import DeliveryPhase, DeliveryStatus
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.stores.delivery_workflow_store import SqlAlchemyDeliveryWorkflowStore
+from omnigent.stores.work_item_store.sqlalchemy_store import SqlAlchemyWorkItemStore
 
 
 class _Runs:
@@ -37,7 +38,12 @@ class _Cache:
             if profile is not None
             else None
         )
-        self.loaded = SimpleNamespace(spec=SimpleNamespace(delivery_workflow=workflow))
+        self.loaded = SimpleNamespace(
+            spec=SimpleNamespace(
+                delivery_workflow=workflow,
+                tools=SimpleNamespace(agents=["backend-implementer", "requirement-analyst"]),
+            )
+        )
         self.calls: list[tuple[str, str]] = []
 
     def load(self, agent_id: str, bundle_location: str) -> object:
@@ -208,3 +214,116 @@ def test_current_run_is_resolved_from_trusted_root_session(
             workflow_session_id="5" * 32,
         )
     assert wrong_session.value.code == ErrorCode.NOT_FOUND
+
+
+def test_plan_materializes_stable_unassigned_board_tasks(tmp_path: Path) -> None:
+    database = f"sqlite:///{tmp_path / 'board.db'}"
+    OmnigentBase.metadata.create_all(get_or_create_engine(database))
+    runs = _Runs(actor_id="local")
+    work_items = SqlAlchemyWorkItemStore(database)
+    conversations = SimpleNamespace(
+        get_conversation=lambda session_id: SimpleNamespace(project_id="9" * 32)
+    )
+    service = DeliveryWorkflowService(
+        SqlAlchemyDeliveryWorkflowStore(database),
+        runs,  # type: ignore[arg-type]
+        _Cache(),  # type: ignore[arg-type]
+        work_items,
+        None,
+        conversations,  # type: ignore[arg-type]
+    )
+    first = service.put_plan(
+        runs.run.id,
+        actor_id="local",
+        workflow_agent_id=runs.run.agent_id,
+        workflow_session_id=runs.run.root_session_id,
+        expected_version=0,
+        tasks=(
+            {
+                "task_key": "req-api",
+                "title": "澄清接口兼容性",
+                "task_kind": "requirement",
+                "owner_role": None,
+                "depends_on": (),
+                "artifact_requirements": ("requirement-manifest",),
+            },
+        ),
+    )
+    item = work_items.list(owner_user_id="local")[0]
+    assert item.state.value == "backlog"
+    assert item.assignee_agent_id is None
+    assert item.assignee_worker_name is None
+    assert item.project_id == "9" * 32
+    assert item.task_kind == "requirement"
+    assert item.task_key == "req-api"
+    assert first.planned_tasks[0].work_item_id == item.id
+
+    second = service.put_plan(
+        runs.run.id,
+        actor_id="local",
+        workflow_agent_id=runs.run.agent_id,
+        workflow_session_id=runs.run.root_session_id,
+        expected_version=first.run.version,
+        tasks=(
+            {
+                "task_key": "req-api",
+                "title": "澄清接口兼容策略",
+                "task_kind": "requirement",
+                "owner_role": None,
+            },
+            {
+                "task_key": "impl-api",
+                "title": "实现接口兼容策略",
+                "task_kind": "delivery",
+                "owner_role": "backend-implementer",
+                "parent_task_key": "req-api",
+                "depends_on": ("req-api",),
+            },
+        ),
+    )
+    by_key = {task.task_key: task for task in work_items.list(owner_user_id="local")}
+    assert by_key["req-api"].id == item.id
+    assert by_key["req-api"].title == "澄清接口兼容策略"
+    assert by_key["impl-api"].parent_work_item_id == item.id
+    assert by_key["impl-api"].depends_on == ("req-api",)
+    assert len(second.planned_tasks) == 2
+
+    assigned = service.assign_task(
+        runs.run.id,
+        actor_id="local",
+        workflow_agent_id=runs.run.agent_id,
+        workflow_session_id=runs.run.root_session_id,
+        task_key="impl-api",
+        expected_version=by_key["impl-api"].version,
+        worker_name="backend-implementer",
+    )
+    assert assigned.state.value == "backlog"
+    assert service.ready_tasks(
+        runs.run.id,
+        actor_id="local",
+        workflow_agent_id=runs.run.agent_id,
+        workflow_session_id=runs.run.root_session_id,
+    ) == ()
+    requirement = work_items.update(
+        item.id,
+        owner_user_id="local",
+        expected_version=by_key["req-api"].version,
+        changes={"state": "done"},
+    )
+    assert requirement is not None
+    ready_assignment = service.assign_task(
+        runs.run.id,
+        actor_id="local",
+        workflow_agent_id=runs.run.agent_id,
+        workflow_session_id=runs.run.root_session_id,
+        task_key="impl-api",
+        expected_version=assigned.version,
+        worker_name="backend-implementer",
+    )
+    assert ready_assignment.state.value == "todo"
+    assert [task.task_key for task in service.ready_tasks(
+        runs.run.id,
+        actor_id="local",
+        workflow_agent_id=runs.run.agent_id,
+        workflow_session_id=runs.run.root_session_id,
+    )] == ["impl-api"]

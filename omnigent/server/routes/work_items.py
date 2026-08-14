@@ -42,6 +42,14 @@ def _to_response(item: WorkItem) -> dict[str, Any]:
         "priority": item.priority,
         "project_id": item.project_id,
         "assignee_agent_id": item.assignee_agent_id,
+        "assignee_worker_name": item.assignee_worker_name,
+        "parent_work_item_id": item.parent_work_item_id,
+        "task_kind": item.task_kind,
+        "delivery_run_id": item.delivery_run_id,
+        "planned_task_id": item.planned_task_id,
+        "task_key": item.task_key,
+        "depends_on": list(item.depends_on),
+        "artifact_requirements": list(item.artifact_requirements),
         "due_at": item.due_at,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
@@ -87,6 +95,16 @@ def _task_prompt(item: WorkItem) -> str:
     prompt = f"Task: {item.title}"
     if item.description:
         prompt += f"\n\nDescription:\n{item.description}"
+    if item.assignee_worker_name:
+        prompt += (
+            "\n\nAssigned internal Worker: "
+            f"{item.assignee_worker_name}. As Coordinator, dispatch this work to that Worker "
+            "and return its artifact-backed handoff here."
+        )
+    if item.task_key:
+        prompt += f"\nDelivery task key: {item.task_key}"
+    if item.depends_on:
+        prompt += f"\nDependencies: {', '.join(item.depends_on)}"
     return prompt + "\n\nComplete this task and summarize the result in this session."
 
 
@@ -190,6 +208,9 @@ def create_work_items_router(
             priority=body.priority,
             project_id=body.project_id,
             assignee_agent_id=assignee_agent_id,
+            assignee_worker_name=body.assignee_worker_name,
+            parent_work_item_id=body.parent_work_item_id,
+            task_kind=body.task_kind,
             due_at=body.due_at,
             creator_kind=creator_kind,
             created_by_agent_id=x_orvia_creator_agent_id,

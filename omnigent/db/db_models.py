@@ -862,6 +862,14 @@ class SqlWorkItem(OmnigentBase):
     completion_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
     creator_kind: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default="1")
     created_by_agent_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    parent_work_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    task_kind: Mapped[str] = mapped_column(String(32), nullable=False, server_default="general")
+    assignee_worker_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    delivery_run_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    planned_task_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    task_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    depends_on: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
+    artifact_requirements: Mapped[str] = mapped_column(Text, nullable=False, server_default="[]")
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
 
     __table_args__ = (
@@ -884,6 +892,14 @@ class SqlWorkItem(OmnigentBase):
             "state",
             "id",
         ),
+        Index(
+            "ix_work_items_delivery_task",
+            "workspace_id",
+            "delivery_run_id",
+            "task_key",
+            unique=True,
+        ),
+        Index("ix_work_items_parent", "workspace_id", "parent_work_item_id", "id"),
     )
 
 
@@ -2108,10 +2124,14 @@ class SqlDeliveryPlannedTask(OmnigentBase):
     delivery_run_id: Mapped[str] = mapped_column(Uuid16(), nullable=False)
     task_key: Mapped[str] = mapped_column(String(128), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
-    owner_role: Mapped[str] = mapped_column(String(128), nullable=False)
+    owner_role: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     depends_on: Mapped[str] = mapped_column(Text, nullable=False)
     artifact_requirements: Mapped[str] = mapped_column(Text, nullable=False)
+    work_item_id: Mapped[str | None] = mapped_column(Uuid16(), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    task_kind: Mapped[str] = mapped_column(String(32), nullable=False, server_default="delivery")
+    parent_task_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
 

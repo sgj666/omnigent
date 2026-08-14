@@ -75,6 +75,13 @@ class DeliveryPutPlanTool(Tool):
                 "task_key": {"type": "string"},
                 "title": {"type": "string"},
                 "owner_role": {"type": "string"},
+                "description": {"type": ["string", "null"]},
+                "task_kind": {
+                    "type": "string",
+                    "enum": ["requirement", "delivery"],
+                    "default": "delivery",
+                },
+                "parent_task_key": {"type": ["string", "null"]},
                 "depends_on": {"type": "array", "items": {"type": "string"}, "default": []},
                 "artifact_requirements": {
                     "type": "array",
@@ -82,7 +89,7 @@ class DeliveryPutPlanTool(Tool):
                     "default": [],
                 },
             },
-            "required": ["task_key", "title", "owner_role"],
+            "required": ["task_key", "title"],
             "additionalProperties": False,
         }
         return _schema(
@@ -165,9 +172,48 @@ class DeliveryTransitionTool(Tool):
         )
 
 
+class DeliveryReadyTasksTool(Tool):
+    @classmethod
+    def name(cls) -> str:
+        return "delivery_get_ready_tasks"
+
+    @classmethod
+    def description(cls) -> str:
+        return (
+            "List assigned delivery Tasks whose dependencies are complete "
+            "and may be dispatched."
+        )
+
+    def get_schema(self) -> dict[str, Any]:
+        return _schema(self.name(), self.description(), {}, [])
+
+
+class DeliveryAssignTaskTool(Tool):
+    @classmethod
+    def name(cls) -> str:
+        return "delivery_assign_task"
+
+    @classmethod
+    def description(cls) -> str:
+        return "Assign or unassign one board-backed delivery Task to an internal Worker."
+
+    def get_schema(self) -> dict[str, Any]:
+        return _schema(
+            self.name(),
+            self.description(),
+            {
+                "task_key": {"type": "string"},
+                "expected_version": {"type": "integer", "minimum": 1},
+                "worker_name": {"type": ["string", "null"]},
+            },
+            ["task_key", "expected_version", "worker_name"],
+        )
+
 DELIVERY_WORKFLOW_TOOLS = (
     DeliveryGetStateTool,
     DeliveryPutPlanTool,
     DeliveryRegisterArtifactTool,
     DeliveryTransitionTool,
+    DeliveryReadyTasksTool,
+    DeliveryAssignTaskTool,
 )

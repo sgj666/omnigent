@@ -27,3 +27,11 @@ class WorkItem:
     completion_id: str | None = None
     creator_kind: str = "user"
     created_by_agent_id: str | None = None
+    parent_work_item_id: str | None = None
+    task_kind: str = "general"
+    assignee_worker_name: str | None = None
+    delivery_run_id: str | None = None
+    planned_task_id: str | None = None
+    task_key: str | None = None
+    depends_on: tuple[str, ...] = ()
+    artifact_requirements: tuple[str, ...] = ()

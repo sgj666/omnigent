@@ -13,6 +13,14 @@ export interface WorkItem {
   priority: WorkItemPriority;
   project_id: string | null;
   assignee_agent_id: string | null;
+  assignee_worker_name: string | null;
+  parent_work_item_id: string | null;
+  task_kind: "general" | "requirement" | "delivery";
+  delivery_run_id: string | null;
+  planned_task_id: string | null;
+  task_key: string | null;
+  depends_on: string[];
+  artifact_requirements: string[];
   due_at: number | null;
   created_at: number;
   updated_at: number | null;
@@ -29,6 +37,9 @@ export interface CreateWorkItemInput {
   priority?: WorkItemPriority;
   project_id?: string;
   assignee_agent_id?: string;
+  assignee_worker_name?: string;
+  parent_work_item_id?: string;
+  task_kind?: "general" | "requirement" | "delivery";
   due_at?: number;
 }
 
@@ -110,6 +121,15 @@ export async function updateWorkItem(id: string, input: UpdateWorkItemInput): Pr
   });
   if (!response.ok) throw new Error(await readError(response));
   return (await response.json()) as WorkItem;
+}
+
+export async function listAgentWorkers(agentId: string): Promise<string[]> {
+  const response = await authenticatedFetch(
+    `/v1/agent-bundles/${encodeURIComponent(agentId)}/workers`,
+  );
+  if (!response.ok) throw new Error(await readError(response));
+  const body = (await response.json()) as { name: string }[];
+  return body.map((worker) => worker.name);
 }
 
 export async function listWorkItemRuns(workItemId: string): Promise<WorkItemRun[]> {

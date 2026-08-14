@@ -22,7 +22,10 @@ class PlannedTaskInput(BaseModel):
 
     task_key: NonEmpty
     title: NonEmpty
-    owner_role: NonEmpty
+    owner_role: NonEmpty | None = None
+    description: str | None = Field(default=None, max_length=20_000)
+    task_kind: str = Field(default="delivery", pattern=r"^(requirement|delivery)$")
+    parent_task_key: NonEmpty | None = None
     depends_on: list[NonEmpty] = Field(default_factory=list)
     artifact_requirements: list[NonEmpty] = Field(default_factory=list)
 
@@ -53,6 +56,13 @@ class DeliveryTransitionRequest(BaseModel):
     to_status: DeliveryStatus
     idempotency_key: NonEmpty
     evidence_refs: list[str] = Field(min_length=1)
+
+
+class AssignDeliveryTaskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_version: int = Field(ge=1)
+    worker_name: NonEmpty | None
 
 
 def create_delivery_workflows_router(
@@ -109,6 +119,46 @@ def create_delivery_workflows_router(
                 workflow_session_id=x_orvia_workflow_session_id,
                 expected_version=body.expected_version,
                 tasks=(task.model_dump() for task in body.tasks),
+            )
+        )
+
+    @router.get("/delivery-workflow/tasks/ready")
+    async def get_ready_delivery_tasks(
+        request: Request,
+        x_orvia_workflow_agent_id: str = Header(),
+        x_orvia_workflow_session_id: str = Header(),
+    ) -> dict[str, Any]:
+        run_id = current_run_id(
+            request, x_orvia_workflow_agent_id, x_orvia_workflow_session_id
+        )
+        tasks = service.ready_tasks(
+            run_id,
+            actor_id=_actor(request, auth_provider),
+            workflow_agent_id=x_orvia_workflow_agent_id,
+            workflow_session_id=x_orvia_workflow_session_id,
+        )
+        return {"object": "list", "data": [_work_item(item) for item in tasks]}
+
+    @router.patch("/delivery-workflow/tasks/{task_key}/assignment")
+    async def assign_delivery_task(
+        request: Request,
+        task_key: str,
+        body: AssignDeliveryTaskRequest,
+        x_orvia_workflow_agent_id: str = Header(),
+        x_orvia_workflow_session_id: str = Header(),
+    ) -> dict[str, Any]:
+        run_id = current_run_id(
+            request, x_orvia_workflow_agent_id, x_orvia_workflow_session_id
+        )
+        return _work_item(
+            service.assign_task(
+                run_id,
+                actor_id=_actor(request, auth_provider),
+                workflow_agent_id=x_orvia_workflow_agent_id,
+                workflow_session_id=x_orvia_workflow_session_id,
+                task_key=task_key,
+                expected_version=body.expected_version,
+                worker_name=body.worker_name,
             )
         )
 
@@ -230,3 +280,10 @@ def _actor(request: Request, auth_provider: AuthProvider | None) -> str:
 
 def _snapshot(value: Any) -> dict[str, Any]:
     return asdict(value) | {"object": "delivery.workflow"}
+
+
+def _work_item(value: Any) -> dict[str, Any]:
+    result = asdict(value)
+    result["state"] = value.state.value
+    result["object"] = "work_item"
+    return result
