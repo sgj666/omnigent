@@ -61,7 +61,10 @@ if TYPE_CHECKING:
 
     from omnigent.llms.context_window import ModelPricing
 
-from omnigent.inner.bundle_skills import claude_native_skill_args
+from omnigent.inner.bundle_skills import (
+    claude_native_skill_args,
+    claude_native_skill_prompt,
+)
 from omnigent.inner.datamodel import OSEnvSandboxSpec, OSEnvSpec
 from omnigent.inner.os_env import OSEnvironment, create_os_environment
 from omnigent.reasoning_effort import CLAUDE_EFFORTS
@@ -1468,8 +1471,13 @@ def augment_claude_args(
             json.dumps(hook_settings, separators=(",", ":")),
         ]
     )
-    if append_system_prompt:
-        args.extend(["--append-system-prompt", append_system_prompt])
+    bundle_skill_prompt = claude_native_skill_prompt(
+        bundle_dir,
+        skills_filter=skills_filter,
+    )
+    prompt_parts = [part for part in (append_system_prompt, bundle_skill_prompt) if part]
+    if prompt_parts:
+        args.extend(["--append-system-prompt", "\n\n".join(prompt_parts)])
     args.extend(
         claude_native_skill_args(
             bundle_dir,

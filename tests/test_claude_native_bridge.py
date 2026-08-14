@@ -2371,6 +2371,35 @@ def test_augment_claude_args_injects_plugin_dir_for_bundle_with_skills(
     assert "--mcp-config" in args
 
 
+def test_augment_claude_args_isolates_native_bundle_skills_without_losing_auth(
+    tmp_path: Path,
+) -> None:
+    """``skills: none`` uses an indexed read root, not empty setting sources."""
+    bundle = tmp_path / "bundle"
+    skill_file = bundle / "skills" / "authoring" / "SKILL.md"
+    skill_file.parent.mkdir(parents=True)
+    skill_file.write_text("# authoring\n")
+
+    args = augment_claude_args(
+        (),
+        bridge_dir=tmp_path,
+        python_executable="/venv/bin/python",
+        bundle_dir=bundle,
+        agent_name="researcher",
+        skills_filter="none",
+        append_system_prompt="role instructions",
+    )
+
+    assert args[args.index("--setting-sources") + 1] == "user"
+    assert "--disable-slash-commands" in args
+    assert "--strict-mcp-config" in args
+    assert args[args.index("--add-dir") + 1] == str(bundle)
+    assert "--plugin-dir" not in args
+    prompt = args[args.index("--append-system-prompt") + 1]
+    assert prompt.startswith("role instructions\n\n")
+    assert str(skill_file) in prompt
+
+
 def test_augment_claude_args_omits_permission_hook_without_omnigent_server(
     tmp_path: Path,
 ) -> None:

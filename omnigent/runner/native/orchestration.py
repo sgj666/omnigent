@@ -4805,6 +4805,28 @@ def _claude_native_model_from_spec(agent_spec: AgentSpec | ResolvedSpec | None) 
     return model
 
 
+def _agent_instructions_from_spec(
+    agent_spec: AgentSpec | ResolvedSpec | None,
+) -> str | None:
+    """Read resolved system instructions from an agent spec.
+
+    Native Claude does not consume :class:`AgentSpec` directly, so its
+    auto-created terminal must explicitly receive the already-resolved
+    ``instructions`` text through ``--append-system-prompt``. Without this,
+    Bundle coordinators launch as generic Claude Code sessions and ignore their
+    Worker roster and operating contract.
+
+    :param agent_spec: Agent spec object, or a resolved wrapper carrying a
+        ``spec`` attribute. ``None`` means no spec was available.
+    :returns: Non-empty resolved instructions, or ``None``.
+    """
+    spec = agent_spec.spec if isinstance(agent_spec, ResolvedSpec) else agent_spec
+    if spec is None:
+        return None
+    instructions = getattr(spec, "instructions", None)
+    return instructions if isinstance(instructions, str) and instructions else None
+
+
 def _cursor_native_model_from_spec(agent_spec: AgentSpec | ResolvedSpec | None) -> str | None:
     """
     Read the cursor-agent model id to launch the native TUI with, from a spec.
@@ -5863,6 +5885,7 @@ async def _auto_create_claude_terminal(
         bundle_dir=bundle_dir,
         agent_name=agent_name,
         skills_filter=skills_filter,
+        append_system_prompt=_agent_instructions_from_spec(agent_spec),
         api_key_helper=claude_config.api_key_helper if claude_config is not None else None,
     )
 

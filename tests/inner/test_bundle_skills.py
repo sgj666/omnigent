@@ -14,6 +14,7 @@ import pytest
 
 from omnigent.inner.bundle_skills import (
     claude_native_skill_args,
+    claude_native_skill_prompt,
     ensure_bundle_plugin_manifest,
 )
 
@@ -74,33 +75,18 @@ def _make_bundle_with_skill(root: Path) -> Path:
     return bundle
 
 
-@pytest.mark.parametrize(
-    "skills_filter, expect_setting_sources",
-    [
-        # "all" → host skills via the CLI default; no explicit override.
-        pytest.param("all", False, id="all"),
-        # "none" → suppress host skills with empty setting-sources.
-        pytest.param("none", True, id="none"),
-        # list → like "all" for host sources (no per-name CLI allowlist);
-        # bundle skills still load via --plugin-dir.
-        pytest.param(["only"], False, id="list"),
-    ],
-)
+@pytest.mark.parametrize("skills_filter", ["all", ["only"]], ids=["all", "list"])
 def test_claude_native_skill_args_with_bundle(
     tmp_path: Path,
     skills_filter: str | list[str],
-    expect_setting_sources: bool,
 ) -> None:
     """
     A bundle with ``skills/`` yields ``--plugin-dir <bundle>`` (the CLI
     plugin convention loads ``<bundle>/skills/<name>/SKILL.md``) and a
-    written manifest. ``--setting-sources ""`` appears only for ``"none"``
-    — the SDK-parity gate on host skills.
+    written manifest when host Skills are enabled.
 
     :param tmp_path: Pytest temp dir.
     :param skills_filter: The spec's ``skills_filter`` under test.
-    :param expect_setting_sources: Whether ``--setting-sources`` should be
-        emitted (only the ``"none"`` filter suppresses host skills).
     """
     bundle = _make_bundle_with_skill(tmp_path)
     args = claude_native_skill_args(bundle, agent_name="researcher", skills_filter=skills_filter)
@@ -108,10 +94,35 @@ def test_claude_native_skill_args_with_bundle(
     assert "--plugin-dir" in args
     assert args[args.index("--plugin-dir") + 1] == str(bundle)
     assert (tmp_path / "bundle" / ".claude-plugin" / "plugin.json").is_file()
-    if expect_setting_sources:
-        assert args[args.index("--setting-sources") + 1] == ""
-    else:
-        assert "--setting-sources" not in args
+    assert "--setting-sources" not in args
+
+
+def test_claude_native_skill_args_none_preserves_auth_and_isolates_skills(
+    tmp_path: Path,
+) -> None:
+    """``skills: none`` keeps OAuth while disabling ambient Skills and MCP."""
+    bundle = _make_bundle_with_skill(tmp_path)
+
+    args = claude_native_skill_args(bundle, agent_name="researcher", skills_filter="none")
+
+    assert args[args.index("--setting-sources") + 1] == "user"
+    assert "--disable-slash-commands" in args
+    assert "--strict-mcp-config" in args
+    assert args[args.index("--add-dir") + 1] == str(bundle)
+    assert "--plugin-dir" not in args
+    assert not (bundle / ".claude-plugin" / "plugin.json").exists()
+
+
+def test_claude_native_skill_prompt_indexes_only_bundle_skills(tmp_path: Path) -> None:
+    """The isolated Native prompt names Bundle Skill files for lazy reads."""
+    bundle = _make_bundle_with_skill(tmp_path)
+
+    prompt = claude_native_skill_prompt(bundle, skills_filter="none")
+
+    assert prompt is not None
+    assert f"- only: {bundle / 'skills' / 'only' / 'SKILL.md'}" in prompt
+    assert "Do not discover or load Skills outside this list" in prompt
+    assert claude_native_skill_prompt(bundle, skills_filter="all") is None
 
 
 def test_claude_native_skill_args_no_bundle_is_empty() -> None:

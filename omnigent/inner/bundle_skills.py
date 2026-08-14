@@ -3,13 +3,11 @@ Shared helpers for exposing an agent bundle's skills to a Claude harness.
 
 Both the Claude Agent SDK executor (in-process, ``claude_sdk_executor``)
 and the ``claude-native`` CLI launch path expose a bundle's
-``skills/<name>/SKILL.md`` files to Claude Code through its plugin
-convention (``--plugin-dir <bundle>``). This module centralizes the two
-pieces that wiring needs so the SDK and native paths stay in lockstep:
-writing the bundle's ``.claude-plugin/plugin.json`` manifest, and
-translating the spec's ``skills_filter`` into the Claude Code CLI args
-(``--plugin-dir`` + ``--setting-sources``) that the native path passes
-to the real ``claude`` binary.
+``skills/<name>/SKILL.md`` files to Claude Code. Native uses the plugin
+convention when host skills are enabled. With ``skills: none`` it disables
+all slash-command skills and exposes only the bundle's instruction files for
+on-demand reads; this preserves Claude's user setting source because OAuth is
+also gated by ``--setting-sources``.
 """
 
 from __future__ import annotations
@@ -79,19 +77,20 @@ def claude_native_skill_args(
 
     - ``"all"`` → host skills included (the CLI's default setting
       sources), so no ``--setting-sources`` is emitted.
-    - ``"none"`` → ``--setting-sources ""`` suppresses host-skill
-      discovery; bundle skills loaded via ``--plugin-dir`` are
-      unaffected and remain visible.
+    - ``"none"`` → keep the ``user`` source for Claude OAuth, disable all
+      slash-command skills, require the invocation MCP config, and expose the
+      bundle as an explicit read root. :func:`claude_native_skill_prompt`
+      supplies the corresponding on-demand Skill index.
     - ``list[str]`` → treated like ``"all"`` for host sources (the SDK
       uses ``setting_sources=None`` for the list case). The CLI has no
       per-name skill allowlist flag, so the named subset is not
       enforced on native — bundle skills load via ``--plugin-dir`` and
       host skills follow the default sources.
 
-    ``--plugin-dir`` is emitted only when ``bundle_dir`` actually
-    contains a ``skills/`` directory, so agents that ship no bundled
-    skills add no plugin args (and ``omnigent claude``'s minimal
-    spec, which has no bundle, passes ``bundle_dir=None``).
+    ``--plugin-dir`` is emitted only when ``bundle_dir`` actually contains a
+    ``skills/`` directory and host skills are enabled. ``skills: none`` uses
+    ``--add-dir`` instead because ``--disable-slash-commands`` intentionally
+    disables plugin Skill discovery too.
 
     :param bundle_dir: Materialized agent-bundle root, or ``None`` when
         the launch has no bundle (e.g. the ``omnigent claude`` CLI
@@ -100,15 +99,67 @@ def claude_native_skill_args(
         ``"researcher"``. ``None`` falls back to the bundle basename.
     :param skills_filter: The spec's ``skills_filter``: ``"all"`` /
         ``"none"`` / a list of skill names. Defaults to ``"all"``.
-    :returns: CLI args to append after ``claude`` (possibly empty),
-        e.g. ``["--plugin-dir", "/tmp/bundle", "--setting-sources", ""]``.
+    :returns: CLI args to append after ``claude`` (possibly empty).
     """
     args: list[str] = []
-    if bundle_dir is not None and (bundle_dir / "skills").is_dir():
+    has_bundle_skills = bundle_dir is not None and (bundle_dir / "skills").is_dir()
+    if skills_filter == "none":
+        # Claude Code couples OAuth to the user setting source: an empty
+        # --setting-sources value reports "Not logged in" even when the host
+        # CLI is authenticated. Keep only the user source, then independently
+        # suppress every slash-command Skill and ambient MCP server.
+        args.extend(
+            [
+                "--setting-sources",
+                "user",
+                "--disable-slash-commands",
+                "--strict-mcp-config",
+            ]
+        )
+        if has_bundle_skills:
+            args.extend(["--add-dir", str(bundle_dir)])
+        return args
+    if has_bundle_skills:
+        assert bundle_dir is not None
         ensure_bundle_plugin_manifest(bundle_dir, agent_name)
         args.extend(["--plugin-dir", str(bundle_dir)])
-    if skills_filter == "none":
-        # Empty setting sources suppress host-skill discovery. Bundle
-        # skills ride --plugin-dir and are unaffected.
-        args.extend(["--setting-sources", ""])
     return args
+
+
+def claude_native_skill_prompt(
+    bundle_dir: Path | None,
+    *,
+    skills_filter: str | list[str] = "all",
+) -> str | None:
+    """Return the on-demand Bundle Skill index for native ``skills: none``.
+
+    Claude Code has no flag that loads OAuth while excluding only user Skills:
+    OAuth and user configuration share the ``user`` setting source. Native
+    therefore disables every slash-command Skill and gives the model a small
+    index of its own Bundle Skill files. The model reads a selected
+    ``SKILL.md`` only when needed, preserving progressive disclosure without
+    inheriting ``~/.claude/skills``.
+
+    :param bundle_dir: Materialized Agent Bundle root.
+    :param skills_filter: The AgentSpec Skill filter.
+    :returns: System-prompt fragment, or ``None`` outside ``skills: none`` or
+        when the bundle contains no Skill files.
+    """
+    if skills_filter != "none" or bundle_dir is None:
+        return None
+    skills_root = bundle_dir / "skills"
+    if not skills_root.is_dir():
+        return None
+    skill_files = sorted(path for path in skills_root.glob("*/SKILL.md") if path.is_file())
+    if not skill_files:
+        return None
+    entries = "\n".join(f"- {path.parent.name}: {path}" for path in skill_files)
+    return (
+        "Ominigent Bundle Skill isolation is active. Host, user, and project "
+        "slash-command Skills are disabled. The only role Skills available to "
+        "you are listed below as local instruction files. Before using one, "
+        "read its SKILL.md completely with the Read tool and resolve relative "
+        "references from that Skill directory. Do not discover or load Skills "
+        "outside this list.\n"
+        f"{entries}"
+    )

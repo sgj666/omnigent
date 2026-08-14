@@ -52,6 +52,7 @@ from omnigent.runner.app import (
     _publish_terminal_pending,
     _terminal_lookup_miss_log_state,
 )
+from omnigent.runner.native import _agent_instructions_from_spec
 from omnigent.runner.resource_registry import (
     CLAUDE_NATIVE_TERMINAL_ROLE,
     KIRO_NATIVE_TERMINAL_ROLE,
@@ -811,6 +812,23 @@ def test_agent_os_env_from_spec_unwraps_resolved_and_handles_none() -> None:
     assert _agent_os_env_from_spec(no_os_env) is None
 
 
+def test_agent_instructions_from_spec_unwraps_resolved_and_handles_none() -> None:
+    """Native launch receives only non-empty, already-resolved instructions."""
+    bare = AgentSpec(
+        spec_version=1,
+        name="coordinator",
+        executor=ExecutorSpec(type="omnigent", config={}),
+        instructions="Coordinate the declared workers.",
+    )
+
+    assert _agent_instructions_from_spec(bare) == "Coordinate the declared workers."
+    assert (
+        _agent_instructions_from_spec(ResolvedSpec(spec=bare, workdir=None))
+        == "Coordinate the declared workers."
+    )
+    assert _agent_instructions_from_spec(None) is None
+
+
 @pytest.mark.asyncio
 async def test_auto_create_claude_terminal_inherits_agent_sandbox(
     tmp_path: Path,
@@ -901,6 +919,7 @@ async def test_auto_create_claude_terminal_inherits_agent_sandbox(
             config={"harness": "claude-native", "model": "claude-default"},
         ),
         os_env=agent_os_env,
+        instructions="Coordinate the declared workers.",
     )
 
     await _auto_create_claude_terminal(
@@ -919,6 +938,10 @@ async def test_auto_create_claude_terminal_inherits_agent_sandbox(
     assert launched_sandbox.type == "none"
     # The whole os_env is threaded through as the inheritance parent.
     assert captured["parent_os_env"] is agent_os_env
+    launched_args = captured["spec"].args
+    assert launched_args[launched_args.index("--append-system-prompt") + 1] == (
+        "Coordinate the declared workers."
+    )
 
     await fake_client.aclose()
 
