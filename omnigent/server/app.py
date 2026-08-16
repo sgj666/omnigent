@@ -199,9 +199,10 @@ _WEB_UI_API_FALLBACK_PREFIXES = frozenset({"api", "auth", "health", "v1"})
 _WEB_UI_GZIP_MINIMUM_SIZE = 1024
 _DEBBY_AGENT_NAME = "debby"
 _POLLY_AGENT_NAME = "polly"
+_ZHUANHARNESS_AGENT_NAME = "zhuanharness"
 _UNMATCHED_ROUTE_TEMPLATE = "<unmatched>"
 _SESSION_PATH_RE = re.compile(r"/v1/sessions/([^/]+)")
-# polly's and debby's multi-file bundles are packaged under
+# The shipped multi-file bundles are packaged under
 # omnigent.resources.examples (see pyproject package-data), so they resolve
 # in both a repo checkout and an installed wheel. The presence check in each
 # seeder is a safety net.
@@ -209,6 +210,9 @@ _SESSION_PATH_RE = re.compile(r"/v1/sessions/([^/]+)")
 # Windows checkout (where Git leaves it as a stub text file); a no-op elsewhere.
 _DEBBY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "debby")
 _POLLY_BUNDLE_SOURCE = resolve_repo_symlink(Path(_examples_resources.__file__).parent / "polly")
+_ZHUANHARNESS_BUNDLE_SOURCE = resolve_repo_symlink(
+    Path(_examples_resources.__file__).parent / "zhuanharness"
+)
 
 
 class _FastAPICallNext(Protocol):
@@ -513,6 +517,7 @@ def _ensure_default_agents(
     _ensure_default_native_agents(agent_store, artifact_store, agent_cache)
     _ensure_default_debby_agent(agent_store, artifact_store, agent_cache)
     _ensure_default_polly_agent(agent_store, artifact_store, agent_cache)
+    _ensure_default_zhuanharness_agent(agent_store, artifact_store, agent_cache)
     _ensure_extra_builtin_agents(agent_store, artifact_store, agent_cache)
 
 
@@ -768,6 +773,48 @@ def _ensure_default_polly_agent(
         agent_cache,
         name=_POLLY_AGENT_NAME,
         bundle_bytes=_build_polly_bundle(),
+    )
+
+
+def _build_zhuanharness_bundle() -> bytes:
+    """Build the packaged, repository-materialized zhuanharness bundle."""
+    import tempfile
+
+    from omnigent.spec import materialize_bundle
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        bundle_dir = materialize_bundle(
+            _ZHUANHARNESS_BUNDLE_SOURCE,
+            Path(tmpdir) / "bundle",
+        )
+        return _tar_gz_dir(bundle_dir)
+
+
+def _ensure_default_zhuanharness_agent(
+    agent_store: AgentStore,
+    artifact_store: ArtifactStore,
+    agent_cache: Any,
+) -> None:
+    """Seed the editable zhuanharness template once when it is absent.
+
+    Unlike read-only shipped examples, user edits are authoritative after the
+    first seed and must survive server restarts. Remote Skill selections are
+    refreshed by :class:`AgentBundleService` when the bundle is edited.
+    """
+    if not (_ZHUANHARNESS_BUNDLE_SOURCE / "config.yaml").is_file():
+        _logger.debug(
+            "zhuanharness bundle not found at %s; skipping seed",
+            _ZHUANHARNESS_BUNDLE_SOURCE,
+        )
+        return
+    if agent_store.get_by_name(_ZHUANHARNESS_AGENT_NAME) is not None:
+        return
+    _ensure_builtin_agent(
+        agent_store,
+        artifact_store,
+        agent_cache,
+        name=_ZHUANHARNESS_AGENT_NAME,
+        bundle_bytes=_build_zhuanharness_bundle(),
     )
 
 

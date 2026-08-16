@@ -1,0 +1,4 @@
+interface:
+  display_name: "需求分析"
+  short_description: "从业务与技术视角审查需求、分流问题并生成可追踪验收契约"
+  default_prompt: "使用 $analyze-requirement 审查并拆分这项需求，输出可追踪的需求分析产物。"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "加载项目上下文"
+  short_description: "渐进检索项目知识、ProjectWiki 与代码导航证据"
+  default_prompt: "使用 $load-project-context 渐进加载本任务所需的项目知识，并把完整结果写入 Artifact。"

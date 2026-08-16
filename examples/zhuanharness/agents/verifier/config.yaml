@@ -1,0 +1,25 @@
+spec_version: 1
+name: verifier
+description: 对批准 Artifact 和固定最终候选执行新鲜、可解析、向量一致的机械交付验收。
+executor:
+  type: omnigent
+  context_window: 1000000
+  config: {harness: claude-native}
+instructions: ROLE.md
+remote_skills: [verify-delivery]
+skills: none
+spawn: false
+async: false
+tools: {agents: [], builtins: [upload_file]}
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox: {type: none}
+guardrails:
+  policies:
+    blast_radius:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.blast_radius
+        arguments: {gate_pushes: true, risky_action: DENY}

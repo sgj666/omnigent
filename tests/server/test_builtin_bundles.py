@@ -38,6 +38,7 @@ _NATIVE_BUILDERS = [(agent.key, f"{agent.agent_name}.yaml") for agent in _NATIVE
 _EXAMPLE_BUILDERS = [
     ("_build_debby_bundle", "config.yaml", True),
     ("_build_polly_bundle", "config.yaml", True),
+    ("_build_zhuanharness_bundle", "config.yaml", True),
 ]
 
 
@@ -50,6 +51,7 @@ def _shipped_example_missing(builder: str) -> bool:
     source = {
         "_build_debby_bundle": app._DEBBY_BUNDLE_SOURCE,
         "_build_polly_bundle": app._POLLY_BUNDLE_SOURCE,
+        "_build_zhuanharness_bundle": app._ZHUANHARNESS_BUNDLE_SOURCE,
     }[builder]
     return not (source / "config.yaml").is_file()
 
@@ -137,6 +139,22 @@ _SHIPPED_SUB_AGENT_EXAMPLES = [
         {"claude_code", "codex", "opencode", "cursor", "hermes", "pi"},
     ),
     ("debby", app._DEBBY_BUNDLE_SOURCE, {"claude", "gpt"}),
+    (
+        "zhuanharness",
+        app._ZHUANHARNESS_BUNDLE_SOURCE,
+        {
+            "requirement-analyst",
+            "research-engineer",
+            "proposal-architect",
+            "frontend-implementer",
+            "backend-implementer",
+            "integrator",
+            "test-engineer",
+            "verifier",
+            "reviewer",
+            "knowledge-curator",
+        },
+    ),
 ]
 
 
@@ -164,6 +182,12 @@ def test_shipped_example_loads_with_all_sub_agents(
         f"{expected_sub_agents - sub_names}; got {sub_names}"
     )
     assert expected_sub_agents <= set(spec.tools.agents)
+    if name == "zhuanharness":
+        assert {skill.name for skill in spec.skills} == {
+            "coordinate-delivery",
+            "load-project-context",
+        }
+        assert all(agent.instructions != "ROLE.md" for agent in spec.sub_agents)
 
 
 @pytest.mark.parametrize(("name", "source", "expected_sub_agents"), _SHIPPED_SUB_AGENT_EXAMPLES)

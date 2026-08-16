@@ -83,6 +83,31 @@ describe("MultiAgentsPage", () => {
     expect(screen.getByRole("button", { name: "Import" })).toBeVisible();
   });
 
+  it("labels an editable built-in and exposes its edit action", () => {
+    hooks.list.mockReturnValue({
+      data: [
+        {
+          ...polly,
+          id: "ag_zhuanharness",
+          name: "zhuanharness",
+          worker_count: 10,
+          readonly: false,
+          editable: true,
+        },
+      ],
+      isLoading: false,
+      isError: false,
+    });
+
+    renderPage();
+
+    expect(screen.getByText("Built-in · Editable")).toBeVisible();
+    fireEvent.pointerDown(screen.getByRole("button", { name: "zhuanharness Actions" }), {
+      button: 0,
+    });
+    expect(screen.getByRole("menuitem", { name: "Edit" })).toBeVisible();
+  });
+
   it("clones a template with an AgentSpec-safe name", async () => {
     hooks.clone.mutateAsync.mockResolvedValue({ card: { id: "ag_copy" } });
     renderPage();

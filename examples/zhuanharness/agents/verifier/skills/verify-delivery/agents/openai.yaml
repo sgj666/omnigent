@@ -1,0 +1,4 @@
+interface:
+  display_name: "交付机械验收"
+  short_description: "用新鲜命令、可解析证据和固定候选核验交付声明"
+  default_prompt: "使用 $verify-delivery 对最终候选执行证据化机械验收，不做代码审查或修复。"

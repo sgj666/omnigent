@@ -164,7 +164,8 @@
       "emptyDescription": "创建一个 Bundle，或导入已有的 .tar.gz 归档。",
       "noDescription": "暂无描述",
       "noMatches": "没有符合当前筛选条件的 Bundle",
-      "builtinReadonly": "内置 · 只读"
+      "builtinReadonly": "内置 · 只读",
+      "builtinEditable": "内置 · 可编辑"
     },
     "activity": {
       "title": "智能体活动",

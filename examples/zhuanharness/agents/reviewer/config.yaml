@@ -1,0 +1,26 @@
+spec_version: 1
+name: reviewer
+description: 对已测试且机械验收的固定候选执行四轴独立风险和代码审查，生成证据化 Finding。
+executor:
+  type: omnigent
+  context_window: 1000000
+  config: {harness: claude-native}
+instructions: ROLE.md
+remote_skills: [review-change, load-project-context]
+skills: none
+spawn: false
+async: false
+tools: {agents: [], builtins: [upload_file]}
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox:
+    type: none
+guardrails:
+  policies:
+    blast_radius:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.blast_radius
+        arguments: {gate_pushes: true, risky_action: DENY}

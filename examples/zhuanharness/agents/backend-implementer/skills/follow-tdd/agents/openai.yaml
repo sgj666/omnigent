@@ -1,0 +1,4 @@
+interface:
+  display_name: "TDD 执行契约"
+  short_description: "按已批准策略执行可证明的纵向 RED/GREEN 循环"
+  default_prompt: "使用 $follow-tdd 按任务包的 TDD 策略实现并记录 RED/GREEN 证据。"

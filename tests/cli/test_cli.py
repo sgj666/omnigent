@@ -1255,6 +1255,21 @@ def test_debby_command_runs_bundled_debby(monkeypatch: pytest.MonkeyPatch) -> No
     assert dispatch.call_args.kwargs["target"] == _bundled_example_path("debby")
 
 
+def test_zhuanharness_command_runs_bundled_agent_and_forwards_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``omnigent zhuanharness`` launches the packaged delivery harness."""
+    result, dispatch = _invoke_bundled_agent_command(
+        monkeypatch,
+        ["zhuanharness", "-p", "deliver the approved change"],
+    )
+
+    assert result.exit_code == 0, result.output
+    dispatch.assert_called_once()
+    assert dispatch.call_args.kwargs["target"] == _bundled_example_path("zhuanharness")
+    assert dispatch.call_args.kwargs["prompt"] == "deliver the approved change"
+
+
 def test_bundled_agent_command_rejects_extra_positional_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1303,7 +1318,7 @@ def _write_isolated_provider_config(
     return config_path
 
 
-@pytest.mark.parametrize("shorthand", ["polly", "debby"])
+@pytest.mark.parametrize("shorthand", ["polly", "debby", "zhuanharness"])
 def test_bundled_agent_launches_with_first_available_credential(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

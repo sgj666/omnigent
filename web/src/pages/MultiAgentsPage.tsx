@@ -298,7 +298,7 @@ export function MultiAgentsPage() {
                   </p>
                   {agent.readonly || agent.builtin ? (
                     <StatusBadge className="mt-2" tone="neutral">
-                      {t("catalog.builtinReadonly")}
+                      {t(agent.readonly ? "catalog.builtinReadonly" : "catalog.builtinEditable")}
                     </StatusBadge>
                   ) : null}
                 </td>

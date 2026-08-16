@@ -24,7 +24,7 @@ import logging
 
 from fastapi import APIRouter, Query, Request
 
-from omnigent.db.utils import builtin_agent_id
+from omnigent.db.utils import is_seeded_builtin_agent
 from omnigent.entities import Agent
 from omnigent.runtime.agent_cache import AgentCache
 from omnigent.server.auth import AuthProvider
@@ -114,7 +114,7 @@ def _to_agent_object(agent: Agent, agent_cache: AgentCache) -> AgentObject:
         # random id. The picker protects the former from being shadowed
         # by a same-named ``omnigent run`` upload, but lets a newer
         # upload supersede the latter.
-        builtin=agent.session_id is None and agent.id == builtin_agent_id(agent.name),
+        builtin=agent.session_id is None and is_seeded_builtin_agent(agent.name, agent.id),
     )
 
 

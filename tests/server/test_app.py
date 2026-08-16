@@ -807,6 +807,56 @@ def test_ensure_default_polly_agent_is_idempotent(seed_stores: _SeedStores) -> N
     assert polly_rows[0].version == first.version == 1
 
 
+def test_ensure_default_zhuanharness_agent_seeds_editable_template(
+    seed_stores: _SeedStores,
+) -> None:
+    """The packaged delivery harness is seeded under its stable built-in id."""
+    from omnigent.db.utils import builtin_agent_id
+
+    server_app._ensure_default_zhuanharness_agent(
+        seed_stores.agent_store,
+        seed_stores.artifact_store,
+        seed_stores.agent_cache,
+    )
+
+    seeded = seed_stores.agent_store.get_by_name(server_app._ZHUANHARNESS_AGENT_NAME)
+    assert seeded is not None
+    assert seeded.id == builtin_agent_id(server_app._ZHUANHARNESS_AGENT_NAME)
+    loaded = seed_stores.agent_cache.load(seeded.id, seeded.bundle_location, expand_env=False)
+    assert len(loaded.spec.sub_agents) == 10
+    assert {skill.name for skill in loaded.spec.skills} == {
+        "coordinate-delivery",
+        "load-project-context",
+    }
+
+
+def test_ensure_default_zhuanharness_agent_preserves_user_edits(
+    seed_stores: _SeedStores,
+) -> None:
+    """Startup seed-once semantics never replace an edited zhuanharness bundle."""
+    server_app._ensure_default_zhuanharness_agent(
+        seed_stores.agent_store,
+        seed_stores.artifact_store,
+        seed_stores.agent_cache,
+    )
+    seeded = seed_stores.agent_store.get_by_name(server_app._ZHUANHARNESS_AGENT_NAME)
+    assert seeded is not None
+
+    edited_location = f"{seeded.id}/{'e' * 64}"
+    seed_stores.artifact_store.put(edited_location, b"user-edited-bundle")
+    seed_stores.agent_store.update(seeded.id, edited_location)
+
+    server_app._ensure_default_zhuanharness_agent(
+        seed_stores.agent_store,
+        seed_stores.artifact_store,
+        seed_stores.agent_cache,
+    )
+    after = seed_stores.agent_store.get_by_name(server_app._ZHUANHARNESS_AGENT_NAME)
+    assert after is not None
+    assert after.bundle_location == edited_location
+    assert after.version == 2
+
+
 def test_ensure_default_polly_agent_refreshes_on_spec_change(
     seed_stores: _SeedStores, polly_src_copy: Path
 ) -> None:

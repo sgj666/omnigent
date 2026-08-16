@@ -1,0 +1,4 @@
+interface:
+  display_name: "固定候选独立审查"
+  short_description: "对已测试候选执行四轴代码与交付风险审查"
+  default_prompt: "使用 $review-change 对已测试和验收的固定候选进行四轴独立审查。"

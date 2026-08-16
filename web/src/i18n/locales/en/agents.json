@@ -164,7 +164,8 @@
       "emptyDescription": "Create a bundle or import an existing .tar.gz archive.",
       "noDescription": "No description",
       "noMatches": "No bundles match these filters",
-      "builtinReadonly": "Built-in · Read only"
+      "builtinReadonly": "Built-in · Read only",
+      "builtinEditable": "Built-in · Editable"
     },
     "activity": {
       "title": "Agent activity",

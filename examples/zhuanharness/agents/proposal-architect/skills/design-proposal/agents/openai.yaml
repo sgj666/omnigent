@@ -1,0 +1,4 @@
+interface:
+  display_name: "设计提案"
+  short_description: "生成轻量 ZhuanSpec 提案、技术方案与任务图"
+  default_prompt: "使用 $design-proposal 从已确认需求和研究证据生成可验证的 ZhuanSpec 提案图。"

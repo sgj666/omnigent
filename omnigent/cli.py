@@ -1646,6 +1646,7 @@ _CLICK_SUBCOMMANDS: frozenset[str] = frozenset(
         "upgrade",
         "usage",
         "version",
+        "zhuanharness",
     }
 )
 
@@ -5023,6 +5024,27 @@ def debby(run_args: tuple[str, ...]) -> None:
       omnigent debby -p "name ideas for a CLI that runs agents"
     """
     _run_bundled_agent("debby", run_args)
+
+
+@cli.command(
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+    }
+)
+@click.argument("run_args", nargs=-1, type=click.UNPROCESSED)
+def zhuanharness(run_args: tuple[str, ...]) -> None:
+    """Launch the bundled zhuanharness delivery orchestrator.
+
+    Shorthand for ``omnigent run`` on the packaged zhuanharness bundle. All
+    ``run`` options are accepted and forwarded.
+
+    \b
+    Examples:
+      omnigent zhuanharness
+      omnigent zhuanharness -p "implement the approved proposal"
+    """
+    _run_bundled_agent("zhuanharness", run_args)
 
 
 @cli.command()
@@ -10590,7 +10612,7 @@ def _build_kiro_launch_args(
 def _run_bundled_agent(name: str, run_args: tuple[str, ...]) -> None:
     """Forward a bundled-agent subcommand to ``run`` on its packaged path.
 
-    Implements ``omnigent polly`` / ``omnigent debby``: resolves the bundled
+    Implements the shipped agent shorthands: resolves the bundled
     example directory and re-dispatches through the ``run`` command's own
     parser, so every ``run`` flag (``--server``, ``-p``, ``--resume``, ...)
     works unchanged on the agent shorthands without duplicating ``run``'s
@@ -10605,7 +10627,7 @@ def _run_bundled_agent(name: str, run_args: tuple[str, ...]) -> None:
     :param run_args: Unparsed pass-through CLI args for ``run``,
         e.g. ``("-p", "review the last commit")``.
     """
-    # Polly/Debby launch with the first available credential for their
+    # Bundled agents launch with the first available credential for their
     # brain's family when no specific one is configured up front.
     _ensure_bundled_agent_brain_credential(name)
     # standalone_mode=False propagates ClickExceptions to main()'s handler

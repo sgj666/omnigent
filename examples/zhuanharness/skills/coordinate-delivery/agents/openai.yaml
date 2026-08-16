@@ -1,0 +1,4 @@
+interface:
+  display_name: "ZhuanHarness 交付协调"
+  short_description: "编排多角色研发交付、质量门禁、失败恢复与短消息产物协议"
+  default_prompt: "使用 $coordinate-delivery 协调本次研发交付并维护可恢复的门禁状态。"

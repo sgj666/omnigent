@@ -943,7 +943,13 @@ export function MultiAgentDetailPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="text-2xl font-semibold">{bundle.data.card.name}</h1>
                   {(bundle.data.card.readonly || bundle.data.card.builtin) && (
-                    <Badge variant="secondary">{t("catalog.builtinReadonly")}</Badge>
+                    <Badge variant="secondary">
+                      {t(
+                        bundle.data.card.readonly
+                          ? "catalog.builtinReadonly"
+                          : "catalog.builtinEditable",
+                      )}
+                    </Badge>
                   )}
                   <Badge
                     variant={

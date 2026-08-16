@@ -1,0 +1,4 @@
+interface:
+  display_name: "集成 Worktree 产物"
+  short_description: "确定性收敛不可变 handoff refs 为候选向量"
+  default_prompt: "使用 $integrate-worktrees 在独立 Attempt 中验证并收敛 handoff refs，产出 COMPLETE candidate vector。"

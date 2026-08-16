@@ -1,0 +1,34 @@
+spec_version: 1
+name: research-engineer
+description: 联合检索项目知识与代码，回答 Requirement/Proposal/Delivery 中可调查的事实缺口并交付证据化研究 Artifact。
+
+executor:
+  type: omnigent
+  context_window: 1000000
+  config:
+    harness: claude-native
+    run_workspace: shared
+
+instructions: ROLE.md
+remote_skills:
+  - research-project
+  - load-project-context
+skills: none
+spawn: false
+async: false
+tools:
+  agents: []
+  builtins: [upload_file]
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox:
+    type: none
+guardrails:
+  policies:
+    blast_radius:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.blast_radius
+        arguments: {gate_pushes: true, risky_action: DENY}

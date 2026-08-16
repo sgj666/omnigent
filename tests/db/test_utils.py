@@ -27,6 +27,7 @@ from omnigent.db.utils import (
     generate_agent_id,
     generate_item_id,
     get_or_create_engine,
+    is_seeded_builtin_agent,
     set_lakebase_token_provider,
     strip_nul_bytes,
 )
@@ -516,6 +517,12 @@ def test_builtin_agent_id_matches_generated_id_shape_and_length() -> None:
     built_in = builtin_agent_id("nessie")
     assert re.fullmatch(r"[0-9a-f]{32}", built_in)
     assert len(built_in) == len(generate_agent_id()) == 32
+
+
+def test_editable_zhuanharness_adopts_a_legacy_template_id() -> None:
+    """A pre-existing editable zhuanharness keeps its referenced random id."""
+    assert is_seeded_builtin_agent("zhuanharness", generate_agent_id())
+    assert not is_seeded_builtin_agent("my-agent", generate_agent_id())
 
 
 def test_extract_search_text_for_slash_command_with_output() -> None:

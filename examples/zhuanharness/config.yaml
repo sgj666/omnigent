@@ -1,0 +1,62 @@
+spec_version: 1
+name: zhuanharness
+description: >-
+  基于 Ominigent 的研发交付 Harness。Coordinator 是用户唯一入口，通过 ZhuanSpec
+  产物、短消息契约和可恢复状态协调需求、研究、提案、前后端实施、测试、验证、审查与知识闭环。
+
+executor:
+  type: omnigent
+  context_window: 1000000
+  config:
+    harness: claude-native
+
+instructions: ROLE.md
+
+delivery_workflow:
+  profile: zhuanspec-development
+  role: coordinator
+
+tools:
+  builtins:
+    - upload_file
+  agents:
+    - requirement-analyst
+    - research-engineer
+    - proposal-architect
+    - frontend-implementer
+    - backend-implementer
+    - integrator
+    - test-engineer
+    - verifier
+    - reviewer
+    - knowledge-curator
+
+remote_skills:
+  - coordinate-delivery
+  - load-project-context
+
+# 远程分配的 Skill 已物化在 Bundle 中；不继承当前机器的全局共享 Skill。
+skills: none
+
+spawn: false
+async: false
+
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox:
+    type: none
+
+guardrails:
+  policies:
+    blast_radius:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.blast_radius
+        arguments:
+          gate_pushes: true
+          risky_action: DENY
+
+interaction:
+  ask_timeout: 86400

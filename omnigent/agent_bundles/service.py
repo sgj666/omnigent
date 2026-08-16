@@ -16,7 +16,7 @@ from ruamel.yaml import YAML
 from omnigent.agent_bundles.document import BundleDocument, BundleFileSizeError
 from omnigent.agent_bundles.patches import BundlePatch, apply_patches
 from omnigent.agent_bundles.workers import BundleAgentView, BundleWorkers
-from omnigent.db.utils import builtin_agent_id, generate_agent_id
+from omnigent.db.utils import generate_agent_id, is_seeded_builtin_agent
 from omnigent.entities import Agent
 from omnigent.errors import ErrorCode, OmnigentError
 from omnigent.server.bundles import bundle_location, validate_agent_bundle
@@ -128,6 +128,7 @@ class BundleWorkerOperation:
 _MAX_INLINE_FILE_BYTES = 1024 * 1024
 _MAX_INLINE_TOTAL_BYTES = 8 * 1024 * 1024
 _REMOTE_SKILL_MARKER = ".omnigent-remote-skill.json"
+_EDITABLE_BUILTIN_AGENT_NAMES = frozenset({"zhuanharness"})
 
 
 class AgentBundleService:
@@ -173,19 +174,20 @@ class AgentBundleService:
         except (BundleValidationFailure, ExtractionError, KeyError, TypeError, ValueError):
             digest = agent.bundle_location.rsplit("/", 1)[-1]
             builtin = self._is_builtin(agent)
+            readonly = self._is_readonly(agent)
             return BundleCard(
                 id=agent.id,
                 name=agent.name,
                 description=agent.description,
                 version=agent.version,
                 digest=digest,
-                readonly=builtin,
+                readonly=readonly,
                 validation_status="unknown",
                 updated_at=(
                     agent.updated_at if agent.updated_at is not None else agent.created_at
                 ),
                 builtin=builtin,
-                editable=not builtin,
+                editable=not readonly,
             )
 
     def get(self, agent_id: str) -> BundleDetail:
@@ -760,12 +762,19 @@ class AgentBundleService:
 
     @staticmethod
     def _require_editable(agent: Agent) -> None:
-        if AgentBundleService._is_builtin(agent):
+        if AgentBundleService._is_readonly(agent):
             raise PermissionError("built-in agent bundle is read-only")
 
     @staticmethod
     def _is_builtin(agent: Agent) -> bool:
-        return agent.session_id is None and agent.id == builtin_agent_id(agent.name)
+        return agent.session_id is None and is_seeded_builtin_agent(agent.name, agent.id)
+
+    @staticmethod
+    def _is_readonly(agent: Agent) -> bool:
+        return (
+            AgentBundleService._is_builtin(agent)
+            and agent.name not in _EDITABLE_BUILTIN_AGENT_NAMES
+        )
 
     def _load_document(self, agent: Agent) -> BundleDocument:
         return BundleDocument.from_bytes(self._artifacts.get(agent.bundle_location))
@@ -909,13 +918,14 @@ class AgentBundleService:
         if mcp is None and isinstance(tools, Mapping):
             mcp = tools.get("mcp")
         builtin = AgentBundleService._is_builtin(agent)
+        readonly = AgentBundleService._is_readonly(agent)
         return BundleCard(
             id=agent.id,
             name=agent.name,
             description=agent.description,
             version=agent.version,
             digest=digest,
-            readonly=builtin,
+            readonly=readonly,
             harness=harness if isinstance(harness, str) else None,
             worker_count=len(BundleWorkers.names(document)),
             skill_count=sum(
@@ -926,7 +936,7 @@ class AgentBundleService:
             validation_status="valid",
             updated_at=agent.updated_at if agent.updated_at is not None else agent.created_at,
             builtin=builtin,
-            editable=not builtin,
+            editable=not readonly,
         )
 
     @staticmethod

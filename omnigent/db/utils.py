@@ -653,6 +653,19 @@ def builtin_agent_id(name: str) -> str:
     return digest[:32]
 
 
+_ADOPTED_BUILTIN_AGENT_NAMES = frozenset({"zhuanharness"})
+
+
+def is_seeded_builtin_agent(name: str, agent_id: str) -> bool:
+    """Return whether a template row is owned by packaged startup seeding.
+
+    Most built-ins use their deterministic id. Editable zhuanharness installs
+    adopt a same-named legacy template in place so existing conversation
+    references remain valid while the template becomes product-provided.
+    """
+    return agent_id == builtin_agent_id(name) or name in _ADOPTED_BUILTIN_AGENT_NAMES
+
+
 def generate_file_id() -> str:
     """
     Generate a unique file identifier.

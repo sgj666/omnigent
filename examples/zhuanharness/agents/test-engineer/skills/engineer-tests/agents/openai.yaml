@@ -1,0 +1,4 @@
+interface:
+  display_name: "独立测试工程"
+  short_description: "设计并执行风险驱动测试，锚定固定候选的客观证据"
+  default_prompt: "使用 $engineer-tests 为固定候选生成测试矩阵，并按授权 author 或 verify。"

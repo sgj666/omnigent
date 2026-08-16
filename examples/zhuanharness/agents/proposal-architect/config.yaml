@@ -1,0 +1,26 @@
+spec_version: 1
+name: proposal-architect
+description: 将已确认需求与研究证据综合为 ZhuanSpec 提案、唯一技术方案、规范增量和可执行任务图。
+executor:
+  type: omnigent
+  context_window: 1000000
+  config: {harness: claude-native, run_workspace: shared}
+instructions: ROLE.md
+remote_skills: [design-proposal, load-project-context]
+skills: none
+spawn: false
+async: false
+tools: {agents: [], builtins: [upload_file]}
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox:
+    type: none
+guardrails:
+  policies:
+    blast_radius:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.blast_radius
+        arguments: {gate_pushes: true, risky_action: DENY}

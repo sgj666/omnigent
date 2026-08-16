@@ -1,0 +1,4 @@
+interface:
+  display_name: "研究项目"
+  short_description: "联合调查项目知识、代码事实与影响范围"
+  default_prompt: "使用 $research-project 调查一个明确事实问题，以源码证据验证知识结论并写入 Research Artifact。"

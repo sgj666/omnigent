@@ -246,6 +246,21 @@ describe("MultiAgentDetailPage", () => {
     expect(screen.queryByTestId("delivery-workflow")).not.toBeInTheDocument();
   });
 
+  it("keeps an editable built-in writable", () => {
+    const data = copyDraft();
+    data.card.name = "zhuanharness";
+    data.card.builtin = true;
+    data.card.readonly = false;
+    data.card.editable = true;
+    hooks.detail.mockReturnValue({ data, isLoading: false, isError: false });
+
+    renderPage();
+
+    expect(screen.getByText("Built-in · Editable")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    expect(screen.queryByText("This built-in bundle is read only.")).toBeNull();
+  });
+
   it("shows the configured delivery workflow as read-only bundle metadata", () => {
     const data = copyDraft();
     const coordinatorData = data.coordinator!.data;

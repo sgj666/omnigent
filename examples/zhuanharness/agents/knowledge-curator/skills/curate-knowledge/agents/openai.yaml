@@ -1,0 +1,4 @@
+interface:
+  display_name: "整理项目知识"
+  short_description: "把已验证经验去重沉淀为长期 ZhuanSpec 知识"
+  default_prompt: "使用 $curate-knowledge 从已验证交付证据中筛选、去重并沉淀可复用项目知识。"

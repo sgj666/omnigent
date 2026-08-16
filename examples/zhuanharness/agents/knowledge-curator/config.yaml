@@ -1,0 +1,26 @@
+spec_version: 1
+name: knowledge-curator
+description: 在 Close Gate 将已验证根因、用户纠偏和复用模式去重沉淀为长期 ZhuanSpec 项目知识。
+executor:
+  type: omnigent
+  context_window: 1000000
+  config: {harness: claude-native}
+instructions: ROLE.md
+remote_skills: [curate-knowledge]
+skills: none
+spawn: false
+async: false
+tools: {agents: [], builtins: [upload_file]}
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox:
+    type: none
+guardrails:
+  policies:
+    blast_radius:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.blast_radius
+        arguments: {gate_pushes: true, risky_action: DENY}

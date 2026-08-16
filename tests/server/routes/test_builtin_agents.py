@@ -87,3 +87,19 @@ async def test_builtin_flag_distinguishes_seeded_from_registered(
     by_id = {a["id"]: a for a in resp.json()["data"]}
     assert by_id[seeded_id]["builtin"] is True
     assert by_id[registered_id]["builtin"] is False
+
+
+async def test_builtin_flag_adopts_legacy_zhuanharness_id(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """The packaged editable harness preserves and adopts its legacy row id."""
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    legacy_id = generate_agent_id()
+    agent_store.create(legacy_id, name="zhuanharness", bundle_location="test:///zhuanharness")
+
+    resp = await client.get("/v1/agents?limit=100")
+
+    assert resp.status_code == 200
+    by_id = {agent["id"]: agent for agent in resp.json()["data"]}
+    assert by_id[legacy_id]["builtin"] is True

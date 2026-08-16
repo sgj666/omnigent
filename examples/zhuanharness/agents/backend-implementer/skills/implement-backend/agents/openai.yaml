@@ -1,0 +1,4 @@
+interface:
+  display_name: "后端交付实施"
+  short_description: "在隔离 Worktree 中按冻结契约实现后端任务并持久交接"
+  default_prompt: "使用 $implement-backend 完成这个已批准的后端任务包。"

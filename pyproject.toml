@@ -363,7 +363,13 @@ include = ["omnigent*"]
 [tool.setuptools.package-data]
 "omnigent.db" = ["alembic.ini"]
 "omnigent.db.migrations" = ["script.py.mako"]
-"omnigent.resources.examples" = ["*.yaml", "*.sh", "debby/**/*", "polly/**/*"]
+"omnigent.resources.examples" = [
+    "*.yaml",
+    "*.sh",
+    "debby/**/*",
+    "polly/**/*",
+    "zhuanharness/**/*",
+]
 "omnigent.resources.pi_native" = ["*.js"]
 "omnigent.resources.scripts" = ["*.sh"]
 # include UI assets in build, plus the static API-only landing page served
@@ -458,9 +464,12 @@ target-version = "py310"
 #  - ``omnigent/inner/databricks_mcps/google``: Google MCP server source.
 #  - ``assistant-ui/``: assistant-ui.com React/Python suite imported as a
 #    vendored snapshot; tracked upstream, no in-tree edits.
+#  - ``examples/zhuanharness/**/skills``: repository-materialized Skill
+#    snapshots; preserve their source commit byte-for-byte.
 extend-exclude = [
     "omnigent/inner/databricks_mcps/google",
     "assistant-ui",
+    "examples/zhuanharness/**/skills",
     # Protobuf-generated code (DO NOT EDIT); not ours to restyle.
     "omnigent/api/**/*_pb2.py",
     "omnigent/api/**/*_pb2.pyi",

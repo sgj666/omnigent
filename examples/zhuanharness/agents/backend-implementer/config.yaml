@@ -1,0 +1,34 @@
+spec_version: 1
+name: backend-implementer
+description: 在 Ominigent Attempt Worktree 中实现边界明确的后端纵向任务，并用不可变 handoff ref 交付。
+executor:
+  type: omnigent
+  context_window: 1000000
+  config: {harness: claude-native}
+instructions: ROLE.md
+remote_skills: [implement-backend, follow-tdd, load-project-context]
+skills: none
+spawn: false
+async: false
+tools: {agents: [], builtins: [upload_file]}
+os_env: {type: caller_process, cwd: ., sandbox: {type: none}}
+guardrails:
+  policies:
+    blast_radius:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.blast_radius
+        arguments: {gate_pushes: true, risky_action: DENY}
+    worktree_guard:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.worktree_guard
+        arguments: {allowed_root: attempt-worktree}
+    working_dir:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.policies.builtins.working_dir.block_working_dir_changes
+        arguments: {block_cd: true, block_worktree: true, action: deny}

@@ -13,7 +13,7 @@ from omnigent.agent_bundles.service import (
     BundleValidationFailure,
     BundleWorkerOperation,
 )
-from omnigent.db.utils import builtin_agent_id
+from omnigent.db.utils import builtin_agent_id, generate_agent_id
 from omnigent.entities import Agent, PagedList
 from omnigent.skills import SkillFile, SkillRecord, SkillRepositorySource, SkillSnapshot
 from omnigent.stores.agent_store import AgentVersionConflict
@@ -343,6 +343,29 @@ def test_builtin_polly_is_read_only_but_can_be_cloned() -> None:
     assert cloned.name == "my-polly"
     assert not cloned.readonly
     assert service.get(cloned.id).coordinator.config["name"] == "my-polly"
+
+
+def test_builtin_zhuanharness_is_editable() -> None:
+    """The preinstalled delivery harness may be customized in place."""
+    service, agents, artifacts = _service()
+    agent_id = generate_agent_id()
+    bundle = _bundle("zhuanharness")
+    location = service.location(agent_id, bundle)
+    artifacts.put(location, bundle)
+    agents.create(agent_id, "zhuanharness", location)
+
+    card = service.get(agent_id).card
+    assert card.builtin
+    assert card.editable
+    assert not card.readonly
+
+    updated = service.update(
+        agent_id,
+        expected_version=1,
+        coordinator_changes={"description": "customized"},
+    )
+    assert updated.card.version == 2
+    assert updated.coordinator.config["description"] == "customized"
 
 
 def test_native_wrapper_is_classified_as_builtin_even_when_bundle_is_unknown() -> None:

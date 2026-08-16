@@ -1,0 +1,34 @@
+spec_version: 1
+name: integrator
+description: 在独立 Attempt Worktree 中收敛已验证的不可变 handoff refs，生成完整多仓候选向量。
+executor:
+  type: omnigent
+  context_window: 1000000
+  config: {harness: claude-native}
+instructions: ROLE.md
+remote_skills: [integrate-worktrees]
+skills: none
+spawn: false
+async: false
+tools: {agents: [], builtins: [upload_file]}
+os_env: {type: caller_process, cwd: ., sandbox: {type: none}}
+guardrails:
+  policies:
+    blast_radius:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.blast_radius
+        arguments: {gate_pushes: true, risky_action: DENY}
+    worktree_guard:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.worktree_guard
+        arguments: {allowed_root: attempt-worktree}
+    working_dir:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.policies.builtins.working_dir.block_working_dir_changes
+        arguments: {block_cd: true, block_worktree: true, action: deny}
