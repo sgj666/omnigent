@@ -20,7 +20,9 @@ from typing import Any
 
 import httpx
 import pytest
+import sqlalchemy as sa
 
+from omnigent.db.utils import get_or_create_engine
 from omnigent.llms.context_window import ModelPricing
 from omnigent.runtime.tool_output import MAX_TOOL_OUTPUT_BYTES
 from omnigent.server.background_session_titles import BackgroundTitleRequest
@@ -36,6 +38,32 @@ pytestmark = pytest.mark.asyncio
 
 
 # ── Helpers ──────────────────────────────────────────────
+
+
+def _clear_session_bundle_snapshot(db_uri: str, session_id: str) -> None:
+    """
+    Turn a pinned test session into a legacy unpinned row.
+
+    Sessions created through ``POST /v1/sessions`` today persist an
+    immutable Agent Bundle snapshot, which makes in-place agent
+    switching a 409. Legacy rows predating that snapshot have all three
+    ``agent_bundle_*`` columns NULL and remain switchable, so tests that
+    must reach the switch route's mutation path downgrade their row here.
+
+    :param db_uri: Database URI of the test store.
+    :param session_id: Session/conversation id to unpin, e.g.
+        ``"conv_abc123"``.
+    """
+    engine = get_or_create_engine(db_uri)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "UPDATE conversations SET agent_bundle_version = NULL, "
+                "agent_bundle_digest = NULL, agent_bundle_location = NULL "
+                "WHERE id = :id"
+            ),
+            {"id": bytes.fromhex(session_id)},
+        )
 
 
 async def _create_session(
@@ -2372,12 +2400,24 @@ async def test_get_session_agent_name_is_spec_name_after_switch(
 
     Drives the REAL switch route end-to-end: source session → seeded
     bindable built-in → ``POST .../switch-agent`` → ``GET`` snapshot.
+
+    In-place switching is only reachable for LEGACY unpinned sessions
+    (all three ``agent_bundle_*`` columns NULL) — sessions created today
+    carry an immutable Bundle snapshot and the route rejects them with
+    409 (see
+    :func:`test_switch_agent_on_bundle_pinned_session_is_rejected`). The
+    row-name/spec-name divergence this test covers is specific to the
+    switch route's ``"(switch ag_…)"`` clone, so it is exercised here on
+    the legacy path that still reaches that clone;
+    :func:`test_get_session_agent_name_is_spec_name_after_fork_switch`
+    covers the same user-visible contract on the modern fork path.
     """
     from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
 
     # Source session bound to a session-scoped "nessie" agent.
     source_agent = await create_test_agent(client, name="nessie")
     session_id = source_agent["_session_id"]
+    _clear_session_bundle_snapshot(db_uri, session_id)
 
     # Materialize a real claude-native-ui bundle in the artifact store
     # (via a throwaway session-scoped agent), then register a TEMPLATE
@@ -2412,6 +2452,101 @@ async def test_get_session_agent_name_is_spec_name_after_switch(
     # The snapshot prefers the spec's clean name over the clone row's.
     # The suffixed name here means clients (REPL toolbar, sidebar)
     # would display "claude-native-ui (switch ag_…)" to the user.
+    assert snap["agent_name"] == "claude-native-ui"
+
+
+async def test_switch_agent_on_bundle_pinned_session_is_rejected(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """A session with a pinned Bundle snapshot cannot switch agent in place.
+
+    Sessions created through ``POST /v1/sessions`` persist an immutable
+    Agent Bundle snapshot, so the switch route must refuse with 409 and
+    point the caller at fork / create-new instead. The binding must be
+    left untouched — the rejection happens before any mutation.
+    """
+    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+
+    source_agent = await create_test_agent(client, name="nessie-pinned")
+    session_id = source_agent["_session_id"]
+
+    target_agent = await create_test_agent(client, name="claude-native-ui")
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    target_row = agent_store.get(target_agent["id"])
+    assert target_row is not None and target_row.bundle_location is not None
+    builtin = agent_store.create(
+        "6f30f2c8b1f04c4a90d1d3ee9c4a17bd",
+        "claude-native-ui",
+        target_row.bundle_location,
+    )
+
+    # Precondition: the session really is pinned, otherwise this test would
+    # pass vacuously against a legacy row.
+    before = (await client.get(f"/v1/sessions/{session_id}")).json()
+    assert before["agent_bundle_digest"] is not None
+
+    resp = await client.post(
+        f"/v1/sessions/{session_id}/switch-agent",
+        json={"agent_id": builtin.id},
+    )
+
+    assert resp.status_code == 409, resp.text
+    error = resp.json()["error"]
+    assert error["code"] == "conflict"
+    assert "immutable" in error["message"]
+    assert "Fork the Session" in error["message"]
+
+    # The rejected switch left the binding and the pin untouched.
+    after = (await client.get(f"/v1/sessions/{session_id}")).json()
+    assert after["agent_id"] == before["agent_id"]
+    assert after["agent_name"] == "nessie-pinned"
+    assert after["agent_bundle_digest"] == before["agent_bundle_digest"]
+
+
+async def test_get_session_agent_name_is_spec_name_after_fork_switch(
+    client: httpx.AsyncClient,
+    db_uri: str,
+) -> None:
+    """A fork that switches agent reports the spec's name in its snapshot.
+
+    Same user-visible contract as the in-place switch case: clients
+    (REPL toolbar, web sidebar) render ``agent_name`` verbatim, so the
+    snapshot of a session-scoped clone must surface the spec's clean
+    identity. Fork is the supported path for changing a Bundle-pinned
+    session's agent, so this covers the contract without downgrading the
+    row to legacy.
+    """
+    from omnigent.stores.agent_store.sqlalchemy_store import SqlAlchemyAgentStore
+
+    source_agent = await create_test_agent(client, name="nessie-fork")
+    session_id = source_agent["_session_id"]
+
+    target_agent = await create_test_agent(client, name="claude-native-ui")
+    agent_store = SqlAlchemyAgentStore(db_uri)
+    target_row = agent_store.get(target_agent["id"])
+    assert target_row is not None and target_row.bundle_location is not None
+    builtin = agent_store.create(
+        "cbb2ba0e63b74d1f8f2c1b60c6b3d05a",
+        "claude-native-ui",
+        target_row.bundle_location,
+    )
+
+    fork_resp = await client.post(
+        f"/v1/sessions/{session_id}/fork",
+        json={"agent_id": builtin.id},
+    )
+    assert fork_resp.status_code == 201, fork_resp.text
+    fork_id = fork_resp.json()["id"]
+
+    snap = (await client.get(f"/v1/sessions/{fork_id}")).json()
+    # The fork is bound to a fresh session-scoped clone row, not the
+    # built-in it switched to.
+    assert snap["agent_id"] != builtin.id
+    clone_row = agent_store.get(snap["agent_id"])
+    assert clone_row is not None
+    assert clone_row.session_id == fork_id
+    # Clients display this verbatim, so it must be the spec's clean name.
     assert snap["agent_name"] == "claude-native-ui"
 
 
@@ -3605,6 +3740,10 @@ async def test_post_external_session_status_idle_forwards_persisted_assistant_ou
         await fake_runner.aclose()
 
     assert status_resp.status_code == 202, status_resp.text
+    # The forward is a verbatim ``model_dump()`` of the inbound event body,
+    # so it carries every SessionEventRequest field. ``dispatch_source_id``
+    # is None here: the native forwarder posted the status itself rather
+    # than replaying a server-issued dispatch.
     assert forwarded == [
         {
             "path": f"/v1/sessions/{child['id']}/events",
@@ -3614,6 +3753,7 @@ async def test_post_external_session_status_idle_forwards_persisted_assistant_ou
                 "model_override": None,
                 "tools": None,
                 "created_by": None,
+                "dispatch_source_id": None,
             },
         }
     ]
